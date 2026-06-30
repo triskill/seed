@@ -7,9 +7,14 @@ programs like `ls --color=auto` (and anything else that auto-
 detects TTY, e.g. `git`, `diff`, `ls`) only emit color escapes
 when they detect a terminal, and a PIPE is not a terminal.
 
-Still bare-bones: no CWD persistence (Task 1.5). Treat
-that as a separate concern — it gets a focused change in
-its own task.
+Task 1.5 wraps the executor in a `ShellSession` class that
+remembers a per-session working directory. v0.1 is a heuristic:
+when a command starts with `cd <path>`, we resolve and update
+`cwd` ourselves, then run whatever's left. There's no real
+persistent shell process — every `exec` is a fresh `sh -c`
+subprocess — so the heuristic is a thin convention on top of
+the existing PTY executor. Limitations spelled out on
+`ShellSession`.
 
 Security note: this orchestrator is intended to run on a trusted
 LAN with the Android client as the only caller; the endpoint is
@@ -24,6 +29,7 @@ import re
 import signal
 import tty
 from dataclasses import dataclass
+from pathlib import Path
 
 
 # Strips CSI sequences (ESC [ ... final-byte). Good enough for
@@ -176,7 +182,7 @@ async def _cancel_consumer(
     raise ExecCancelled()
 
 
-async def exec_command(
+async def _exec_command_impl(
     cmd: str,
     *,
     cwd: str | None = None,
@@ -451,3 +457,139 @@ async def exec_command(
         captured_ansi=capture_ansi,
         truncated=truncated,
     )
+
+
+async def exec_command(
+    cmd: str,
+    *,
+    timeout: float | None = None,
+    capture_ansi: bool = True,
+    cancel: asyncio.Event | None = None,
+) -> ExecResult:
+    """Stateless convenience wrapper around the PTY executor.
+
+    Task 1.5: with `ShellSession` now the recommended way to
+    run commands (it gives you persistent cwd), the module-level
+    `exec_command` stays around as a shortcut for callers that
+    don't care about cwd — e.g. one-shot ad-hoc commands in
+    tests. No `cwd` is passed, so the child inherits the
+    orchestrator process's cwd (`Path.cwd()` at import time).
+    """
+    return await _exec_command_impl(
+        cmd,
+        cwd=None,
+        timeout=timeout,
+        capture_ansi=capture_ansi,
+        cancel=cancel,
+    )
+
+
+# Matches a leading `cd <path>` (with optional whitespace) at the
+# start of a command. Group 1 is the target path; group 2 (optional)
+# is whatever follows on the same line. Used by `ShellSession` to
+# update its `cwd` heuristically — see that class for the full
+# rationale and limitations.
+_CD_LEAD_RE = re.compile(r"^\s*cd\s+(\S+)(?:\s+(.*))?$", re.DOTALL)
+
+
+class ShellSession:
+    """Per-session shell executor with a persistent working directory.
+
+    v0.1 heuristic (NOT a real persistent shell process):
+    every `exec` call still spawns a fresh `sh -c` subprocess via
+    the PTY executor; the cwd is threaded through as the
+    subprocess's working directory and remembered on the session
+    for the next call. To make commands like `cd /tmp` actually
+    take effect, we sniff the command for a leading `cd <path>`
+    (regex `_CD_LEAD_RE`), resolve the target against the
+    current cwd, verify it exists and is a directory, and
+    update `self.cwd` accordingly. Whatever's left after the
+    `cd` is what gets handed to `sh -c`.
+
+    Known limitations (acceptable for v0.1):
+      * Only a leading `cd <path>` is recognized. `cd /tmp &&
+        ls` updates cwd correctly but the `&&` syntax isn't
+        stripped — the executor will see `&& ls` and `sh -c`
+        will reject it. Use `cd /tmp; ls` (or two separate
+        `exec` calls) instead.
+      * `cd -` (previous dir), `cd ~` (tilde expansion), and
+        `pushd`/`popd` are NOT recognized. The path is resolved
+        verbatim by `Path.resolve()`.
+      * If the `cd` target doesn't exist or isn't a directory,
+        we fall back to running the original command unchanged
+        and let `sh -c` fail naturally; `self.cwd` is not
+        updated. This is a "do no harm" choice — the user
+        sees the underlying `sh` error, not a Python exception
+        from us.
+
+    Attributes:
+        cwd: Current working directory for the session. Updated
+             by the `cd` heuristic in `exec`; mutable so tests
+             and the route layer can inspect it.
+    """
+
+    def __init__(self, cwd: Path | None = None) -> None:
+        self.cwd: Path = (cwd if cwd is not None else Path.cwd()).resolve()
+
+    async def exec(
+        self,
+        cmd: str,
+        *,
+        timeout: float | None = None,
+        capture_ansi: bool = True,
+        cancel: asyncio.Event | None = None,
+    ) -> ExecResult:
+        """Run `cmd` in the session's cwd; honour a leading `cd`.
+
+        See the class docstring for the heuristic and its limits.
+        Returns an empty `ExecResult` (exit_code=0) when the
+        command is just `cd <path>` with no further work; the
+        cwd has already been updated in that case.
+        """
+        run_cmd, updated = self._apply_cd(cmd)
+        if updated and run_cmd == "":
+            # Pure `cd <path>` with no follow-on command. We've
+            # already validated and updated cwd; return a
+            # successful empty result so the caller doesn't
+            # have to special-case it.
+            return ExecResult(
+                stdout="",
+                stderr="",
+                exit_code=0,
+                captured_ansi=capture_ansi,
+                truncated=False,
+            )
+        return await _exec_command_impl(
+            run_cmd,
+            cwd=str(self.cwd),
+            timeout=timeout,
+            capture_ansi=capture_ansi,
+            cancel=cancel,
+        )
+
+    def _apply_cd(self, cmd: str) -> tuple[str, bool]:
+        """Return `(cmd_to_run, cwd_was_updated)`.
+
+        If `cmd` starts with `cd <path>`, attempt to resolve the
+        target against `self.cwd`. On success, update `self.cwd`
+        and return the remainder of the command (or `""` if
+        there was no remainder). On any failure (bad path,
+        non-directory, regex miss), return the original command
+        unchanged and `cwd_was_updated=False`.
+        """
+        m = _CD_LEAD_RE.match(cmd)
+        if m is None:
+            return cmd, False
+        target = m.group(1)
+        rest = (m.group(2) or "").strip()
+        try:
+            new = (self.cwd / target).resolve(strict=False)
+        except (OSError, ValueError):
+            # Malformed path, permission error, etc. — leave
+            # cwd alone and let `sh -c` produce the error.
+            return cmd, False
+        if not new.is_dir():
+            return cmd, False
+        self.cwd = new
+        return rest, True
+

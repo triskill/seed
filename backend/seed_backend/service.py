@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
 
 from seed_backend.flask_manager import FlaskManager
-from seed_backend.shell import exec_command
+from seed_backend.shell import ShellSession
 
 # Wall-clock cap applied to /shell/exec. Prevents a runaway command
 # (e.g. `sleep 999`) from tying up a uvicorn worker indefinitely.
@@ -31,9 +31,16 @@ async def lifespan(app: FastAPI):
     the orchestrator still comes up — `/health` will report
     `flask: "down"` so the caller can diagnose. Crashing the whole
     orchestrator because the webapp failed to bind would be worse.
+
+    Also creates a single `ShellSession` on `app.state` so every
+    `/shell/exec` call shares the same cwd. Task 1.5: the
+    session is process-global by design for v0.1 — one logical
+    shell per orchestrator process. A future task may scope
+    sessions per client.
     """
     manager = FlaskManager(port=7778)
     app.state.flask_manager = manager
+    app.state.shell_session = ShellSession()
     try:
         await manager.start()
         await manager.wait_ready(timeout=15)
@@ -81,14 +88,18 @@ class ShellExecResponse(BaseModel):
 
 
 @app.post("/shell/exec", response_model=ShellExecResponse)
-async def shell_exec(payload: ShellExecRequest) -> ShellExecResponse:
+async def shell_exec(payload: ShellExecRequest, request: Request) -> ShellExecResponse:
     """Run a shell command and return its captured output.
 
-    The actual subprocess management lives in `shell.exec_command` —
-    this route is just a thin adapter: validate the request, call
-    `exec_command`, and shape the result into the response.
+    Task 1.5: the route now delegates to a per-app
+    `ShellSession` (created in the lifespan) instead of the
+    stateless module-level `exec_command`. That gives the
+    command sequence a persistent cwd across requests: a
+    `cd /tmp` in one call is visible to a `pwd` in the next.
+    The response shape is unchanged.
     """
-    result = await exec_command(
+    session: ShellSession = request.app.state.shell_session
+    result = await session.exec(
         payload.command,
         timeout=SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS,
     )

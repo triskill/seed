@@ -11,8 +11,10 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
+from pathlib import Path
+
 from seed_backend.service import app
-from seed_backend.shell import ExecCancelled, ExecResult, exec_command
+from seed_backend.shell import ExecCancelled, ExecResult, ShellSession, exec_command
 
 
 def test_exec_runs_echo_hi():
@@ -175,3 +177,26 @@ def test_exec_truncates_huge_output():
 
     assert result.truncated is True
     assert len(result.stdout.splitlines()) <= 5000
+
+
+def test_cwd_persists_across_calls():
+    """`cd` in one `ShellSession.exec` call is visible in the next.
+
+    Task 1.5: `ShellSession` keeps a per-session `cwd` that the
+    PTY-backed executor is launched from. Because v0.1 uses a
+    heuristic (not a real persistent shell process), we update
+    `self.cwd` ourselves when the command starts with `cd <path>`.
+    Here, after `cd /tmp` the next `pwd` should report `/tmp`.
+    """
+    async def scenario():
+        session = ShellSession()
+        await session.exec("cd /tmp")
+        return await session.exec("pwd")
+
+    result = asyncio.run(scenario())
+
+    assert result.stdout.strip() == str(Path("/tmp").resolve()).rstrip()
+    # On Linux the resolved path is still /tmp; on macOS it'd be
+    # /private/tmp. Both forms end with "tmp", which is the
+    # portable check — the command literally is `cd /tmp`.
+    assert result.stdout.strip().endswith("tmp")
