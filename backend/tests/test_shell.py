@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from seed_backend.service import app
-from seed_backend.shell import ExecResult, exec_command
+from seed_backend.shell import ExecCancelled, ExecResult, exec_command
 
 
 def test_exec_runs_echo_hi():
@@ -128,6 +128,34 @@ def test_exec_raises_timeout_error_and_kills_child():
         f"but pgrep found PIDs: {result.stdout!r}"
     )
     assert result.stdout.strip() == ""
+
+
+def test_exec_can_be_cancelled():
+    """Setting the cancel event mid-run raises `ExecCancelled` and kills the child.
+
+    Task 1.4: `exec_command` accepts a `cancel: asyncio.Event` so
+    long-running commands can be aborted by the caller (e.g. when
+    a client disconnects). The implementation must (a) send
+    SIGTERM to the child process group, (b) close the PTY master
+    fd to unblock the in-flight read, and (c) raise `ExecCancelled`
+    to the awaiting coroutine — all of which we exercise here by
+    cancelling a `sleep 60` after 100ms.
+    """
+    async def scenario():
+        cancel = asyncio.Event()
+
+        async def trigger():
+            # Sleep 100ms on the same loop `asyncio.run` is
+            # driving, then set the event so the cancel branch
+            # in `exec_command` fires.
+            await asyncio.sleep(0.1)
+            cancel.set()
+
+        asyncio.create_task(trigger())
+        return await exec_command("sleep 60", cancel=cancel)
+
+    with pytest.raises(ExecCancelled):
+        asyncio.run(scenario())
 
 
 def test_exec_truncates_huge_output():

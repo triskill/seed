@@ -7,10 +7,9 @@ programs like `ls --color=auto` (and anything else that auto-
 detects TTY, e.g. `git`, `diff`, `ls`) only emit color escapes
 when they detect a terminal, and a PIPE is not a terminal.
 
-Still bare-bones: no output truncation (Task 1.3), no
-cancellation (Task 1.4), no CWD persistence (Task 1.5). Treat
-those as separate concerns — they each get a focused change in
-their own task.
+Still bare-bones: no CWD persistence (Task 1.5). Treat
+that as a separate concern — it gets a focused change in
+its own task.
 
 Security note: this orchestrator is intended to run on a trusted
 LAN with the Android client as the only caller; the endpoint is
@@ -52,6 +51,19 @@ def strip_ansi(text: str) -> str:
     codes preserved, headless clients usually don't.
     """
     return _ANSI_CSI_RE.sub("", text)
+
+
+class ExecCancelled(Exception):
+    """Raised when an in-flight `exec_command` is cancelled by its caller.
+
+    Task 1.4: the caller passes an `asyncio.Event` as the `cancel`
+    argument. When the event is set, the executor sends SIGTERM
+    to the child's process group, closes the PTY master fd to
+    unblock the read loop, waits a brief grace period, then
+    SIGKILLs the process group as a fallback before raising
+    this exception. Distinct from `asyncio.TimeoutError` so the
+    route layer (and tests) can tell the two apart.
+    """
 
 
 @dataclass
@@ -98,12 +110,79 @@ class ExecResult:
     truncated: bool = False
 
 
+async def _cancel_consumer(
+    cancel_evt: asyncio.Event | None,
+    state: dict,
+) -> None:
+    """Watcher coroutine that kills the child when the user sets `cancel_evt`.
+
+    Task 1.4: lives alongside the executor and races it via
+    `asyncio.wait`. Three outcomes:
+
+    * `cancel_evt is None` — the user didn't ask for cancellation.
+      Block forever; the main coroutine cancels us once the
+      executor returns. (We never raise.)
+    * `cancel_evt` is set before we get cancelled by the main
+      coroutine — send SIGTERM, close the master fd, then raise
+      `ExecCancelled` so the race in the main coroutine surfaces
+      it. The main coroutine then waits a 1 s grace period and
+      SIGKILLs the process group as a fallback (in case SIGTERM
+      was ignored — `sleep` does this by default). The split is
+      deliberate: raising immediately after the SIGTERM means
+      `asyncio.wait(..., FIRST_COMPLETED)` sees the cancel_task
+      as done first, before the executor thread's `waitpid` can
+      return and the executor's future can win the race.
+    * We get cancelled (because the executor won the race) —
+      the executor's `waitpid` has already reaped the child, so
+      there's nothing to clean up; just return.
+
+    Best-effort error handling throughout: the OS may already
+    have cleaned things up, and we don't care.
+    """
+    if cancel_evt is None:
+        # Block forever; main coroutine cancels us on success.
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            return
+        return
+
+    try:
+        await cancel_evt.wait()
+    except asyncio.CancelledError:
+        # Executor won the race; its waitpid already reaped
+        # the child, so nothing to clean up.
+        return
+
+    # User signalled cancel. Kill the child process group (the
+    # child + any helpers it spawned, like the `sleep 60` child
+    # of `sh -c "sleep 60"`) and close the master fd so the
+    # in-flight `os.read` in the executor thread unblocks. The
+    # grace period + SIGKILL fallback happens in the main
+    # coroutine's exception handler — see `exec_command`.
+    pid = state.get("pid")
+    if pid is not None:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    master_fd = state.get("master_fd")
+    if master_fd is not None:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
+    raise ExecCancelled()
+
+
 async def exec_command(
     cmd: str,
     *,
     cwd: str | None = None,
     timeout: float | None = None,
     capture_ansi: bool = True,
+    cancel: asyncio.Event | None = None,
 ) -> ExecResult:
     """Run `cmd` via `sh -c` under a PTY and return the captured output.
 
@@ -151,6 +230,16 @@ async def exec_command(
                       the output are preserved. If False, they
                       are stripped via `strip_ansi` before
                       returning.
+        cancel:       Optional `asyncio.Event` the caller can
+                      set to abort the in-flight command. On
+                      set, the child's process group is
+                      SIGTERM'd (followed by SIGKILL after a
+                      1-second grace period) and `ExecCancelled`
+                      is raised. The route in `service.py`
+                      doesn't currently wire this up — the
+                      capability lives on the function for
+                      future use (e.g. aborting on client
+                      disconnect).
 
     Returns:
         ExecResult with decoded merged stdout, an empty stderr,
@@ -259,22 +348,82 @@ async def exec_command(
 
         return b"".join(chunks), exit_code, truncated
 
+    exec_future = loop.run_in_executor(None, _run_pty)
+
+    # Watcher task: blocks forever if no user cancel event,
+    # otherwise waits for the event and kills the child. Runs
+    # concurrently with the executor; the main coroutine races
+    # them with `asyncio.wait` below.
+    cancel_task: asyncio.Task[None] | None = None
+    if cancel is not None:
+        cancel_task = asyncio.create_task(_cancel_consumer(cancel, state))
+
     try:
-        output, exit_code, truncated = await asyncio.wait_for(
-            loop.run_in_executor(None, _run_pty),
-            timeout=timeout,
-        )
+        if cancel_task is None:
+            output, exit_code, truncated = await asyncio.wait_for(
+                exec_future,
+                timeout=timeout,
+            )
+        else:
+            # Race the executor against the cancel watcher, with
+            # an overall timeout. Whichever finishes first wins:
+            # the executor returning a result, the watcher
+            # raising `ExecCancelled`, or `wait_for` itself firing
+            # on timeout.
+            done, pending = await asyncio.wait_for(
+                asyncio.wait(
+                    {exec_future, cancel_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                ),
+                timeout=timeout,
+            )
+            # Cancel the loser of the race. If the cancel_task
+            # lost, the executor's waitpid has already reaped the
+            # child; if the executor lost, the cancel_task's
+            # SIGTERM-and-close is already in flight and we'll
+            # let the rest of the cleanup happen here.
+            for t in pending:
+                t.cancel()
+            if cancel_task in done:
+                # The cancel_task sent SIGTERM and closed the
+                # master fd before raising. Re-raise the
+                # exception for the caller, but first do
+                # best-effort cleanup: SIGTERM is advisory and
+                # some commands ignore it (e.g. `sleep 60`),
+                # so wait a brief grace period then SIGKILL the
+                # process group as a fallback.
+                pid = state.get("pid")
+                try:
+                    await cancel_task
+                except BaseException:
+                    if pid is not None:
+                        try:
+                            await asyncio.sleep(1.0)
+                        except asyncio.CancelledError:
+                            pass
+                        try:
+                            os.killpg(os.getpgid(pid), signal.SIGKILL)
+                        except (ProcessLookupError, PermissionError, OSError):
+                            pass
+                    raise
+                # Unreachable: cancel_task always raises
+                # ExecCancelled. Kept as a defensive raise in
+                # case the watcher is ever changed to return.
+                raise ExecCancelled()
+            # Executor won the race; pull the result off the
+            # future (it's already done at this point).
+            output, exit_code, truncated = exec_future.result()
     except asyncio.TimeoutError:
         # Best-effort cleanup: SIGKILL the whole process group
         # (the child + any helpers it spawned, like the `sleep 5`
         # child of `sh -c "sleep 5"`), close the master fd so the
         # in-flight `os.read` in the executor thread unblocks,
-        # and let the thread reap the child on its own. We don't
-        # await the executor future here — it's still running in
-        # a background thread that will clean up after itself
-        # (and asyncio would warn about the result being
-        # discarded, which is the desired behaviour: we already
-        # have a TimeoutError to raise).
+        # and cancel the cancel watcher if it's still parked on
+        # `cancel_evt.wait()`. We don't await the executor future
+        # here — it's still running in a background thread that
+        # will clean up after itself (and asyncio would warn
+        # about the result being discarded, which is the desired
+        # behaviour: we already have a TimeoutError to raise).
         pid = state.get("pid")
         if pid is not None:
             try:
@@ -287,6 +436,8 @@ async def exec_command(
                 os.close(master_fd)
             except OSError:
                 pass
+        if cancel_task is not None and not cancel_task.done():
+            cancel_task.cancel()
         raise
 
     stdout = output.decode("utf-8", errors="replace")
