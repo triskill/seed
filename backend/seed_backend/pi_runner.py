@@ -196,6 +196,7 @@ class PiRunner:
         role: str,
         strip_ansi: bool = True,
         read_only_tools: set[str] | None = None,
+        system_prompt: str = "",
     ) -> None:
         """
         Args:
@@ -233,6 +234,18 @@ class PiRunner:
                               depth on top of the system
                               prompt and pi's `--tools` CLI
                               flag at spawn time.
+            system_prompt:   Optional multi-line string
+                              written to the child's stdin
+                              on start() (Task 2.5). The
+                              prompt is followed by a
+                              blank line so the child can
+                              tell where the prompt ends
+                              and the user's first
+                              message begins. Default ''
+                              (no preload). The orchestrator
+                              passes the contents of
+                              `prompts/middleman.md` or
+                              `prompts/worker.md` here.
         """
         self.cmd = list(cmd)
         self.role = role
@@ -240,6 +253,7 @@ class PiRunner:
         self.read_only_tools: set[str] | None = (
             set(read_only_tools) if read_only_tools is not None else None
         )
+        self.system_prompt = system_prompt
         self.pid: int | None = None
         # Filled in by the executor thread after the PTY is
         # opened / fork returns. Read by send() and read_lines()
@@ -374,6 +388,30 @@ class PiRunner:
         # The DeprecationWarning is expected and harmless
         # (Task 1.5's known limitation).
         self.pid = await self._executor_submit(_fork)
+
+        # Preload the system prompt (Task 2.5) before
+        # returning. The child has been forked and is
+        # presumably sitting at its first read from
+        # stdin; writing the prompt now gets it in
+        # front of any user message the orchestrator
+        # queues next. The blank line after the prompt
+        # is the conventional delimiter — the child can
+        # tell "system context ends here, user message
+        # starts here".
+        if self.system_prompt:
+            payload = self.system_prompt + "\n\n"
+            try:
+                await self._executor_submit(
+                    os.write, self._master_fd, payload.encode("utf-8")
+                )
+            except OSError as e:
+                # Master fd already closed — child died
+                # before we could write. Surface the
+                # error so the caller knows the runner
+                # isn't usable.
+                raise RuntimeError(
+                    f"failed to preload system prompt: child died ({e})"
+                ) from e
 
         # Only the reader task — there is intentionally no
         # background "waiter" task. os.waitpid is a global
