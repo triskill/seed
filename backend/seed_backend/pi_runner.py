@@ -47,10 +47,35 @@ import asyncio
 import concurrent.futures
 import os
 import pty
+import re
 import signal
 import tty
 from pathlib import Path
 from typing import AsyncIterator
+
+
+# Strips common ANSI escape sequences from a line. Good
+# enough for the common cases (colours, cursor moves,
+# OSC titles); full ECMA-48 coverage is a future task
+# if the chat UI ever needs it. Pattern matches:
+#   CSI  ESC [ ... final-byte
+#   OSC  ESC ] ... BEL or ESC \\
+# Patterns live at module level so they're compiled once.
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_ANSI_OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def _strip_ansi(text: str) -> str:
+    """Return `text` with common ANSI escape sequences removed.
+
+    Used by the reader task when `self.strip_ansi` is
+    True (the default). Clients that render to a TTY
+    want the codes preserved (flip the flag off); the
+    chat UI doesn't, so we strip by default.
+    """
+    text = _ANSI_CSI_RE.sub("", text)
+    text = _ANSI_OSC_RE.sub("", text)
+    return text
 
 
 class PiRunnerNotRunning(RuntimeError):
@@ -97,9 +122,38 @@ class PiRunner:
         await runner.stop()
     """
 
-    def __init__(self, cmd: list[str], role: str) -> None:
+    def __init__(
+        self,
+        cmd: list[str],
+        role: str,
+        strip_ansi: bool = True,
+    ) -> None:
+        """
+        Args:
+            cmd:        The argv to exec. The first element is
+                        the program; the rest are arguments.
+                        Typically `[sys.executable,
+                        path/to/fake_pi.py]` in tests and
+                        `["pi", "--mode", "rpc", ...]` in
+                        production.
+            role:       Free-form string identifying what
+                        this runner does ("middleman" or
+                        "worker"). The tool-call filter
+                        (Task 2.4) consults this to decide
+                        which pi tool calls to allow.
+            strip_ansi: When True (the default), ANSI
+                        escape sequences are stripped from
+                        every line yielded by read_lines().
+                        When False, the raw bytes are
+                        passed through unchanged. The
+                        default is on because the chat UI
+                        renders text not control codes;
+                        flip to False for debugging a
+                        weird TUI redraw.
+        """
         self.cmd = list(cmd)
         self.role = role
+        self.strip_ansi = strip_ansi
         self.pid: int | None = None
         # Filled in by the executor thread after the PTY is
         # opened / fork returns. Read by send() and read_lines()
@@ -421,6 +475,8 @@ class PiRunner:
                 # TTY configurations still do).
                 if line.endswith("\r"):
                     line = line[:-1]
+                if self.strip_ansi:
+                    line = _strip_ansi(line)
                 await self._enqueue_line(line)
 
     async def _enqueue_line(self, line: str) -> None:
