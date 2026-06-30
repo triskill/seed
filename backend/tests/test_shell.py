@@ -29,14 +29,20 @@ def test_exec_runs_echo_hi():
 
 
 def test_exec_captures_stderr_and_nonzero_exit():
-    """A failing command surfaces stderr and a non-zero exit code."""
+    """A failing command surfaces its merged output and a non-zero exit code.
+
+    Task 1.2 switched the executor from piped subprocesses to a PTY,
+    which means stdout and stderr share the slave fd and are
+    returned interleaved in `ExecResult.stdout` (with `stderr`
+    always empty). The exit code is unaffected.
+    """
     async def scenario():
         return await exec_command("echo nope 1>&2; exit 7")
 
     result = asyncio.run(scenario())
 
-    assert result.stdout == ""
-    assert result.stderr == "nope\n"
+    assert result.stdout == "nope\n"
+    assert result.stderr == ""
     assert result.exit_code == 7
 
 
@@ -48,6 +54,44 @@ def test_shell_exec_route_returns_command_output():
     assert response.status_code == 200
     body = response.json()
     assert body == {"stdout": "hi\n", "stderr": "", "exit_code": 0}
+
+
+def test_exec_in_pty_handles_color_codes():
+    """PTY-backed exec preserves ANSI color codes that the PIPE version stripped.
+
+    Programs that auto-detect TTY (e.g. `ls --color=auto`) emit
+    color escapes only when stdout is a terminal — a PIPE isn't
+    one, so the previous subprocess-based executor saw plain text
+    even from tools that would have colored their output otherwise.
+    Task 1.2's PTY-backed executor makes the slave fd a real TTY,
+    so the escape sequences survive end-to-end.
+
+    The command below makes the TTY detection explicit: with PIPE
+    `[ -t 1 ]` is false and printf is never called (so no ANSI);
+    with a PTY `[ -t 1 ]` is true and printf emits ESC[31m...ESC[0m.
+    """
+    # `if [ -t 1 ]; then printf ESC[31mred ESC[0m; else echo not_a_tty; fi`
+    # Octal \033 (not \x1b) is used because dash's printf (the usual
+    # /bin/sh on Debian/Ubuntu) only expands octal escapes — \x1b
+    # would arrive at the child as a literal "\x1b" and never reach
+    # the master fd as an ESC byte.
+    cmd = (
+        "if [ -t 1 ]; then "
+        "printf '\\033[31mred\\033[0m\\n'; "
+        "else echo not_a_tty; "
+        "fi"
+    )
+
+    async def scenario():
+        return await exec_command(cmd)
+
+    result = asyncio.run(scenario())
+
+    assert "\x1b[" in result.stdout, (
+        f"Expected an ANSI escape sequence (ESC[) in stdout, "
+        f"got: {result.stdout!r}"
+    )
+    assert result.exit_code == 0
 
 
 def test_exec_raises_timeout_error_and_kills_child():
