@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import os
 import pty
 import re
@@ -78,6 +79,44 @@ def _strip_ansi(text: str) -> str:
     return text
 
 
+def _check_tool_call(line: str, allowed: set[str]) -> dict | None:
+    """If `line` is a `tool_execution_start` event for a
+    disallowed tool, return a violation dict.
+
+    Task 2.4. Returns None if the line isn't a tool
+    event, or if the tool is allowed. Otherwise
+    returns a dict shaped like the event, with the
+    extra `"violation": True` key so the consumer can
+    tell it apart from a normal event.
+
+    The match is JSON-parse-and-check: we look for a
+    line that parses as JSON with `type ==
+    "tool_execution_start"` and a `toolName` field.
+    Anything else (free-form text, a different event
+    type, malformed JSON) is passed through to the
+    consumer. We deliberately don't try to be clever
+    with regex on the raw bytes — pi's wire format
+    is JSONL and we should parse it as such.
+    """
+    line = line.strip()
+    if not line.startswith("{"):
+        return None
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(event, dict):
+        return None
+    if event.get("type") != "tool_execution_start":
+        return None
+    tool_name = event.get("toolName")
+    if not isinstance(tool_name, str):
+        return None
+    if tool_name in allowed:
+        return None
+    return {"tool_name": tool_name, "event": event}
+
+
 class PiRunnerNotRunning(RuntimeError):
     """Raised when send()/read_lines() is called before start().
 
@@ -85,6 +124,35 @@ class PiRunnerNotRunning(RuntimeError):
     layer can tell "you forgot to call start()" apart from
     other runtime errors and surface a useful message.
     """
+
+
+class ToolCallBlocked(RuntimeError):
+    """Raised when the child pi tries to call a disallowed tool.
+
+    Task 2.4: the middle-man pi is supposed to be
+    read-only — it can call `read`, `grep`, `find`, `ls`
+    to inspect the user's web app, but never `bash`,
+    `write`, or `edit` (which would mutate state). When
+    the filter catches a disallowed tool call, it
+    aborts the run (SIGTERM to the child) and surfaces
+    this exception to the consumer of read_lines() so
+    the chat UI can show "middle-man tried to do X,
+    which it isn't allowed to".
+
+    Attributes:
+        tool_name: The tool that was blocked (e.g. "bash").
+        event:     The full `tool_execution_start` event
+                   we parsed. Carried on the exception so
+                   the chat UI can show what the agent
+                   was trying to do, not just the name.
+    """
+
+    def __init__(self, tool_name: str, event: dict) -> None:
+        self.tool_name = tool_name
+        self.event = event
+        super().__init__(
+            f"pi tried to call disallowed tool {tool_name!r}"
+        )
 
 
 class PiRunner:
@@ -127,33 +195,51 @@ class PiRunner:
         cmd: list[str],
         role: str,
         strip_ansi: bool = True,
+        read_only_tools: set[str] | None = None,
     ) -> None:
         """
         Args:
-            cmd:        The argv to exec. The first element is
-                        the program; the rest are arguments.
-                        Typically `[sys.executable,
-                        path/to/fake_pi.py]` in tests and
-                        `["pi", "--mode", "rpc", ...]` in
-                        production.
-            role:       Free-form string identifying what
-                        this runner does ("middleman" or
-                        "worker"). The tool-call filter
-                        (Task 2.4) consults this to decide
-                        which pi tool calls to allow.
-            strip_ansi: When True (the default), ANSI
-                        escape sequences are stripped from
-                        every line yielded by read_lines().
-                        When False, the raw bytes are
-                        passed through unchanged. The
-                        default is on because the chat UI
-                        renders text not control codes;
-                        flip to False for debugging a
-                        weird TUI redraw.
+            cmd:             The argv to exec. The first
+                              element is the program; the
+                              rest are arguments. Typically
+                              `[sys.executable,
+                              path/to/fake_pi.py]` in tests
+                              and `["pi", "--mode", "rpc",
+                              ...]` in production.
+            role:            Free-form string identifying
+                              what this runner does
+                              ("middleman" or "worker").
+            strip_ansi:      When True (the default), ANSI
+                              escape sequences are stripped
+                              from every line yielded by
+                              read_lines(). When False, the
+                              raw bytes are passed through
+                              unchanged.
+            read_only_tools: When set, the runner watches
+                              every line for a pi
+                              `tool_execution_start` event
+                              and aborts the run (raises
+                              `ToolCallBlocked` from
+                              read_lines()) if the event's
+                              `toolName` is not in this set.
+                              The default (None) means "no
+                              filter" — every tool call is
+                              allowed through, which is the
+                              worker's configuration. The
+                              middle-man passes the set of
+                              read-only tools ({read, grep,
+                              find, ls}); the worker passes
+                              None. This is defense in
+                              depth on top of the system
+                              prompt and pi's `--tools` CLI
+                              flag at spawn time.
         """
         self.cmd = list(cmd)
         self.role = role
         self.strip_ansi = strip_ansi
+        self.read_only_tools: set[str] | None = (
+            set(read_only_tools) if read_only_tools is not None else None
+        )
         self.pid: int | None = None
         # Filled in by the executor thread after the PTY is
         # opened / fork returns. Read by send() and read_lines()
@@ -190,6 +276,14 @@ class PiRunner:
         # stop() then falls back to a direct kill on the
         # pid. Filled in by the fork helper in start().
         self._child_pgid: int = 0
+        # Violation queue: the reader task puts a
+        # (tool_name, event) dict here when the tool-
+        # call filter (Task 2.4) catches a disallowed
+        # tool. The consumer of read_lines() pulls from
+        # it and raises ToolCallBlocked. Bounded at 1
+        # because the first violation aborts the run;
+        # we don't need to track more.
+        self._violations: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
 
     async def start(self) -> None:
         """Spawn the child in a PTY. No-op if already started.
@@ -327,18 +421,53 @@ class PiRunner:
         are preserved (a child that writes two consecutive
         newlines produces two empty yields). The generator
         terminates when the child exits and the reader
-        drains the master fd.
+        drains the master fd (signalled by a `None`
+        sentinel; consumers should `async for line in
+        runner.read_lines():` and stop iterating when
+        they see `None`).
 
         Raises:
             PiRunnerNotRunning: if the runner hasn't been
                 started.
+            ToolCallBlocked: if the tool-call filter
+                (Task 2.4) catches the child trying to
+                call a tool outside its read-only set.
         """
         if self.pid is None:
             raise PiRunnerNotRunning(
                 "PiRunner.read_lines() called before start()"
             )
         while True:
-            line = await self._lines.get()
+            # Yield to either the line queue or the
+            # violation queue; whichever has data first
+            # wins. We use asyncio.wait on a small set of
+            # futures so the consumer can be interrupted
+            # by a violation mid-stream.
+            get_line = asyncio.create_task(self._lines.get())
+            get_violation = asyncio.create_task(self._violations.get())
+            try:
+                done, pending = await asyncio.wait(
+                    {get_line, get_violation},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except BaseException:
+                get_line.cancel()
+                get_violation.cancel()
+                raise
+            for t in pending:
+                t.cancel()
+            # Violation takes precedence: a tool call
+            # the agent wasn't allowed to make is more
+            # important than any in-flight text the
+            # consumer might have been about to render.
+            if get_violation in done:
+                v = get_violation.result()
+                raise ToolCallBlocked(v["tool_name"], v["event"])
+            line = get_line.result()
+            if line is None:
+                # EOF sentinel from the reader task —
+                # child closed its end. Stop iterating.
+                return
             yield line
 
     async def stop(self) -> None:
@@ -457,15 +586,30 @@ class PiRunner:
                 return
             try:
                 chunk = await self._executor_submit(os.read, master_fd, 4096)
-            except OSError:
-                # Master fd closed (stop() ran) — clean exit.
-                return
+            except OSError as e:
+                # Two distinct EOF-ish conditions:
+                #   1. EIO on a PTY master means the slave
+                #      end was closed (the child exited or
+                #      its controlling tty went away). This
+                #      is the canonical "child is done"
+                #      signal for a PTY-backed process.
+                #   2. Any other OSError means the master
+                #      fd itself was closed (stop() ran).
+                # Either way, the read loop's job is done.
+                if getattr(e, "errno", None) == 5:  # EIO
+                    pass  # fall through to EOF handling
+                else:
+                    return
+                chunk = b""
             if not chunk:
                 # EOF: child closed the slave. Flush any
-                # trailing partial line and bail.
+                # trailing partial line and signal end-of-
+                # stream to the consumer (None sentinel),
+                # then bail.
                 if buf:
                     await self._enqueue_line(buf)
                     buf = ""
+                await self._enqueue_line(None)  # EOF
                 return
             buf += chunk.decode("utf-8", errors="replace")
             # Split on LF; keep partial trailing data in buf.
@@ -477,6 +621,35 @@ class PiRunner:
                     line = line[:-1]
                 if self.strip_ansi:
                     line = _strip_ansi(line)
+                # Tool-call filter (Task 2.4). Only acts
+                # when read_only_tools is set; otherwise
+                # every line is yielded verbatim. When the
+                # filter fires, we abort the child via
+                # SIGTERM (so it can't keep mutating state
+                # in the background after the consumer
+                # gives up) and signal the violation back
+                # to the consumer by putting the event on
+                # a separate "violation" queue. The
+                # consumer of read_lines() pulls that
+                # off and raises ToolCallBlocked.
+                if self.read_only_tools is not None:
+                    violation = _check_tool_call(line, self.read_only_tools)
+                    if violation is not None:
+                        # Don't yield the offending line to
+                        # the consumer — yielding it would
+                        # look like the call succeeded.
+                        # Signal the child to stop; the
+                        # child is in its own process group
+                        # (we used setsid in start()), so
+                        # killpg targets only it.
+                        self._abort_child()
+                        await self._violations.put(violation)
+                        # Drain any further lines (shouldn't
+                        # be many before the child exits)
+                        # and return to the caller; the
+                        # consumer's read_lines() loop will
+                        # pick up the violation next.
+                        return
                 await self._enqueue_line(line)
 
     async def _enqueue_line(self, line: str) -> None:
@@ -490,3 +663,26 @@ class PiRunner:
         want (don't OOM the orchestrator).
         """
         await self._lines.put(line)
+
+    def _abort_child(self) -> None:
+        """Send SIGTERM to the child process group.
+
+        Used by the tool-call filter to stop a
+        middle-man that's about to do something it
+        shouldn't. Best-effort; if the child is
+        already gone or setsid() failed, the call is
+        a no-op. We deliberately don't waitpid here
+        — the caller (the read loop) is going to
+        return and let stop() handle the reaping
+        (so the orchestration path stays linear).
+        """
+        if self._child_pgid and self._child_pgid != os.getpid():
+            try:
+                os.killpg(self._child_pgid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        elif self.pid is not None:
+            try:
+                os.kill(self.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
