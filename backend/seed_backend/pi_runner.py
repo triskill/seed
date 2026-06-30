@@ -197,6 +197,8 @@ class PiRunner:
         strip_ansi: bool = True,
         read_only_tools: set[str] | None = None,
         system_prompt: str = "",
+        auto_restart: bool = False,
+        max_restarts: int = 5,
     ) -> None:
         """
         Args:
@@ -246,6 +248,21 @@ class PiRunner:
                               passes the contents of
                               `prompts/middleman.md` or
                               `prompts/worker.md` here.
+            auto_restart:    When True (Task 2.6), the
+                              runner respawns the child
+                              if it dies (crash, OOM
+                              kill, etc.) up to
+                              `max_restarts` times. The
+                              default is False so a
+                              misconfigured orchestrator
+                              doesn't loop; production
+                              sets it to True.
+            max_restarts:    Cap on respawn attempts
+                              (Task 2.6) when
+                              `auto_restart` is True. After
+                              this many consecutive crashes
+                              the runner gives up and
+                              ends the read_lines() stream.
         """
         self.cmd = list(cmd)
         self.role = role
@@ -254,6 +271,9 @@ class PiRunner:
             set(read_only_tools) if read_only_tools is not None else None
         )
         self.system_prompt = system_prompt
+        self.auto_restart = auto_restart
+        self.max_restarts = max_restarts
+        self._restart_count: int = 0
         self.pid: int | None = None
         # Filled in by the executor thread after the PTY is
         # opened / fork returns. Read by send() and read_lines()
@@ -313,7 +333,21 @@ class PiRunner:
         """
         if self.pid is not None:
             return
+        await self._do_fork()
+        await self._do_preload()
+        self._reader_task = asyncio.create_task(
+            self._read_loop(), name="pi-runner-read"
+        )
 
+    async def _do_fork(self) -> None:
+        """Fork a new child, set self.pid + self._master_fd.
+
+        Used by start() and by the auto-restart path
+        (Task 2.6) when the reader task sees EOF and
+        decides to respawn. Same shape each time: open
+        PTY, fork, set up child's session via setsid,
+        report pgid back through a pipe, exec the cmd.
+        """
         def _fork() -> int:
             # Identity pipe: child writes its post-setsid
             # pgid here so the parent can killpg the right
@@ -389,41 +423,53 @@ class PiRunner:
         # (Task 1.5's known limitation).
         self.pid = await self._executor_submit(_fork)
 
-        # Preload the system prompt (Task 2.5) before
-        # returning. The child has been forked and is
-        # presumably sitting at its first read from
-        # stdin; writing the prompt now gets it in
-        # front of any user message the orchestrator
-        # queues next. The blank line after the prompt
-        # is the conventional delimiter — the child can
-        # tell "system context ends here, user message
-        # starts here".
-        if self.system_prompt:
-            payload = self.system_prompt + "\n\n"
-            try:
-                await self._executor_submit(
-                    os.write, self._master_fd, payload.encode("utf-8")
-                )
-            except OSError as e:
-                # Master fd already closed — child died
-                # before we could write. Surface the
-                # error so the caller knows the runner
-                # isn't usable.
-                raise RuntimeError(
-                    f"failed to preload system prompt: child died ({e})"
-                ) from e
+    async def _do_preload(self) -> None:
+        """Write the system prompt to the child's stdin.
 
-        # Only the reader task — there is intentionally no
-        # background "waiter" task. os.waitpid is a global
-        # resource (only one waiter per child); having two
-        # threads blocked in waitpid for the same pid is a
-        # footgun (one wins, the other blocks forever). The
-        # reader task sees EOF on the master fd when the
-        # child exits, which is the canonical "child is
-        # gone" signal; stop() is the canonical reaper.
-        self._reader_task = asyncio.create_task(
-            self._read_loop(), name="pi-runner-read"
-        )
+        Used by start() and by the auto-restart path
+        (Task 2.6) so a respawned child gets the same
+        prompt as the original. Raises RuntimeError if
+        the child has already died (master fd closed)
+        before we could write.
+        """
+        if not self.system_prompt:
+            return
+        if self._master_fd is None:
+            return
+        payload = self.system_prompt + "\n\n"
+        try:
+            await self._executor_submit(
+                os.write, self._master_fd, payload.encode("utf-8")
+            )
+        except OSError as e:
+            # Master fd already closed — child died
+            # before we could write. Surface the
+            # error so the caller knows the runner
+            # isn't usable.
+            raise RuntimeError(
+                f"failed to preload system prompt: child died ({e})"
+            ) from e
+
+    async def _restart(self) -> bool:
+        """Respawn the child after a crash (Task 2.6).
+
+        Called by the reader task when it sees EOF on
+        the master fd and `self.auto_restart` is True.
+        Forks a new child, preloads the system prompt,
+        and returns True. Returns False if we've
+        already used up `self.max_restarts` (caller
+        should treat that as "give up" and end the
+        read_lines() stream).
+        """
+        if self._restart_count >= self.max_restarts:
+            return False
+        self._restart_count += 1
+        # Reset child state. The previous child's pgid
+        # is now meaningless (the process is gone).
+        self._child_pgid = 0
+        await self._do_fork()
+        await self._do_preload()
+        return True
 
     async def send(self, message: str) -> None:
         """Write a user message to the child's PTY stdin.
@@ -640,13 +686,35 @@ class PiRunner:
                     return
                 chunk = b""
             if not chunk:
-                # EOF: child closed the slave. Flush any
-                # trailing partial line and signal end-of-
-                # stream to the consumer (None sentinel),
-                # then bail.
+                # EOF: child closed the slave. Two paths
+                # from here (Task 2.6):
+                #   1. auto_restart=False (default): flush
+                #      any partial line, signal EOF to the
+                #      consumer, bail. The runner is done.
+                #   2. auto_restart=True: try to respawn
+                #      the child. If restart succeeds,
+                #      continue the loop and read from the
+                #      new master fd. If we've hit
+                #      max_restarts, treat this as EOF.
                 if buf:
                     await self._enqueue_line(buf)
                     buf = ""
+                if self.auto_restart and self.pid is not None:
+                    # The old child exited; clear pid so
+                    # stop() doesn't try to waitpid the
+                    # wrong pid later. _restart() sets
+                    # self.pid to the new child's pid.
+                    old_pid = self.pid
+                    self.pid = None
+                    if await self._restart():
+                        # New child is up. Continue the
+                        # loop; the next iteration will
+                        # read from the new master fd.
+                        continue
+                    # Restart failed (max_restarts
+                    # exceeded). Fall through to EOF
+                    # handling.
+                    self.pid = old_pid
                 await self._enqueue_line(None)  # EOF
                 return
             buf += chunk.decode("utf-8", errors="replace")
