@@ -53,7 +53,12 @@ def test_shell_exec_route_returns_command_output():
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"stdout": "hi\n", "stderr": "", "exit_code": 0}
+    assert body == {
+        "stdout": "hi\n",
+        "stderr": "",
+        "exit_code": 0,
+        "truncated": False,
+    }
 
 
 def test_exec_in_pty_handles_color_codes():
@@ -123,3 +128,22 @@ def test_exec_raises_timeout_error_and_kills_child():
         f"but pgrep found PIDs: {result.stdout!r}"
     )
     assert result.stdout.strip() == ""
+
+
+def test_exec_truncates_huge_output():
+    """Commands producing more than MAX_LINES lines are truncated.
+
+    Task 1.3 caps captured output at MAX_LINES=5000 / MAX_BYTES=1MB.
+    Once either limit is hit, the executor stops accumulating and
+    flags `result.truncated=True` so the caller knows the output
+    is incomplete. `seq 1 10000` produces 10000 newline-terminated
+    lines — well over the cap — so the result should be truncated
+    and contain at most 5000 lines.
+    """
+    async def scenario():
+        return await exec_command("seq 1 10000")
+
+    result = asyncio.run(scenario())
+
+    assert result.truncated is True
+    assert len(result.stdout.splitlines()) <= 5000

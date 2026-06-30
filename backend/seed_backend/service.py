@@ -77,6 +77,7 @@ class ShellExecResponse(BaseModel):
     stdout: str
     stderr: str
     exit_code: int
+    truncated: bool = False
 
 
 @app.post("/shell/exec", response_model=ShellExecResponse)
@@ -95,4 +96,5 @@ async def shell_exec(payload: ShellExecRequest) -> ShellExecResponse:
         stdout=result.stdout,
         stderr=result.stderr,
         exit_code=result.exit_code,
+        truncated=result.truncated,
     )

@@ -33,6 +33,17 @@ from dataclasses import dataclass
 _ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
+# Output caps applied inside `exec_command`. Task 1.3: a runaway
+# command (e.g. `cat /var/log/syslog`, `seq 1 1000000`) would
+# happily fill gigabytes into our result and OOM the worker.
+# Either cap being hit sets `ExecResult.truncated = True` and
+# stops accumulating output (we still drain the PTY so the child
+# doesn't block on a full slave buffer — we just throw the bytes
+# away).
+MAX_LINES: int = 5000
+MAX_BYTES: int = 1 * 1024 * 1024  # 1 MiB
+
+
 def strip_ansi(text: str) -> str:
     """Return `text` with common ANSI escape sequences removed.
 
@@ -71,12 +82,20 @@ class ExecResult:
                        False if ANSI escape sequences were
                        stripped before returning. Lets the caller
                        know what they're getting.
+        truncated:     True if the captured output hit the
+                       `MAX_LINES` or `MAX_BYTES` cap defined in
+                       this module; the caller is looking at a
+                       prefix of the command's real output, not
+                       the whole thing. False (the default) when
+                       the command produced output within the
+                       limits.
     """
 
     stdout: str
     stderr: str
     exit_code: int
     captured_ansi: bool
+    truncated: bool = False
 
 
 async def exec_command(
@@ -148,7 +167,7 @@ async def exec_command(
     # no extra locking is needed.
     state: dict = {"pid": None, "master_fd": None}
 
-    def _run_pty() -> tuple[bytes, int]:
+    def _run_pty() -> tuple[bytes, int, bool]:
         master_fd, slave_fd = pty.openpty()
         # Raw mode on the PTY: OPOST off means no \n → \r\n
         # translation, ICANON off means no input line buffering.
@@ -189,6 +208,9 @@ async def exec_command(
         os.close(slave_fd)
 
         chunks: list[bytes] = []
+        total_bytes = 0
+        total_lines = 0
+        truncated = False
         try:
             while True:
                 try:
@@ -199,7 +221,21 @@ async def exec_command(
                     break
                 if not data:
                     break
-                chunks.append(data)
+                if not truncated:
+                    new_bytes = total_bytes + len(data)
+                    new_lines = total_lines + data.count(b"\n")
+                    if new_bytes > MAX_BYTES or new_lines > MAX_LINES:
+                        # Hit the cap. We still fall through to
+                        # the next iteration to keep draining the
+                        # PTY — otherwise the child's `write`
+                        # would block once the slave buffer fills
+                        # and we'd deadlock — but we throw the
+                        # bytes away instead of accumulating.
+                        truncated = True
+                    else:
+                        total_bytes = new_bytes
+                        total_lines = new_lines
+                        chunks.append(data)
         finally:
             try:
                 os.close(master_fd)
@@ -213,7 +249,7 @@ async def exec_command(
         try:
             _, status = os.waitpid(pid, 0)
         except ChildProcessError:
-            return b"".join(chunks), -1
+            return b"".join(chunks), -1, truncated
         if os.WIFEXITED(status):
             exit_code = os.WEXITSTATUS(status)
         elif os.WIFSIGNALED(status):
@@ -221,10 +257,10 @@ async def exec_command(
         else:
             exit_code = -1
 
-        return b"".join(chunks), exit_code
+        return b"".join(chunks), exit_code, truncated
 
     try:
-        output, exit_code = await asyncio.wait_for(
+        output, exit_code, truncated = await asyncio.wait_for(
             loop.run_in_executor(None, _run_pty),
             timeout=timeout,
         )
@@ -262,4 +298,5 @@ async def exec_command(
         stderr="",  # PTY: stdout and stderr share the slave fd.
         exit_code=exit_code,
         captured_ansi=capture_ansi,
+        truncated=truncated,
     )
