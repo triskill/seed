@@ -30,6 +30,7 @@ fan out events.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -47,17 +48,18 @@ async def handle_chat(
 ) -> None:
     """Handle one WebSocket connection.
 
-    Accepts the upgrade, then loops on `receive_text`:
-      * `{"type": "user_message", "text": "..."}` -> forwarded
-        to the middle-man. The orchestrator then takes over
-        the turn (read loops in Tasks 3.3+ stream the
-        middle-man and worker output to all subscribers).
-      * any other `type`: logged at WARNING and dropped.
-        Forward-compat for new message kinds in later phases.
+    Accepts the upgrade, subscribes a private queue to the
+    orchestrator, and spawns a forwarder task that pumps
+    orchestrator events (middle-man lines, worker lines,
+    complete, app_reload, errors) to the WebSocket as JSON
+    text frames. Then loops on `receive_text` for inbound
+    user messages.
 
-    Non-JSON frames are also logged and dropped. The
-    connection is left open so a noisy client doesn't
-    repeatedly reconnect.
+    The forwarder is a peer task: it runs concurrently with
+    the inbound loop. Both are torn down on disconnect
+    (WebSocketDisconnect from the inbound loop, or a `None`
+    sentinel from the forwarder when the subscriber queue
+    drains after unsubscribe).
 
     Args:
         websocket:    The Starlette/FastAPI WebSocket.
@@ -73,31 +75,49 @@ async def handle_chat(
     """
     await websocket.accept()
     log.info("chat: client connected")
+    subscriber_queue = orchestrator.subscribe()
+    forwarder_task = asyncio.create_task(
+        _forward_events(websocket, subscriber_queue),
+        name="chat-forwarder",
+    )
     try:
-        async for raw in _iter_text_frames(websocket):
-            if not raw:
-                # Empty frame: ignore.
-                continue
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                log.warning(
-                    "chat: dropping non-JSON frame: %r", raw[:100]
-                )
-                continue
-            if not isinstance(msg, dict):
-                log.warning(
-                    "chat: dropping non-object frame: %r", raw[:100]
-                )
-                continue
-            msg_type = msg.get("type")
-            if msg_type == "user_message":
-                await _handle_user_message(websocket, orchestrator, msg)
-            else:
-                log.warning("chat: unknown message type: %r", msg_type)
-    except WebSocketDisconnect:
-        log.info("chat: client disconnected")
-        return
+        try:
+            async for raw in _iter_text_frames(websocket):
+                if not raw:
+                    # Empty frame: ignore.
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    log.warning(
+                        "chat: dropping non-JSON frame: %r", raw[:100]
+                    )
+                    continue
+                if not isinstance(msg, dict):
+                    log.warning(
+                        "chat: dropping non-object frame: %r", raw[:100]
+                    )
+                    continue
+                msg_type = msg.get("type")
+                if msg_type == "user_message":
+                    await _handle_user_message(websocket, orchestrator, msg)
+                else:
+                    log.warning("chat: unknown message type: %r", msg_type)
+        except WebSocketDisconnect:
+            log.info("chat: client disconnected")
+    finally:
+        # Cancel the forwarder and unsubscribe in either order:
+        # the forwarder's `await q.get()` will return
+        # immediately on cancel, and the unsubscribe
+        # is idempotent. Doing it in `finally` makes the
+        # cleanup path robust to early returns.
+        forwarder_task.cancel()
+        try:
+            await forwarder_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        orchestrator.unsubscribe(subscriber_queue)
+        log.info("chat: client torn down")
 
 
 async def _iter_text_frames(websocket: WebSocket):
@@ -112,6 +132,40 @@ async def _iter_text_frames(websocket: WebSocket):
     """
     while True:
         yield await websocket.receive_text()
+
+
+async def _forward_events(
+    websocket: WebSocket, queue: asyncio.Queue
+) -> None:
+    """Pump orchestrator events to the WebSocket as JSON text frames.
+
+    Runs as a long-lived task alongside the inbound loop in
+    `handle_chat`. Each `dict` placed on the queue by
+    `Orchestrator._broadcast` (Task 3.3+) is JSON-serialised
+    and sent as a text frame. The forwarder exits when:
+
+      * the orchestrator publishes a `None` sentinel (not
+        used in 3.3; reserved for Task 3.6's `complete`
+        handling, if we ever want to close the WS server-
+        side);
+      * the task is cancelled (the chat handler's `finally`
+        block does this on disconnect);
+      * `send_text` raises (the WS is dead).
+
+    Args:
+        websocket: The Starlette WebSocket to write frames to.
+        queue:     The orchestrator subscriber queue registered
+                   by `handle_chat`.
+    """
+    while True:
+        event = await queue.get()
+        if event is None:
+            return
+        try:
+            await websocket.send_text(json.dumps(event))
+        except Exception as exc:
+            log.warning("chat: forwarder send failed: %r", exc)
+            return
 
 
 async def _handle_user_message(

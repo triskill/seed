@@ -95,6 +95,13 @@ class Orchestrator:
         # it in this set for broadcast. The set itself is mutated
         # only from the asyncio thread (no extra lock needed).
         self._subscribers: set[asyncio.Queue[dict]] = set()
+        # Background tasks that read the middle-man and worker
+        # PiRunners and broadcast each line to every subscriber.
+        # Task 3.3 wires the middle-man loop; Task 3.5 wires the
+        # worker loop. Both are created in start() and cancelled
+        # in stop().
+        self._read_middleman_task: asyncio.Task | None = None
+        self._read_worker_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Spawn both `pi` processes. No-op if already started.
@@ -103,14 +110,54 @@ class Orchestrator:
         call returns as soon as both children are running (or
         have already failed to exec — the runner keeps the pid
         in that case so `stop()` can still reap the child).
+
+        Also starts the background read loops (Task 3.3 +
+        3.5). The loops shovel middle-man and worker output
+        into the subscriber queues. Idempotent: a second
+        call to start() is a no-op (the PiRunners are
+        themselves idempotent, and the read tasks are only
+        created if `self._read_*_task` is None).
         """
         await self.middleman.start()
         await self.worker.start()
+        if self._read_middleman_task is None:
+            self._read_middleman_task = asyncio.create_task(
+                self._read_middleman_loop(),
+                name="orchestrator-read-middleman",
+            )
+        if self._read_worker_task is None:
+            # Task 3.5 will replace this no-op with the real
+            # worker read loop. For 3.3 we only need the
+            # middle-man stream.
+            self._read_worker_task = asyncio.create_task(
+                self._read_worker_loop(),
+                name="orchestrator-read-worker",
+            )
 
     async def stop(self) -> None:
         """Stop both runners. Idempotent; safe to call on a
         half-started orchestrator (the runners' own start() is
-        idempotent and stop() is too)."""
+        idempotent and stop() is too).
+
+        Also cancels the read loops before tearing down the
+        runners. The read loops terminate on the next
+        `read_lines()` iteration (their `async for` exits
+        when the runner closes), but we cancel them eagerly
+        so the queues drain to subscribers before the WS
+        handlers see the connection close.
+        """
+        for task in (self._read_middleman_task, self._read_worker_task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    # Read loops can raise on cancel if a
+                    # broadcast is in flight; either way we
+                    # want stop() to keep going.
+                    pass
+        self._read_middleman_task = None
+        self._read_worker_task = None
         await self.middleman.stop()
         await self.worker.stop()
 
@@ -162,3 +209,64 @@ class Orchestrator:
         that the orchestrator forwards to the worker (Task 3.4).
         """
         await self.middleman.send(message)
+
+    async def _read_middleman_loop(self) -> None:
+        """Read lines from the middle-man and broadcast each one.
+
+        Task 3.3. Loops until the middle-man's `read_lines()`
+        async generator terminates (i.e. the child exited).
+        Each line is broadcast as a `{"type": "middleman_line",
+        "line": <line>}` event so chat clients can render the
+        agent's stream of thought in the chat UI.
+
+        The loop is a long-lived background task; it is
+        cancelled by `stop()`. Exceptions (other than
+        `CancelledError`) are logged and the loop continues
+        on the next iteration, so a transient error in one
+        iteration doesn't take down the whole stream.
+        """
+        try:
+            async for line in self.middleman.read_lines():
+                if line is None:
+                    # EOF — child closed the slave end. Done.
+                    break
+                await self._broadcast(
+                    {"type": "middleman_line", "line": line}
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception(
+                "middleman read loop crashed: %r", exc
+            )
+
+    async def _read_worker_loop(self) -> None:
+        """Read lines from the worker and broadcast each one.
+
+        Task 3.5 wires the real implementation. Until then
+        this is a no-op loop that exists only so
+        `Orchestrator.start()` can create the task uniformly
+        and the cancel/await in `stop()` doesn't have to
+        special-case "not started yet".
+        """
+        # Task 3.5: broadcast each line as
+        #   {"type": "worker_line", "line": <line>}
+        # For 3.3, the worker never receives input (no
+        # dispatch is wired yet), so the worker sits on
+        # readline and this loop blocks on `read_lines()`.
+        # When the orchestrator is stopped, the runner's
+        # `stop()` closes the master fd, EOF arrives, and
+        # this loop exits.
+        try:
+            async for line in self.worker.read_lines():
+                if line is None:
+                    break
+                # No-op until Task 3.5 wires the broadcast.
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception(
+                "worker read loop crashed: %r", exc
+            )
