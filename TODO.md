@@ -1,0 +1,152 @@
+# Seed — TODO
+
+A self-improving Android app: the APK is an immutable shell with four screens
+(App, Chat, Shell, Settings); an embedded Linux runtime (proot + Alpine) hosts
+a Python orchestrator that drives two `pi` agent instances (a "middle-man" for
+intent and a "worker" for building); the worker mutates a Flask + SQLite web
+app inside the runtime; the App screen shows the result.
+
+**Full design:** [`docs/plans/2026-06-30-seed-app-design.md`](docs/plans/2026-06-30-seed-app-design.md) (494 lines, vision + architecture + risks).
+**Detailed phase tasks:** [`docs/plans/2026-06-30-seed-v0.1-bootstrap.md`](docs/plans/2026-06-30-seed-v0.1-bootstrap.md) (Phase 0 + Phase 1 task-by-task spec).
+
+---
+
+## Status at a glance
+
+| Phase | What | Status |
+|---|---|---|
+| 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
+| 1 | Shell endpoint (PTY-backed) | ✅ done (5/5) |
+| 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ⬜ not started |
+| 3 | Middle-man + worker orchestration | ⬜ not started |
+| 4 | System prompts + first real agent loop | ⬜ not started |
+| 5 | Android shell (4 screens, nav, WebView) | ⬜ not started |
+| 6 | Android ↔ backend wiring | ⬜ not started |
+| 7 | Runtime extraction (proot + Alpine) | ⬜ not started |
+| 8 | Foreground service | ⬜ not started |
+| 9 | First-run setup wizard | ⬜ not started |
+| 10 | End-to-end polish | ⬜ not started |
+
+Tests: **16/16 passing** on a clean venv.
+
+---
+
+## ✅ Phase 0 — Project skeleton + local backend + web app
+
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 0.1 | Init repo structure | `backend/`, `webapp/` | Both packages use hatchling; minimal `pyproject.toml`. |
+| 0.2 | FastAPI service with `/health` | `backend/seed_backend/service.py` | Skeleton FastAPI app. |
+| 0.3 | Config loading from `config.json` | `backend/seed_backend/config.py` | Small `Config` dataclass; load/save JSON; default ports `{backend: 7777, flask: 7778}`. |
+| 0.4 | Web app `/api/ping` endpoint | `webapp/seed_app/app.py` | Flask app with `/` (placeholder card) and `/api/ping` (readiness signal). |
+| 0.5 | Wire Flask into backend | `backend/seed_backend/flask_manager.py` | `FlaskManager` spawns Flask via `asyncio.create_subprocess_exec`, polls `/api/ping` for readiness, terminates cleanly. FastAPI lifespan owns it. `/health` reports `{"status":"ok","flask":"up|down"}`. |
+| 0.6 | Dev startup script | `backend/scripts/dev.sh` | One command (`./backend/scripts/dev.sh`) brings up the full dev stack. |
+| 0.7 | README with quickstart | `README.md` | Project intro + quick start. |
+| 0.8 | Phase 0 demo | (verification) | Manual: curl `/health`, `/`, `/api/ping` against running stack — all green. |
+
+---
+
+## ✅ Phase 1 — Shell endpoint (PTY-backed)
+
+Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
+`{"stdout", "stderr", "exit_code", "captured_ansi", "truncated"}`.
+
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 1.1 | Basic `/shell/exec` (subprocess) | `backend/seed_backend/shell.py`, `service.py` | Initial `asyncio.create_subprocess_exec` version (later rewritten by 1.2). Pydantic request/response models in `service.py`. Server-side 60s timeout (`SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS`). `min_length=1` on the command field. |
+| 1.2 | PTY-based execution | `backend/seed_backend/shell.py` | Rewrote to use `pty.openpty()` + `os.fork()` in a thread-pool executor. Child does `setsid()` + `dup2(slave, 0/1/2)` + `execvp("sh", ["sh", "-c", cmd])`. PTY put in raw mode so `echo hi\n` round-trips. ANSI codes preserved. `capture_ansi` option on `ExecResult`. |
+| 1.3 | Output truncation | `backend/seed_backend/shell.py` | `MAX_LINES = 5000`, `MAX_BYTES = 1 MiB`. Read loop stops accumulating once either cap is exceeded; PTY is still drained so the child never blocks. `truncated: bool` field added to `ExecResult` + `ShellExecResponse`. |
+| 1.4 | Cancellation | `backend/seed_backend/shell.py` | New `ExecCancelled` exception. `exec_command(..., cancel: asyncio.Event)` parameter. Watcher coroutine races the read via `asyncio.wait`; on signal, sends SIGTERM to the process group (`os.killpg`), closes the master fd to unblock the in-flight read, then SIGKILL after a 1s grace period. |
+| 1.5 | Working directory persistence | `backend/seed_backend/shell.py` | `ShellSession` class with `cwd: Path` attribute. Heuristic `^\s*cd\s+(\S+)(?:\s+(.*))?$` resolves, validates, and updates `cwd`; the rest of the command runs in the new cwd. Lifespan creates a single `app.state.shell_session`; the route uses it. Module-level `exec_command` kept as a stateless shortcut. |
+
+**Module shape after Phase 1:**
+- `shell.py` — `ExecResult`, `ExecCancelled`, `MAX_LINES`, `MAX_BYTES`, `_exec_command_impl`, `exec_command`, `ShellSession`.
+- `service.py` — `app`, lifespan, `/health`, `POST /shell/exec` (with `ShellExecRequest`/`ShellExecResponse`).
+
+---
+
+## ⬜ Phase 2 — pi runner (PTY wrapper, ANSI strip, tool filter)
+
+6 tasks: fake pi fixture, PTY spawn + read loop, ANSI strip, tool-call filter
+(middle-man read-only), system prompt preload, restart on crash.
+
+## ⬜ Phase 3 — Middle-man + worker orchestration
+
+7 tasks: service spawns both pi instances on startup, WebSocket `/chat` endpoint,
+stream middle-man/worker output, dispatch JSON detection (middle-man → worker),
+complete signal + App reload trigger, Phase 3 demo.
+
+## ⬜ Phase 4 — System prompts + first real agent loop
+
+4 tasks: write `middleman.md` + `worker.md`, manual end-to-end test with real
+`pi`, iterate on prompts.
+
+## ⬜ Phase 5 — Android shell (4 screens, nav, WebView)
+
+9 tasks: Gradle init, 4-section nav, WebView in App screen, Chat/Shell/Settings
+screen UIs, DataStore for settings, theme + polish, Phase 5 demo.
+
+## ⬜ Phase 6 — Android ↔ backend wiring
+
+5 tasks: Retrofit + OkHttp client, WebSocket chat client, wire Chat/Shell/
+Settings screens.
+
+## ⬜ Phase 7 — Runtime extraction
+
+4 tasks: acquire proot + Alpine rootfs, build a deployable runtime,
+`RuntimeExtractor`, first-run trigger.
+
+## ⬜ Phase 8 — Foreground service
+
+4 tasks: `ProotRunner`, `RuntimeService` (foreground), health check polling,
+boot receiver.
+
+## ⬜ Phase 9 — First-run setup wizard
+
+3 tasks: `SetupScreen`, wire `MainActivity`, cold-start timing.
+
+## ⬜ Phase 10 — End-to-end polish
+
+6 tasks: App screen auto-reload, error banners, cancel button in Shell,
+"Add a habit tracker" full demo, polish + edge cases, final demo.
+
+---
+
+## Known v0.1 limitations (carry-forward TODOs)
+
+- **`os.fork()` from a multi-threaded process emits a `DeprecationWarning` in Python 3.12+.** Safe in practice here (child immediately `execvp`s — no Python state is touched) but the long-term fix is a `subprocess.Popen` + PTY abstraction or a dedicated single-threaded worker process. Phase 2+ is a good time to address.
+- **Stderr is merged into stdout** under PTY (both go to the slave). The response shape keeps `stderr: ""` for back-compat. A richer wire format (separate channels) is a later task if any client needs it.
+- **`ShellSession` cwd tracking is heuristic**, not a true persistent shell: only a leading `cd <path>` is recognised; `cd /tmp && ls` updates `cwd` for the Python side but the `ls` runs in the updated cwd. `cd` inside `$()` or backticks is not tracked. A real persistent shell process is a future task.
+- **No CI** — tests are run locally. A GitHub Actions workflow (or equivalent) is a future task.
+- **No `mypy`/lint config** in the repo. v0.1 is "ship it"; static analysis is a future task.
+- **No git remote** — Phase 0/1 work was merged locally to `master` only. Push + PR is a future task.
+
+---
+
+## Quick reference
+
+**Run the dev stack:**
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e "./backend[dev]" -e "./webapp[dev]"
+./backend/scripts/dev.sh   # starts uvicorn (which spawns Flask via lifespan)
+# in another shell:
+curl http://127.0.0.1:7777/health    # {"status":"ok","flask":"up"}
+curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json' \
+     -d '{"command": "ls --color=auto /tmp"}'
+```
+
+**Run all tests:**
+```bash
+.venv/bin/python -m pytest backend/ webapp/ -v
+# 16 passed
+```
+
+**Worktree workflow for new phases:**
+```bash
+git worktree add .worktrees/<phase-name> -b feat/<phase-name>
+cd .worktrees/<phase-name>
+python3 -m venv .venv && .venv/bin/pip install -e "./backend[dev]" -e "./webapp[dev]"
+# ... implement, test, commit ...
+# when done: merge to master, remove worktree, delete branch
+```
