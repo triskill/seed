@@ -11,10 +11,16 @@ on top of this skeleton.
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from seed_backend.flask_manager import FlaskManager
 from seed_backend.shell import exec_command
+
+# Wall-clock cap applied to /shell/exec. Prevents a runaway command
+# (e.g. `sleep 999`) from tying up a uvicorn worker indefinitely.
+# Task 1.4 will add client-driven cancellation on top of this server
+# cap; the cap stays.
+SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS: float = 60.0
 
 
 @asynccontextmanager
@@ -58,7 +64,7 @@ class ShellExecRequest(BaseModel):
                  shell syntax (pipes, &&, globs) is supported.
     """
 
-    command: str
+    command: str = Field(..., min_length=1)
 
 
 class ShellExecResponse(BaseModel):
@@ -81,7 +87,10 @@ async def shell_exec(payload: ShellExecRequest) -> ShellExecResponse:
     this route is just a thin adapter: validate the request, call
     `exec_command`, and shape the result into the response.
     """
-    result = await exec_command(payload.command)
+    result = await exec_command(
+        payload.command,
+        timeout=SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS,
+    )
     return ShellExecResponse(
         stdout=result.stdout,
         stderr=result.stderr,

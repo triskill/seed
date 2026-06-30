@@ -10,6 +10,10 @@ add one to capture ANSI color codes), no output truncation
 (Task 1.3), no cancellation (Task 1.4), no CWD persistence
 (Task 1.5). Treat those as separate concerns — they each get a
 focused change in their own task.
+
+Security note: this orchestrator is intended to run on a trusted LAN
+with the Android client as the only caller; the endpoint is
+unauthenticated by design for v0.1.
 """
 from __future__ import annotations
 
