@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seed-backend"
+version = "0.0.1"
+description = "Seed v0.1 backend: FastAPI orchestrator that drives the pi agent loop and manages the Flask webapp subprocess."
+requires-python = ">=3.11"
+authors = [
+    { name = "seed-dev" },
+]
+license = { text = "TBD" }
+
+dependencies = [
+    # Task 0.2: FastAPI orchestrator service.
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    # pydantic, pyyaml, websockets are added in later tasks.
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    # Required by fastapi.testclient.TestClient.
+    "httpx>=0.27",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["seed_backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

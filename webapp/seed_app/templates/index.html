@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seed</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <main class="card">
+    <h1 class="card__title">Hello, what should I become?</h1>
+    <p class="card__body">
+      This is a placeholder webapp. The Seed worker agent will grow it
+      into whatever you ask for in the Chat screen.
+    </p>
+    <p class="card__hint" id="status">ready</p>
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
