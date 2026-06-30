@@ -1,0 +1,9 @@
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4",
+  "api_key": "",
+  "ports": {
+    "backend": 7777,
+    "flask": 7778
+  }
+}
