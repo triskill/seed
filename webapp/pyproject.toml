@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seed-app"
+version = "0.0.1"
+description = "Seed v0.1 webapp: the Flask + SQLite app the worker agent mutates. Served at port 7778 in dev."
+requires-python = ">=3.11"
+authors = [
+    { name = "seed-dev" },
+]
+license = { text = "TBD" }
+
+dependencies = [
+    "flask>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["seed_app"]
+include = [
+    "seed_app/templates/*.html",
+    "seed_app/static/**/*",
+]

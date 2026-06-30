@@ -1,0 +1,59 @@
+/* Seed webapp — minimal reset, system font, dark/light via prefers-color-scheme. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+
+  background: #ffffff;
+  color: #111111;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #0f1115;
+    color: #e6e6e6;
+  }
+}
+
+.card {
+  max-width: 28rem;
+  padding: 1.75rem;
+  border: 1px solid currentColor;
+  border-radius: 12px;
+  opacity: 0.92;
+}
+
+.card__title {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.card__body {
+  margin: 0 0 1rem 0;
+}
+
+.card__hint {
+  margin: 0;
+  font-size: 0.875rem;
+  opacity: 0.6;
+}
