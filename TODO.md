@@ -65,10 +65,25 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 
 ---
 
-## ⬜ Phase 2 — pi runner (PTY wrapper, ANSI strip, tool filter)
+## ✅ Phase 2 — pi runner (PTY wrapper, ANSI strip, tool filter)
 
-6 tasks: fake pi fixture, PTY spawn + read loop, ANSI strip, tool-call filter
-(middle-man read-only), system prompt preload, restart on crash.
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 2.1 | Fake pi for testing | `backend/tests/fixtures/fake_pi.py` | Python script that reads stdin, writes 3 JSONL progress events + "done", exits 0. |
+| 2.2 | PTY spawn + read loop | `backend/seed_backend/pi_runner.py` | `PiRunner.__init__(cmd, role, ...)`, `start()`, `send()`, `read_lines()` async generator. Uses `pty.openpty()` + `os.fork()` + `os.execvp` like `shell.py`. Per-runner `ThreadPoolExecutor` (avoids default-executor fragility under multi-threaded pytest). Child reports its post-setsid pgid through a pipe; stop() uses that for killpg (with a fallback to `os.kill(pid, ...)` if setsid failed). Only one `os.waitpid` call site, in `stop()`. |
+| 2.3 | Output ANSI strip | `backend/seed_backend/pi_runner.py`, `backend/tests/test_ansi_strip.py` | `PiRunner(strip_ansi=True)` (default on). Two module-level regexes — CSI (`ESC [`) and OSC (`ESC ]`) — applied on every line in the read loop. |
+| 2.4 | Tool-call filter (middle-man read-only) | `backend/seed_backend/pi_runner.py`, `backend/tests/test_tool_filter.py` | `PiRunner(read_only_tools={read,grep,find,ls})`. Read loop parses each line as JSON, looks for `type == "tool_execution_start"`, aborts child (SIGTERM) and raises `ToolCallBlocked(tool_name, event)` from `read_lines()` if the tool isn't allowed. Also: fixed a real PTY-EOF bug exposed by the tests (master fd returns `OSError(errno=EIO)` on EOF, not 0 bytes — see `seed_backend/pi_runner.py` `_read_loop`); the reader now signals EOF via a `None` sentinel. |
+| 2.5 | System prompt preload | `backend/seed_backend/pi_runner.py`, `backend/tests/test_system_prompt.py` | `PiRunner(system_prompt=...)`. After fork but before `start()` returns, the runner writes the prompt + blank line to the child's stdin. Extracted into `_do_preload()` so auto-restart reuses it. |
+| 2.6 | Auto-restart on crash | `backend/seed_backend/pi_runner.py`, `backend/tests/test_auto_restart.py` | `PiRunner(auto_restart=False, max_restarts=5)`. The reader's EOF path calls `_restart()` (which calls `_do_fork()` + `_do_preload()`) up to `max_restarts` times; after that the stream ends. Default off to avoid surprising loops; production turns it on. |
+
+**Module shape after Phase 2:**
+- `pi_runner.py` — `PiRunner`, `PiRunnerNotRunning`, `ToolCallBlocked`, `_strip_ansi`, `_check_tool_call`, `_ANSI_CSI_RE`, `_ANSI_OSC_RE`.
+- `tests/fixtures/fake_pi*.py` — 4 siblings: basic progress emitter, ANSI-coloured progress emitter, tool-event emitter, crash-on-exit emitter.
+
+**Key design notes** (full rationales in the module docstrings):
+- Per-runner `ThreadPoolExecutor` so each runner owns its worker threads; shut down deterministically in `stop()`. The default asyncio executor is process-wide and gets fragile when multiple runners are torn down in sequence.
+- Only one `os.waitpid` call site, in `stop()`. Two threads in `waitpid` for the same pid is a footgun (kernel delivers exit to only one; the other blocks forever). EOF on the PTY master is the canonical "child is gone" signal.
+- Identity pipe: child reports its post-setsid pgid back to the parent. `os.getpgid(pid)` from the parent is unreliable in pytest's multi-threaded context (setsid can silently fail in the child, leaving it in the parent's pgid).
 
 ## ⬜ Phase 3 — Middle-man + worker orchestration
 
