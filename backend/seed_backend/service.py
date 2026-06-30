@@ -11,8 +11,10 @@ on top of this skeleton.
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from pydantic import BaseModel
 
 from seed_backend.flask_manager import FlaskManager
+from seed_backend.shell import exec_command
 
 
 @asynccontextmanager
@@ -46,3 +48,42 @@ def health(request: Request):
     manager = getattr(request.app.state, "flask_manager", None)
     flask_status = "up" if manager is not None and manager.is_up() else "down"
     return {"status": "ok", "flask": flask_status}
+
+
+class ShellExecRequest(BaseModel):
+    """Request body for POST /shell/exec.
+
+    Attributes:
+        command: The shell command to run. Passed to `sh -c`, so
+                 shell syntax (pipes, &&, globs) is supported.
+    """
+
+    command: str
+
+
+class ShellExecResponse(BaseModel):
+    """Response body for POST /shell/exec.
+
+    Mirrors `ExecResult` field-for-field so the Android client can
+    deserialize it directly.
+    """
+
+    stdout: str
+    stderr: str
+    exit_code: int
+
+
+@app.post("/shell/exec", response_model=ShellExecResponse)
+async def shell_exec(payload: ShellExecRequest) -> ShellExecResponse:
+    """Run a shell command and return its captured output.
+
+    The actual subprocess management lives in `shell.exec_command` —
+    this route is just a thin adapter: validate the request, call
+    `exec_command`, and shape the result into the response.
+    """
+    result = await exec_command(payload.command)
+    return ShellExecResponse(
+        stdout=result.stdout,
+        stderr=result.stderr,
+        exit_code=result.exit_code,
+    )
