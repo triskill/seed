@@ -1,17 +1,20 @@
 """Tests for the FastAPI orchestrator service.
 
-Task 0.2: smoke-tests the `/health` endpoint that confirms the service is
-running. The endpoint is the foundation for everything in Phase 1+ (shell,
-WebSocket chat, pi runner), so it must be reliable and trivial.
+Task 0.2: smoke-tests the `/health` endpoint. Task 0.5 extends the
+response to include the Flask subprocess status. The TestClient context
+manager triggers the lifespan, which actually starts a real Flask
+subprocess on port 7778 — the test then asserts both that the
+orchestrator is up and that Flask reports ready.
 """
 from fastapi.testclient import TestClient
 
 from seed_backend.service import app
 
-client = TestClient(app)
 
+def test_health_reports_status_and_flask_up():
+    """`/health` returns 200 with status=ok and flask=up after lifespan startup."""
+    with TestClient(app) as client:
+        response = client.get("/health")
 
-def test_health_returns_200_ok():
-    r = client.get("/health")
-    assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "flask": "up"}
