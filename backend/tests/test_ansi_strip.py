@@ -53,6 +53,8 @@ def test_ansi_strip_removes_csi_color_codes():
             lines: list[str] = []
             async with asyncio.timeout(5):
                 async for line in runner.read_lines():
+                    if line is None:
+                        break
                     lines.append(line)
                     if len(lines) >= 2:  # 'red text' + 'done'
                         break
@@ -80,6 +82,8 @@ def test_ansi_strip_disabled_preserves_raw_sequences():
             lines: list[str] = []
             async with asyncio.timeout(5):
                 async for line in runner.read_lines():
+                    if line is None:
+                        break
                     lines.append(line)
                     if len(lines) >= 2:
                         break

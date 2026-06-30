@@ -41,6 +41,9 @@ async def _drive_to_done(runner: PiRunner) -> list[str]:
     lines: list[str] = []
     async with asyncio.timeout(5):
         async for line in runner.read_lines():
+            if line is None:
+                # EOF — child closed the slave.
+                break
             lines.append(line)
             if line == "done":
                 break
