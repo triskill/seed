@@ -17,8 +17,8 @@ app inside the runtime; the App screen shows the result.
 |---|---|---|
 | 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
 | 1 | Shell endpoint (PTY-backed) | ✅ done (5/5) |
-| 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ⬜ not started |
-| 3 | Middle-man + worker orchestration | ⬜ not started |
+| 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ✅ done (6/6) |
+| 3 | Middle-man + worker orchestration | 🟡 in progress (3/7) |
 | 4 | System prompts + first real agent loop | ⬜ not started |
 | 5 | Android shell (4 screens, nav, WebView) | ⬜ not started |
 | 6 | Android ↔ backend wiring | ⬜ not started |
@@ -27,7 +27,7 @@ app inside the runtime; the App screen shows the result.
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **16/16 passing** on a clean venv.
+Tests: **48/48 passing** on a clean venv.
 
 ---
 
@@ -85,11 +85,22 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 - Only one `os.waitpid` call site, in `stop()`. Two threads in `waitpid` for the same pid is a footgun (kernel delivers exit to only one; the other blocks forever). EOF on the PTY master is the canonical "child is gone" signal.
 - Identity pipe: child reports its post-setsid pgid back to the parent. `os.getpgid(pid)` from the parent is unreliable in pytest's multi-threaded context (setsid can silently fail in the child, leaving it in the parent's pgid).
 
-## ⬜ Phase 3 — Middle-man + worker orchestration
+## 🟡 Phase 3 — Middle-man + worker orchestration (3/7)
 
-7 tasks: service spawns both pi instances on startup, WebSocket `/chat` endpoint,
-stream middle-man/worker output, dispatch JSON detection (middle-man → worker),
-complete signal + App reload trigger, Phase 3 demo.
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 3.1 | Service spawns both pi instances on startup | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/service.py`, `backend/tests/test_service_lifecycle.py` | `Orchestrator` lives in its own module (not `service.py`) to avoid the `service.py <-> chat.py` import cycle that would otherwise need a `TYPE_CHECKING` workaround. The class is a thin container for the middle-man + worker `PiRunner`s: `start()` forks+execs both, `stop()` reaps both, plus a per-subscriber pub-sub queue (`subscribe` / `unsubscribe` / `_broadcast`) for the chat route. Lifespan brings the orchestrator up on app start, down on shutdown, and is tolerant of `pi` not being installed (the spawn failure is swallowed and `/health` still works; the orchestrator's pids get set so `stop()` can reap the dead child). |
+| 3.2 | WebSocket `/chat` endpoint | `backend/seed_backend/chat.py`, `backend/seed_backend/service.py`, `backend/tests/fixtures/fake_pi_log.py`, `backend/tests/test_chat_ws.py` | `@app.websocket("/chat")` route delegates to `chat.handle_chat`. The handler accepts the upgrade, loops on `receive_text` for `{"type": "user_message", "text": ...}` frames, and forwards each to `orchestrator.send_to_middleman`. Non-JSON / unknown-type frames are logged + dropped (forward-compat for new message kinds in later phases). A `fake_pi_log.py` fixture writes the received prompt to a log file so the test can verify the round-trip without reaching into the runner's internal queue from a different event loop. |
+| 3.3 | Stream middle-man output to chat WS | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/chat.py`, `backend/tests/test_middleman_stream.py` | `Orchestrator.start()` spawns a background read loop that consumes `middleman.read_lines()` and broadcasts each line as `{"type": "middleman_line", "line": <raw>}` to every subscriber queue. `chat.handle_chat` subscribes a private queue on accept, spawns a forwarder task that pumps `queue -> ws.send_text(json)`, and unsubscribes in a `finally` block on disconnect. Per-subscriber queue is capped at 256 — slow clients drop events rather than backpressure the reader. Worker read loop is a no-op stub until Task 3.5. |
+
+**Module shape after Phase 3 (partial):**
+- `orchestrator.py` — `Orchestrator`, `pi_cmd_for_role`. Pub-sub + per-role read loops.
+- `chat.py` — `handle_chat`, `_forward_events`. WS handler + forwarder task.
+- `service.py` — lifespan creates the orchestrator + `/chat` route delegates to `handle_chat`.
+- `tests/fixtures/fake_pi_log.py` — file-logging fake for round-trip tests.
+- `tests/test_service_lifecycle.py` — 4 tests (lifespan wiring, roles, shutdown, missing-pi tolerance).
+- `tests/test_chat_ws.py` — 3 tests (forward to middleman, not to worker, accepts connection).
+- `tests/test_middleman_stream.py` — 3 tests (3-event burst, prompt echo, subscriber cleanup).
 
 ## ⬜ Phase 4 — System prompts + first real agent loop
 
