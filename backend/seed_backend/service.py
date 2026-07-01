@@ -24,7 +24,11 @@ from pydantic import BaseModel, Field
 
 from seed_backend.chat import handle_chat
 from seed_backend.flask_manager import FlaskManager
-from seed_backend.orchestrator import Orchestrator, pi_cmd_for_role
+from seed_backend.orchestrator import (
+    Orchestrator,
+    pi_cmd_for_role,
+    pi_env_for_role,
+)
 from seed_backend.pi_runner import PiRunner
 from seed_backend.shell import ShellSession
 
@@ -39,6 +43,7 @@ __all__ = [
     "app",
     "lifespan",
     "pi_cmd_for_role",
+    "pi_env_for_role",
     "Orchestrator",
     "SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS",
     "ShellExecRequest",
@@ -90,12 +95,21 @@ async def lifespan(app: FastAPI):
         pass
 
     # Phase 3: bring up both `pi` runners. (Task 3.1)
+    # The env passed to each runner overrides
+    # `PI_CODING_AGENT_DIR` to the project's local config
+    # (so the agent uses our defaultProvider/defaultModel
+    # from `.pi/agent/settings.json`) while still
+    # inheriting API keys set in the parent shell.
     orchestrator = Orchestrator(
         middleman=PiRunner(
-            cmd=pi_cmd_for_role("middleman"), role="middleman"
+            cmd=pi_cmd_for_role("middleman"),
+            role="middleman",
+            env=pi_env_for_role("middleman"),
         ),
         worker=PiRunner(
-            cmd=pi_cmd_for_role("worker"), role="worker"
+            cmd=pi_cmd_for_role("worker"),
+            role="worker",
+            env=pi_env_for_role("worker"),
         ),
     )
     app.state.orchestrator = orchestrator

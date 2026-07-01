@@ -146,3 +146,26 @@ def test_runner_role_is_stored():
     """
     runner = PiRunner(cmd=fake_pi_cmd(), role="middleman")
     assert runner.role == "middleman"
+
+
+def test_runner_env_is_stored_when_provided():
+    """The optional `env` arg is stored on the instance.
+
+    The runner uses it in `_do_fork` via `os.execvpe`
+    instead of `os.execvp`. This test only checks the
+    attribute (no actual spawn — the exec path is
+    covered by the e2e tests that spawn real `pi`).
+    """
+    env = {"PI_CODING_AGENT_DIR": "/tmp/nonexistent-for-test"}
+    runner = PiRunner(cmd=fake_pi_cmd(), role="worker", env=env)
+    assert runner.env == env
+
+
+def test_runner_env_defaults_to_none():
+    """No env means `None` (inherits parent env via `execvp`).
+
+    Tests + the pre-Phase-3 code path that don't pass an
+    env should keep working unchanged.
+    """
+    runner = PiRunner(cmd=fake_pi_cmd(), role="middleman")
+    assert runner.env is None

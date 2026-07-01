@@ -199,6 +199,7 @@ class PiRunner:
         system_prompt: str = "",
         auto_restart: bool = False,
         max_restarts: int = 5,
+        env: dict[str, str] | None = None,
     ) -> None:
         """
         Args:
@@ -209,6 +210,24 @@ class PiRunner:
                               path/to/fake_pi.py]` in tests
                               and `["pi", "--mode", "rpc",
                               ...]` in production.
+            env:             Optional environment dict for
+                              the child. When set, the
+                              runner calls `os.execvpe`
+                              with this env; when None
+                              (the default), it uses
+                              `os.execvp` and inherits the
+                              parent's environment. The
+                              orchestrator passes a
+                              derived env that overrides
+                              `PI_CODING_AGENT_DIR` to
+                              point at the project's
+                              `.pi/agent/` so the child
+                              uses our local config
+                              (provider/model defaults,
+                              no global pollution) while
+                              still inheriting the API
+                              key env var from the
+                              parent shell.
             role:            Free-form string identifying
                               what this runner does
                               ("middleman" or "worker").
@@ -266,6 +285,7 @@ class PiRunner:
         """
         self.cmd = list(cmd)
         self.role = role
+        self.env = dict(env) if env is not None else None
         self.strip_ansi = strip_ansi
         self.read_only_tools: set[str] | None = (
             set(read_only_tools) if read_only_tools is not None else None
@@ -397,7 +417,21 @@ class PiRunner:
                 finally:
                     os.close(slave_fd)
                 try:
-                    os.execvp(self.cmd[0], self.cmd)
+                    if self.env is not None:
+                        # `execvpe` takes the env as the
+                        # 3rd arg. Use it when the runner
+                        # was constructed with an explicit
+                        # env (e.g. to point pi at the
+                        # project's local config dir via
+                        # `PI_CODING_AGENT_DIR`).
+                        os.execvpe(self.cmd[0], self.cmd, self.env)
+                    else:
+                        # No explicit env — inherit the
+                        # parent's. This is the pre-Phase-3
+                        # default and what tests use (they
+                        # spawn fake_pi, not pi, and don't
+                        # care about config).
+                        os.execvp(self.cmd[0], self.cmd)
                 except OSError:
                     os._exit(127)
             # Parent branch.

@@ -8,6 +8,7 @@ app inside the runtime; the App screen shows the result.
 
 **Full design:** [`docs/plans/2026-06-30-seed-app-design.md`](docs/plans/2026-06-30-seed-app-design.md) (494 lines, vision + architecture + risks).
 **Detailed phase tasks:** [`docs/plans/2026-06-30-seed-v0.1-bootstrap.md`](docs/plans/2026-06-30-seed-v0.1-bootstrap.md) (Phase 0 + Phase 1 task-by-task spec).
+**Pi config:** [`docs/pi-config.md`](docs/pi-config.md) — project-local `.pi/agent/`, default model (`deepseek-v4-flash` on `opencode-go`), `OPENCODE_API_KEY` env var, `SEED_PI_*` overrides.
 
 ---
 
@@ -27,7 +28,7 @@ app inside the runtime; the App screen shows the result.
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **59/59 passing** on a clean venv.
+Tests: **68/68 passing** on a clean venv.
 
 ---
 
@@ -158,6 +159,7 @@ boot receiver.
 - **No CI** — tests are run locally. A GitHub Actions workflow (or equivalent) is a future task.
 - **No `mypy`/lint config** in the repo. v0.1 is "ship it"; static analysis is a future task.
 - **No git remote** — Phase 0/1 work was merged locally to `master` only. Push + PR is a future task.
+- **Pi uses `--no-session` so it doesn't persist per-process session files** — the orchestrator drives long-running pi processes for the lifetime of the FastAPI app, and persisting those sessions would pollute `~/.pi/agent/sessions/`. Chat history persistence (replaying from the last seen message ID across reconnects) is a separate concern, handled at the orchestrator level (e.g. logging to `logs/tasks.jsonl`) rather than by pi's session. Phase 4+ will add that.
 
 ---
 
@@ -167,6 +169,9 @@ boot receiver.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e "./backend[dev]" -e "./webapp[dev]"
+# Set the API key for the default model (one-time, in your shell rc).
+# See docs/pi-config.md for the full story.
+export OPENCODE_API_KEY="sk-..."
 ./backend/scripts/dev.sh   # starts uvicorn (which spawns Flask via lifespan)
 # in another shell:
 curl http://127.0.0.1:7777/health    # {"status":"ok","flask":"up"}
