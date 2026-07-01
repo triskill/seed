@@ -18,7 +18,7 @@ app inside the runtime; the App screen shows the result.
 | 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
 | 1 | Shell endpoint (PTY-backed) | ✅ done (5/5) |
 | 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ✅ done (6/6) |
-| 3 | Middle-man + worker orchestration | 🟡 in progress (3/7) |
+| 3 | Middle-man + worker orchestration | ✅ done (7/7) |
 | 4 | System prompts + first real agent loop | ⬜ not started |
 | 5 | Android shell (4 screens, nav, WebView) | ⬜ not started |
 | 6 | Android ↔ backend wiring | ⬜ not started |
@@ -27,7 +27,7 @@ app inside the runtime; the App screen shows the result.
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **48/48 passing** on a clean venv.
+Tests: **59/59 passing** on a clean venv.
 
 ---
 
@@ -85,22 +85,34 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 - Only one `os.waitpid` call site, in `stop()`. Two threads in `waitpid` for the same pid is a footgun (kernel delivers exit to only one; the other blocks forever). EOF on the PTY master is the canonical "child is gone" signal.
 - Identity pipe: child reports its post-setsid pgid back to the parent. `os.getpgid(pid)` from the parent is unreliable in pytest's multi-threaded context (setsid can silently fail in the child, leaving it in the parent's pgid).
 
-## 🟡 Phase 3 — Middle-man + worker orchestration (3/7)
+## ✅ Phase 3 — Middle-man + worker orchestration (7/7)
 
 | # | Task | Files | Notes |
 |---|---|---|---|
 | 3.1 | Service spawns both pi instances on startup | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/service.py`, `backend/tests/test_service_lifecycle.py` | `Orchestrator` lives in its own module (not `service.py`) to avoid the `service.py <-> chat.py` import cycle that would otherwise need a `TYPE_CHECKING` workaround. The class is a thin container for the middle-man + worker `PiRunner`s: `start()` forks+execs both, `stop()` reaps both, plus a per-subscriber pub-sub queue (`subscribe` / `unsubscribe` / `_broadcast`) for the chat route. Lifespan brings the orchestrator up on app start, down on shutdown, and is tolerant of `pi` not being installed (the spawn failure is swallowed and `/health` still works; the orchestrator's pids get set so `stop()` can reap the dead child). |
 | 3.2 | WebSocket `/chat` endpoint | `backend/seed_backend/chat.py`, `backend/seed_backend/service.py`, `backend/tests/fixtures/fake_pi_log.py`, `backend/tests/test_chat_ws.py` | `@app.websocket("/chat")` route delegates to `chat.handle_chat`. The handler accepts the upgrade, loops on `receive_text` for `{"type": "user_message", "text": ...}` frames, and forwards each to `orchestrator.send_to_middleman`. Non-JSON / unknown-type frames are logged + dropped (forward-compat for new message kinds in later phases). A `fake_pi_log.py` fixture writes the received prompt to a log file so the test can verify the round-trip without reaching into the runner's internal queue from a different event loop. |
-| 3.3 | Stream middle-man output to chat WS | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/chat.py`, `backend/tests/test_middleman_stream.py` | `Orchestrator.start()` spawns a background read loop that consumes `middleman.read_lines()` and broadcasts each line as `{"type": "middleman_line", "line": <raw>}` to every subscriber queue. `chat.handle_chat` subscribes a private queue on accept, spawns a forwarder task that pumps `queue -> ws.send_text(json)`, and unsubscribes in a `finally` block on disconnect. Per-subscriber queue is capped at 256 — slow clients drop events rather than backpressure the reader. Worker read loop is a no-op stub until Task 3.5. |
+| 3.3 | Stream middle-man output to chat WS | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/chat.py`, `backend/tests/test_middleman_stream.py` | `Orchestrator.start()` spawns a background read loop that consumes `middleman.read_lines()` and broadcasts each line as `{"type": "middleman_line", "line": <raw>}` to every subscriber queue. `chat.handle_chat` subscribes a private queue on accept, spawns a forwarder task that pumps `queue -> ws.send_text(json)`, and unsubscribes in a `finally` block on disconnect. Per-subscriber queue is capped at 256 — slow clients drop events rather than backpressure the reader. |
+| 3.4 | Dispatch JSON detection | `backend/seed_backend/middleman.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi_dispatch.py`, `backend/tests/test_dispatch.py`, `backend/tests/test_middleman_dispatch.py` | New module `middleman.py` owns the regex `r'```json\n(.*?)\n```'` (per the plan spec) and the parse step. The middle-man read loop keeps a rolling scan buffer (capped at 64 KiB as a safety net) and, on a match, calls `worker.send(json.dumps(dispatch) + "\n")`. The dispatch block is *also* broadcast as `middleman_line` events so the chat UI can render it as a card. Worker send failures are logged + swallowed; the chat stream must not die because the worker is unhealthy. |
+| 3.5 | Worker stream → chat stream | `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi_worker_response.py`, `backend/tests/test_worker_stream.py` | Replaces the no-op worker read loop stub with the real broadcast-each-line loop, tagged `{"type": "worker_line", "line": ...}` so the chat UI can render the two agents' output distinctly (thought vs build progress). |
+| 3.6 | Complete signal + app reload trigger | `backend/seed_backend/events.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi_worker_response.py`, `backend/tests/test_complete_signal.py` | New `events.py` module centralises the `<task:done/>` marker string and the WS `type` values (single source of truth for the orchestrator + chat layer + future prompt templates). Worker read loop watches for the marker; on detection, broadcasts two events to all subscribers — `{"type": "complete", "summary": "Task complete"}` and `{"type": "app_reload"}`. The marker line itself is *not* broadcast as a worker_line (it's a control signal, not user-facing content). The `summary` is a v0.1 placeholder string; Phase 4 will enrich it (the worker prompt will tell the agent to append a human-readable summary after the marker). |
+| 3.7 | Phase 3 demo | `backend/scripts/demo_phase3.py`, `backend/pyproject.toml` | `scripts/demo_phase3.py` is a self-contained manual demo: monkey-patches `pi_cmd_for_role` to use the fake fixtures, starts uvicorn on a free port in a daemon thread, opens a real WebSocket connection with `websocket-client`, sends one `user_message`, and prints every event the chat stream emits. Also added `uvicorn[standard]>=0.27` to the backend deps — the production server needs a real ASGI WS library to handle the `/chat` upgrade (the starlette TestClient uses its own transport, so tests don't need it). |
 
-**Module shape after Phase 3 (partial):**
-- `orchestrator.py` — `Orchestrator`, `pi_cmd_for_role`. Pub-sub + per-role read loops.
+**Module shape after Phase 3:**
+- `orchestrator.py` — `Orchestrator`, `pi_cmd_for_role`, pub-sub + per-role read loops. Middle-man loop scans for dispatch JSON and broadcasts `middleman_line` events. Worker loop broadcasts `worker_line` events and detects the `<task:done/>` marker for `complete` + `app_reload`.
 - `chat.py` — `handle_chat`, `_forward_events`. WS handler + forwarder task.
 - `service.py` — lifespan creates the orchestrator + `/chat` route delegates to `handle_chat`.
-- `tests/fixtures/fake_pi_log.py` — file-logging fake for round-trip tests.
+- `events.py` — `TASK_DONE_MARKER` (`<task:done/>`) + WS `type` constants. New in 3.6.
+- `middleman.py` — `DISPATCH_RE` + `extract_dispatch`. New in 3.4.
+- `tests/_ws_helpers.py` — `Receiver`, `collect_all`, `drain`, `filter_by_type`. New in 3.6; replaces ad-hoc helpers previously inlined in the WS tests. `Receiver` runs `ws.receive_text()` in a daemon thread with a per-call timeout via a queue, so a missing stream fails fast (`TimeoutError`) instead of hanging the test process.
+- `tests/fixtures/fake_pi_dispatch.py` — middle-man that emits a fenced JSON dispatch block. New in 3.4.
+- `tests/fixtures/fake_pi_worker_response.py` — worker that emits 3 progress events + `<task:done/>`. New in 3.5, extended in 3.6.
 - `tests/test_service_lifecycle.py` — 4 tests (lifespan wiring, roles, shutdown, missing-pi tolerance).
 - `tests/test_chat_ws.py` — 3 tests (forward to middleman, not to worker, accepts connection).
 - `tests/test_middleman_stream.py` — 3 tests (3-event burst, prompt echo, subscriber cleanup).
+- `tests/test_dispatch.py` — 1 end-to-end test (dispatch → worker stdin). New in 3.4.
+- `tests/test_middleman_dispatch.py` — 6 unit tests for `extract_dispatch` (no block, single-line, multi-line, multiple blocks, invalid JSON). New in 3.4.
+- `tests/test_worker_stream.py` — 2 tests (3 worker_line frames; worker + middleman distinguishable on the same WS). New in 3.5.
+- `tests/test_complete_signal.py` — 2 tests (complete + app_reload pair; multi-client fan-out). New in 3.6.
 
 ## ⬜ Phase 4 — System prompts + first real agent loop
 
@@ -165,7 +177,13 @@ curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json
 **Run all tests:**
 ```bash
 .venv/bin/python -m pytest backend/ webapp/ -v
-# 16 passed
+# 59 passed
+```
+
+**Run the Phase 3 manual demo (no real pi / API key needed):**
+```bash
+.venv/bin/python backend/scripts/demo_phase3.py
+# streams middleman_line → worker_line → complete → app_reload
 ```
 
 **Worktree workflow for new phases:**
