@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive launcher icon (API 26+).
+
+  Adaptive icons are the system-preferred icon format
+  since Android 8.0 Oreo. They consist of a foreground
+  layer and a background layer; the launcher can apply
+  masks (rounded square, circle, squircle, etc.) on top
+  without us having to ship separate raster icons for
+  each shape.
+
+  For Phase 5.1 the foreground is a simple green
+  drawable and the background is a flat colour. A
+  proper branded glyph (a sprout / seed) lands in
+  Phase 5.9 (polish) or whenever the design decides.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/seed_green" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

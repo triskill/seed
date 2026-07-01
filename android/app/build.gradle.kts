@@ -1,0 +1,122 @@
+// App module: the only module in Phase 5. We keep it
+// monolithic on purpose — multi-module Android projects
+// pay a meaningful build-time tax for module boundaries
+// and the app is too small to need them. When (if) the
+// app grows past ~50 KLOC or the build time becomes a
+// real bottleneck, the natural split is
+// `:core:chat:api` / `:core:webview:api` / `:feature:app`
+// / `:feature:chat` / `:feature:shell` / `:feature:settings`.
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.seed.app"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.seed.app"
+        // 26 = Android 8.0 Oreo. Aligns with the plan's
+        // minSdk (also lets us rely on adaptive icons,
+        // notification channels, and the modern JobScheduler
+        // API without compat shims).
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 1
+        versionName = "0.1.0"
+
+        // The dev backend runs on the host machine; on
+        // emulator we use the special 10.0.2.2 alias.
+        // On a physical device we'd need a real LAN IP.
+        // Phase 5.3 (WebView) reads this from BuildConfig.
+        buildConfigField("String", "WEBAPP_DEV_URL", "\"http://10.0.2.2:7778/\"")
+        buildConfigField("String", "BACKEND_DEV_URL", "\"http://10.0.2.2:7777/\"")
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+        debug {
+            // Default: dev URLs from BuildConfig above.
+            // Phase 5.3 will switch the WebView to these
+            // at runtime so the app works on physical
+            // devices too.
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    composeOptions {
+        // The Compose compiler is shipped as a separate
+        // artifact and its version is pinned to match the
+        // Kotlin version (1.9.24 here). See
+        // https://developer.android.com/jetpack/androidx/releases/compose-kotlin
+        kotlinCompilerExtensionVersion = "1.5.14"
+    }
+
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+dependencies {
+    // Core / lifecycle
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
+    implementation("androidx.activity:activity-compose:1.9.0")
+
+    // Compose BOM keeps every Compose artifact in sync.
+    val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+
+    // Navigation (Task 5.2)
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+
+    // WebView is in the platform android.webkit; the
+    // androidx.webkit:webkit artifact provides
+    // compatibility shims and the new
+    // `WebViewCompat` / `WebViewFeature` APIs we'll use
+    // in Phase 5.3.
+    implementation("androidx.webkit:webkit:1.11.0")
+
+    // Debug / tooling (not packaged in release builds).
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // Unit tests (run on JVM, no emulator).
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+
+    // Instrumented tests (require emulator / device).
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+}

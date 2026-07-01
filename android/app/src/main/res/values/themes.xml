@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App theme (platform-level, used by the system bars
+  and the splash screen). The actual in-app colour
+  scheme is a Compose `MaterialTheme {}` call in
+  `MainActivity.kt` — this XML theme just gives the
+  OS enough to draw the window background and the
+  status / navigation bars before the Compose
+  hierarchy attaches.
+
+  We use `Theme.DeviceDefault` (a framework theme,
+  no Material Components library required) so the
+  app blends in with the device's light/dark
+  setting. Phase 5.9 (polish) will add a custom
+  splash background and status-bar colour; for now
+  the framework default is fine.
+-->
+<resources>
+    <style name="Theme.Seed" parent="android:Theme.DeviceDefault">
+    </style>
+</resources>
