@@ -21,12 +21,22 @@ import time
 
 
 def main() -> int:
-    # Read one line of input. If stdin is closed (the orchestrator
-    # never sent us anything), the prompt is empty and we still
-    # emit the events — useful for tests that drive the worker
-    # directly without going through the dispatch path.
+    # Read one line of input. Phase 4: the orchestrator wraps
+    # the dispatch JSON in a pi RPC `prompt` command:
+    # `{"type":"prompt","message":"<dispatch json>"}`. We
+    # accept both the wrapped form (real orchestrator) and
+    # the bare form (older tests).
     line = sys.stdin.readline()
-    prompt = line.strip() if line else ""
+    prompt = ""
+    if line:
+        try:
+            cmd = json.loads(line)
+            if isinstance(cmd, dict) and cmd.get("type") == "prompt":
+                prompt = cmd.get("message", "")
+            else:
+                prompt = line.strip()
+        except json.JSONDecodeError:
+            prompt = line.strip()
 
     for i in range(3):
         event = {
@@ -38,14 +48,18 @@ def main() -> int:
         sys.stdout.flush()
         time.sleep(0.1)
 
-    # Task-done marker. The orchestrator's worker read loop
-    # detects this and broadcasts `complete` + `app_reload`
-    # to chat clients (Task 3.6). We do NOT also write the
-    # plain `done` marker from fake_pi.py — the two are
-    # semantically different (turn boundary vs task
-    # complete) and we want tests to assert on the task-done
-    # marker specifically.
-    sys.stdout.write("<task:done/>\n")
+    # Task-done marker (Phase 4: with summary attribute).
+    # The orchestrator's worker read loop detects this and
+    # broadcasts `complete` + `app_reload` to chat clients
+    # (Task 3.6). Phase 4 added the `summary` attribute —
+    # the orchestrator surfaces it as the `summary` field
+    # on the `complete` WS event, which is what the chat
+    # UI shows as the "X is ready" bubble. We emit a
+    # realistic summary so end-to-end tests can assert on
+    # the full wire format.
+    sys.stdout.write(
+        '<task:done summary="Built /habits page with 3 progress steps."/>\n'
+    )
     sys.stdout.flush()
     return 0
 

@@ -33,10 +33,23 @@ import time
 
 def main() -> int:
     """Run one fake pi turn. Returns 0 on success."""
-    # Read one line of input; if stdin is closed (e.g. the parent
-    # process never sent anything) treat that as an empty prompt.
+    # Read one line of input. Phase 4: the orchestrator wraps
+    # the user text in a pi RPC `prompt` command
+    # (`{"type":"prompt","message":"<text>"}`). We accept both
+    # the wrapped form (real orchestrator) and the bare form
+    # (older tests, manual usage) so this fixture is robust
+    # to caller shape.
     line = sys.stdin.readline()
-    prompt = line.strip() if line else ""
+    prompt = ""
+    if line:
+        try:
+            cmd = json.loads(line)
+            if isinstance(cmd, dict) and cmd.get("type") == "prompt":
+                prompt = cmd.get("message", "")
+            else:
+                prompt = line.strip()
+        except json.JSONDecodeError:
+            prompt = line.strip()
 
     # Three progress events, ~100ms apart, with the prompt echoed
     # back in the first one so a test can verify the runner passed

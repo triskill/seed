@@ -69,6 +69,16 @@ def test_complete_signal_emits_app_reload_event(complete_signal_client):
         f"expected exactly 1 'complete' frame, got {complete_frames!r}"
     )
     assert "summary" in complete_frames[0], complete_frames[0]
+    # Phase 4: the worker emits a `<task:done summary="..."/>`
+    # marker. The orchestrator surfaces the inline summary
+    # as the `summary` field on the `complete` event. The
+    # fake worker fixture sets a specific string; assert it
+    # round-trips through the orchestrator and the WS layer
+    # verbatim. Catches a regression where the marker parser
+    # drops the attribute (Task 3.6 / Phase 4 prep work).
+    assert complete_frames[0]["summary"] == (
+        "Built /habits page with 3 progress steps."
+    ), complete_frames[0]
     assert len(app_reload_frames) == 1, (
         f"expected exactly 1 'app_reload' frame, got {app_reload_frames!r}"
     )

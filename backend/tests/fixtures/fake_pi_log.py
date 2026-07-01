@@ -15,6 +15,7 @@ got the dispatch (Task 3.4 will use the same mechanism).
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 
@@ -27,9 +28,24 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # Read one line of input. If stdin is closed, treat as empty.
+    # Read one line of input. Phase 4: the orchestrator wraps
+    # the user text in a pi RPC `prompt` command
+    # (`{"type":"prompt","message":"<text>"}`). We accept both
+    # the wrapped form (real orchestrator) and the bare form
+    # (older tests, manual usage). The log file is what the
+    # tests assert on, so we write the *message* — the user
+    # text or dispatch JSON, not the RPC wrapper.
     line = sys.stdin.readline()
-    prompt = line.rstrip("\n") if line else ""
+    prompt = ""
+    if line:
+        try:
+            cmd = json.loads(line)
+            if isinstance(cmd, dict) and cmd.get("type") == "prompt":
+                prompt = cmd.get("message", "")
+            else:
+                prompt = line.rstrip("\n")
+        except json.JSONDecodeError:
+            prompt = line.rstrip("\n")
 
     # Write to the log file atomically: write to a temp path in
     # the same directory, then rename. Avoids the test seeing a

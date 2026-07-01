@@ -62,20 +62,21 @@ def test_pi_cmd_for_role_includes_provider_and_model():
             )
 
 
-def test_pi_cmd_for_role_works_for_both_roles():
-    """Both `middleman` and `worker` get the same flags today.
+def test_pi_cmd_for_role_picks_per_role_prompt_file():
+    """Each role points at its own `--append-system-prompt` file.
 
-    Phase 4 will add per-role `--append-system-prompt` files,
-    at which point the two calls will diverge. For now the
-    flags are identical — this test guards that and would
-    catch an accidental asymmetry.
+    Phase 4: the middle-man gets `middleman.md`, the worker
+    gets `worker.md`. The test guards against an accidental
+    swap (middle-man loading the worker prompt would route
+    the worker's tool calls through the read-only filter, etc.)
     """
     mm = pi_cmd_for_role("middleman")
     wk = pi_cmd_for_role("worker")
-    # Drop the role from any future --role flag; today the
-    # role is implicit in how the orchestrator uses the
-    # argv, not in a flag. So the two lists are identical.
-    assert mm == wk, f"role asymmetry: {mm!r} vs {wk!r}"
+    mm_prompt = mm[mm.index("--append-system-prompt") + 1]
+    wk_prompt = wk[wk.index("--append-system-prompt") + 1]
+    assert mm_prompt.endswith("middleman.md"), mm_prompt
+    assert wk_prompt.endswith("worker.md"), wk_prompt
+    assert mm_prompt != wk_prompt
 
 
 def test_pi_cmd_for_role_rejects_unknown_role():
