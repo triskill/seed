@@ -42,3 +42,8 @@ linux/
 proot
 *.tar.gz
 *.tar
+
+# Makefile runtime artifacts (emulator/backend PIDs and logs)
+backend.pid
+emulator.pid
+.tmp/
