@@ -304,29 +304,28 @@ class Orchestrator:
     async def _read_worker_loop(self) -> None:
         """Read lines from the worker and broadcast each one.
 
-        Task 3.5 wires the real implementation. Until then
-        this is a no-op loop that exists only so
-        `Orchestrator.start()` can create the task uniformly
-        and the cancel/await in `stop()` doesn't have to
-        special-case "not started yet".
+        Task 3.5. Mirrors `_read_middleman_loop` but for
+        the worker pi. Each line is broadcast as a
+        `{"type": "worker_line", "line": <line>}` event so
+        chat clients can render the worker's build progress
+        (file edits, shell commands, etc.) in the chat UI
+        — distinct from the middle-man's stream of thought.
+
+        The loop runs until the worker's `read_lines()`
+        async generator terminates (the child exited). It
+        is a long-lived background task cancelled by
+        `stop()`. Exceptions other than `CancelledError` are
+        logged and the loop continues on the next iteration.
         """
-        # Task 3.5: broadcast each line as
-        #   {"type": "worker_line", "line": <line>}
-        # For 3.3, the worker never receives input (no
-        # dispatch is wired yet), so the worker sits on
-        # readline and this loop blocks on `read_lines()`.
-        # When the orchestrator is stopped, the runner's
-        # `stop()` closes the master fd, EOF arrives, and
-        # this loop exits.
         try:
             async for line in self.worker.read_lines():
                 if line is None:
+                    # EOF — child closed the slave end. Done.
                     break
-                # No-op until Task 3.5 wires the broadcast.
+                await self._broadcast(
+                    {"type": "worker_line", "line": line}
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).exception(
-                "worker read loop crashed: %r", exc
-            )
+            log.exception("worker read loop crashed: %r", exc)
