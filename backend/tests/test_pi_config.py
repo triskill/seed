@@ -134,3 +134,23 @@ def test_pi_env_for_role_rejects_unknown_role():
     """Same ValueError contract as `pi_cmd_for_role`."""
     with pytest.raises(ValueError, match="unknown pi role"):
         pi_env_for_role("manager")
+
+
+def test_pi_env_for_role_sets_seed_app_path(monkeypatch):
+    """The env dict carries `SEED_APP_PATH` so the agent
+    prompts can reference the webapp location
+    portably. Default is the production path
+    (`/home/seed/app/`); dev overrides via env."""
+    monkeypatch.delenv("SEED_APP_PATH", raising=False)
+    env = pi_env_for_role("middleman")
+    assert env["SEED_APP_PATH"] == "/home/seed/app"
+
+
+def test_pi_env_for_role_seed_app_path_overridable(monkeypatch):
+    """Setting `SEED_APP_PATH` in the orchestrator's env
+    threads through to the agent child — this is how
+    the dev script points the agent at the local
+    webapp without editing prompts."""
+    monkeypatch.setenv("SEED_APP_PATH", "/tmp/my-webapp")
+    env = pi_env_for_role("worker")
+    assert env["SEED_APP_PATH"] == "/tmp/my-webapp"

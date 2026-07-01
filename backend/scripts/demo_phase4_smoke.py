@@ -34,7 +34,16 @@ real worker, which is what Phase 4 follow-up Task 4.4
 
 Usage:
     export OPENCODE_API_KEY="sk-..."
-    .venv/bin/python backend/scripts/demo_phase4_smoke.py
+    .venv/bin/python backend/scripts/demo_phase4_smoke.py [<prompt>]
+
+The first positional argument (if given) replaces the
+default question. Pass a build request (e.g. "Add a
+/habits page with a daily check-in form and streak
+counter") to drive the full chain end-to-end:
+middle-man emits a dispatch, worker builds, chat
+gets `complete` + `app_reload`. The build mode waits
+up to 3 minutes for the worker; the question mode
+exits after 5s of silence.
 """
 from __future__ import annotations
 
@@ -124,27 +133,58 @@ def main() -> int:
 
     ws = websocket.create_connection(ws_url, timeout=30.0)
     try:
-        # Question (not a build). The middle-man should
+        # Default: a question. The middle-man should
         # answer directly, no dispatch JSON, no worker.
-        prompt = "Reply with exactly one short sentence: what is your role?"
+        # Override with a positional argv for a build
+        # request (drives the full chain).
+        if len(sys.argv) > 1:
+            prompt = " ".join(sys.argv[1:])
+            build_mode = True
+            overall_deadline_s = 180.0
+            silence_break_s = 30.0
+        else:
+            prompt = (
+                "Reply with exactly one short sentence: what is your role?"
+            )
+            build_mode = False
+            overall_deadline_s = 60.0
+            silence_break_s = 5.0
+        print(
+            f"[smoke] mode={'build' if build_mode else 'question'} "
+            f"timeout={overall_deadline_s}s",
+            flush=True,
+        )
         print(f"[smoke] sending user_message: {prompt!r}", flush=True)
         ws.send(json.dumps({"type": "user_message", "text": prompt}))
 
-        deadline = time.monotonic() + 60.0
+        deadline = time.monotonic() + overall_deadline_s
         saw_response = False
+        saw_complete = False
+        last_frame_at = time.monotonic()
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             ws.settimeout(max(0.1, min(5.0, remaining)))
             try:
                 raw = ws.recv()
             except websocket.WebSocketTimeoutException:
-                # No frame in 5s — assume the middle-man is
-                # done and exit the loop. (No `complete`
-                # event expected for a question, so we
-                # can't wait for that.)
-                break
+                # No frame in 5s. In question mode, assume
+                # the middle-man is done and exit. In
+                # build mode, only exit if we've been
+                # silent for a while (the worker is
+                # thinking).
+                if not build_mode:
+                    break
+                if time.monotonic() - last_frame_at > silence_break_s:
+                    print(
+                        f"[smoke] WARNING: silent for {silence_break_s}s, "
+                        "giving up.",
+                        flush=True,
+                    )
+                    break
+                continue
             except websocket.WebSocketConnectionClosedException:
                 break
+            last_frame_at = time.monotonic()
             frame = json.loads(raw)
             t = frame.get("type", "?")
             if t == "middleman_line":
@@ -161,10 +201,17 @@ def main() -> int:
                     f"  [complete]  summary={frame.get('summary')!r}",
                     flush=True,
                 )
-                break
+                saw_complete = True
+                # In build mode keep listening briefly
+                # for the `app_reload` event (the
+                # orchestrator broadcasts it right after
+                # complete). In question mode, exit.
+                if not build_mode:
+                    break
             elif t == "app_reload":
                 print("  [app_reload] (App screen would refresh now)", flush=True)
-                break
+                if saw_complete:
+                    break
             else:
                 print(f"  [?] {frame}", flush=True)
 

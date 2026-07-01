@@ -58,6 +58,17 @@ class FlaskManager:
         env = os.environ.copy()
         venv_bin = str(Path(sys.executable).parent)
         env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+        # The worker agent mutates app.py while Flask is
+        # running. Without debug mode, the Werkzeug
+        # reloader doesn't watch the file and the new
+        # routes don't appear until restart — and the
+        # worker can't restart Flask (the orchestrator
+        # supervises it, killing the process from the
+        # agent's bash would leave the webapp down
+        # until the next server restart). FLASK_DEBUG=1
+        # enables the reloader so a worker edit is
+        # picked up on the next request.
+        env["FLASK_DEBUG"] = "1"
 
         self._process = await asyncio.create_subprocess_exec(
             "flask",

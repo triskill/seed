@@ -128,6 +128,7 @@ PI_EVENT_TOOL_START = "tool_execution_start"
 PI_EVENT_TOOL_END = "tool_execution_end"
 PI_EVENT_TURN_END = "turn_end"
 PI_EVENT_MESSAGE_END = "message_end"
+PI_EVENT_MESSAGE_END = "message_end"
 PI_EVENT_RESPONSE = "response"
 PI_EVENT_EXTENSION_UI_REQUEST = "extension_ui_request"
 
@@ -257,6 +258,47 @@ def translate_pi_line(
         # Other assistantMessageEvent types
         # (text_start, text_end, thinking_start, ...)
         # are lifecycle — ignore.
+        return (None, "")
+
+    if t == PI_EVENT_MESSAGE_END:
+        # End of an assistant turn. The full message
+        # content is in `message.content` as a list of
+        # blocks: `{"type": "thinking", "thinking":
+        # "..."}` and `{"type": "text", "text": "..."}`.
+        #
+        # Some models (notably the cheaper ones) don't
+        # stream `text_delta` chunks and only emit the
+        # final text in `message_end`. We have to
+        # support both, so extract the text content
+        # here and treat it as if it were a text_delta
+        # — broadcast as a chat line, accumulate for
+        # the dispatch / task-done scan. We do NOT
+        # broadcast thinking content (it's hidden).
+        #
+        # We broadcast the text as a single line (the
+        # full final text) even if deltas were also
+        # streamed — the chat UI's de-duplication is
+        # out of scope here, and double-displaying the
+        # last word is a known acceptable glitch for
+        # non-streaming models. The thinking-vs-text
+        # split is the only important filter.
+        msg = event.get("message", {})
+        content = msg.get("content", [])
+        text_chunks = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type == "text":
+                t_text = block.get("text", "")
+                if isinstance(t_text, str):
+                    text_chunks.append(t_text)
+        full_text = "".join(text_chunks)
+        if full_text:
+            return (
+                [{"type": ws_type, "line": full_text}],
+                full_text,
+            )
         return (None, "")
 
     # ---- Tool call lifecycle -----------------------------------
