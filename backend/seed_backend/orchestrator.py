@@ -30,8 +30,19 @@ forwarding (Task 3.4) are added on top of this skeleton.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 
+from seed_backend.middleman import extract_dispatch
 from seed_backend.pi_runner import PiRunner
+
+log = logging.getLogger(__name__)
+
+# Cap on the middle-man scan buffer. A typical dispatch body
+# is a few hundred bytes; 64 KiB is comfortable headroom for
+# unusually long specs while still bounding memory in case
+# the agent never closes the block.
+_MIDDLEMAN_SCAN_BUFFER_MAX = 64 * 1024
 
 
 def pi_cmd_for_role(role: str) -> list[str]:
@@ -213,33 +224,82 @@ class Orchestrator:
     async def _read_middleman_loop(self) -> None:
         """Read lines from the middle-man and broadcast each one.
 
-        Task 3.3. Loops until the middle-man's `read_lines()`
-        async generator terminates (i.e. the child exited).
-        Each line is broadcast as a `{"type": "middleman_line",
-        "line": <line>}` event so chat clients can render the
-        agent's stream of thought in the chat UI.
+        Task 3.3 streams each line to subscribers as a
+        `{"type": "middleman_line", "line": <line>}` event.
+
+        Task 3.4 also scans the accumulated output for a
+        fenced ```json dispatch block; when one is found,
+        the parsed dict is forwarded to the worker pi as a
+        single line of JSON on its stdin. The block is
+        *also* broadcast to chat clients (the chat UI may
+        want to show the dispatch as a card).
+
+        The buffer is bounded: if it grows past
+        `_MIDDLEMAN_SCAN_BUFFER_MAX` bytes without a
+        complete dispatch being found, the buffer is
+        reset to avoid a runaway. A real middle-man
+        either closes the block quickly or never emits
+        one; the cap is just a safety net.
 
         The loop is a long-lived background task; it is
         cancelled by `stop()`. Exceptions (other than
-        `CancelledError`) are logged and the loop continues
-        on the next iteration, so a transient error in one
-        iteration doesn't take down the whole stream.
+        `CancelledError`) are logged and the loop
+        continues on the next iteration, so a transient
+        error in one iteration doesn't take down the
+        whole stream.
         """
+        buffer = ""
         try:
             async for line in self.middleman.read_lines():
                 if line is None:
                     # EOF — child closed the slave end. Done.
                     break
+                # Always broadcast the raw line; the chat UI
+                # is the primary observer.
                 await self._broadcast(
                     {"type": "middleman_line", "line": line}
                 )
+                # Scan for a dispatch block. The block may
+                # span many lines so we keep a rolling buffer.
+                buffer += line + "\n"
+                if len(buffer) > _MIDDLEMAN_SCAN_BUFFER_MAX:
+                    # Safety reset; the agent is producing a
+                    # lot of text without a dispatch, give up
+                    # and start fresh.
+                    buffer = ""
+                    continue
+                dispatch = extract_dispatch(buffer)
+                if dispatch is not None:
+                    # Forward to the worker. The worker
+                    # receives the raw JSON as a single line
+                    # on its stdin — the same shape the
+                    # middle-man emitted, minus the fenced
+                    # block. A worker agent (real `pi`) is
+                    # expected to read its stdin as JSON or
+                    # text; the prompt template (Phase 4)
+                    # tells the worker what shape to expect.
+                    try:
+                        await self.worker.send(
+                            json.dumps(dispatch) + "\n"
+                        )
+                    except Exception as exc:
+                        # Worker not running, broken pipe,
+                        # etc. Log and keep going — the chat
+                        # stream should not die because the
+                        # worker is unhealthy.
+                        log.warning(
+                            "dispatch forward to worker failed: %r",
+                            exc,
+                        )
+                    # Clear the buffer past the match so a
+                    # second dispatch in the same turn is
+                    # detected (and so a half-formed block
+                    # doesn't trip us up later).
+                    buffer = ""
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).exception(
-                "middleman read loop crashed: %r", exc
-            )
+            log.exception("middleman read loop crashed: %r", exc)
 
     async def _read_worker_loop(self) -> None:
         """Read lines from the worker and broadcast each one.
