@@ -284,3 +284,112 @@ def test_translate_defaults_to_middleman_role():
     line = "plain text"
     events, _ = translate_pi_line(line)
     assert events[0]["type"] == "middleman_line"
+
+
+def test_translate_message_end_extracts_text_content():
+    """`message_end` carries the full final assistant
+    message. Some models (cheap / non-streaming) emit
+    text only in `message_end`, never as `text_delta`
+    chunks. The translator must extract the text
+    content blocks so the dispatch / task-done scan
+    can fire on the final text.
+
+    Real-world example (deepseek-v4-flash via opencode-go):
+    the model wrote a thinking block + a text block in
+    a single message, with no streaming chunks. Without
+    this case, the orchestrator's worker read loop
+    never sees `<task:done .../>` in the accumulated
+    text, and `complete` + `app_reload` never fire.
+    """
+    line = json.dumps(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "Mission accomplished. Let me report done.",
+                    },
+                    {
+                        "type": "text",
+                        "text": '<task:done summary="Added /hello route."/>',
+                    },
+                ],
+            },
+        }
+    )
+    events, text = translate_pi_line(line, role="worker")
+    assert events is not None
+    # The text is broadcast (the marker line is filtered
+    # by the orchestrator, not the translator — the
+    # translator just extracts the text).
+    assert events[0]["type"] == "worker_line"
+    assert "<task:done" in events[0]["line"]
+    # And accumulated so parse_task_done() can find it.
+    assert '<task:done summary="Added /hello route."/>' in text
+
+
+def test_translate_message_end_ignores_thinking_content():
+    """The thinking block is hidden by default — only
+    `text` blocks are broadcast / accumulated. This is
+    consistent with the `thinking_delta` handling."""
+    line = json.dumps(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "internal notes..."},
+                    {"type": "text", "text": "user-visible reply"},
+                ],
+            },
+        }
+    )
+    events, text = translate_pi_line(line, role="middleman")
+    assert events is not None
+    # Only the text content is broadcast.
+    assert "user-visible reply" in events[0]["line"]
+    assert "internal notes" not in events[0]["line"]
+    assert "internal notes" not in text
+
+
+def test_translate_message_end_handles_empty_content():
+    """A `message_end` with no `text` blocks (pure
+    thinking, or a tool-only turn) returns no events and
+    no accumulated text. The chat UI should not see a
+    stray empty line."""
+    line = json.dumps(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": "hmm"}],
+            },
+        }
+    )
+    events, text = translate_pi_line(line, role="worker")
+    assert events is None
+    assert text == ""
+
+
+def test_translate_message_end_concatenates_multiple_text_blocks():
+    """If for some reason the model emits multiple text
+    blocks in one message, concatenate them in order so
+    the dispatch regex / task-done scan sees the
+    complete output."""
+    line = json.dumps(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "First part. "},
+                    {"type": "text", "text": "Second part."},
+                ],
+            },
+        }
+    )
+    events, text = translate_pi_line(line, role="middleman")
+    assert events[0]["line"] == "First part. Second part."
+    assert text == "First part. Second part."

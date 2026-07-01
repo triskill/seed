@@ -20,7 +20,7 @@ app inside the runtime; the App screen shows the result.
 | 1 | Shell endpoint (PTY-backed) | ✅ done (5/5) |
 | 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ✅ done (6/6) |
 | 3 | Middle-man + worker orchestration | ✅ done (7/7) |
-| 4 | System prompts + first real agent loop | 🟡 in progress (3/4) |
+| 4 | System prompts + first real agent loop | ✅ done (4/4) |
 | 5 | Android shell (4 screens, nav, WebView) | ⬜ not started |
 | 6 | Android ↔ backend wiring | ⬜ not started |
 | 7 | Runtime extraction (proot + Alpine) | ⬜ not started |
@@ -28,7 +28,7 @@ app inside the runtime; the App screen shows the result.
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **95/95 passing** on a clean venv.
+Tests: **102/102 passing** on a clean venv.
 
 ---
 
@@ -122,7 +122,7 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 | 4.1 | `middleman.md` system prompt | `backend/prompts/middleman.md` (new), `backend/seed_backend/orchestrator.py` (wired via `--append-system-prompt`) | Defines the middle-man's role: read-only access to `/home/seed/app/`, ask 1–2 clarifying questions if ambiguous, emit a fenced JSON dispatch block when ready, answer questions directly (no JSON). Describes the wire format the orchestrator expects (`{"intent","feature","spec"}`). Updated `pi_cmd_for_role` to pass `--append-system-prompt <file>` so the role-specific prompt is injected at spawn time. |
 | 4.2 | `worker.md` system prompt | `backend/prompts/worker.md` (new), `backend/seed_backend/orchestrator.py` | Worker prompt: read state, plan, edit, verify (`curl` the new route, check the DB schema), emit `<task:done summary="..."/>` when done. Includes the `<task:done summary="..."/>` marker format the orchestrator's worker read loop watches for (Task 3.6 + Phase 4 enrichment). |
 | 4.3 | Orchestrator speaks pi's RPC protocol | `backend/seed_backend/events.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi*.py`, `backend/tests/test_events.py`, `backend/tests/test_prompts.py` | The orchestrator was built assuming pi outputs plain text. Real `pi --mode rpc` expects JSON commands on stdin (`{"type":"prompt","message":"..."}`) and emits JSONL events on stdout (`message_update`, `tool_execution_start`, `turn_end`, etc.). Added `translate_pi_line` (in `events.py`) that unwraps pi's events back to plain text deltas / tool-call JSON / turn-boundary signals. `send_to_middleman` and the worker send now wrap messages in `{"type":"prompt",...}`. The fake pi fixtures were updated to parse the JSON wrapper and use the `message` field as the prompt, so the existing 59 tests still pass without changes. New `scripts/demo_phase4_smoke.py` exercises the full stack with real `pi` (sends a question, gets a streamed text response). 13 new unit tests for the translator + 6 sanity tests for the prompt files. |
-| 4.4 | Iterate on prompts | (TBD) | Manual: drive real `pi` through build requests, watch the middle-man emit a dispatch, watch the worker build the feature, watch the chat UI get `complete` + `app_reload`. Refine the prompt text based on observed behavior. **Not done yet** — the real-pi loop is wired (4.3), but we haven't actually built a feature with real `pi` end-to-end. The next session should run a `user_message` like "build a /habits page" and watch the full chain fire, then iterate on prompt wording. |
+| 4.4 | Real end-to-end build with live iteration | `backend/prompts/middleman.md`, `backend/prompts/worker.md`, `backend/seed_backend/flask_manager.py`, `backend/seed_backend/events.py` | Drove a real build (`Add a tiny /hello route`) with the local `opencode-go` / `deepseek-v4-flash` config. Observed the full chain: middle-man inspects state, emits a dispatch, worker edits `app.py` via the `edit` tool, verifies with `curl`, emits `<task:done summary="..."/>`, orchestrator broadcasts `complete` + `app_reload`. Three concrete issues found and fixed: (a) prompts hardcoded `/home/seed/app/` — replaced with `$SEED_APP_PATH` and threaded it through `pi_env_for_role` (env var, not argv); (b) the translator didn't handle `message_end` events, so the cheap deepseek model (which doesn't stream `text_delta` chunks) emitted the done marker only in `message_end` and the orchestrator's scan never saw it — added a `message_end` case that extracts the final text from `message.content` text blocks; (c) Flask wasn't in debug mode, so worker edits to `app.py` weren't picked up by the reloader and the worker had to manually `kill` + restart Flask (forbidden in production) — added `FLASK_DEBUG=1` to the subprocess env in `FlaskManager.start()`. After fixes, the worker verified the new route on the first `curl` attempt. The chat UI got `complete` + `app_reload` and the script exited cleanly. |
 
 **Module shape after Phase 4 (so far):**
 - `backend/prompts/middleman.md` (new) — role prompt for the intent agent.

@@ -236,6 +236,15 @@ def pi_env_for_role(role: str) -> dict[str, str]:
     # dir, so create on first use.
     _PI_AGENT_DIR.mkdir(parents=True, exist_ok=True)
     env["PI_CODING_AGENT_DIR"] = str(_PI_AGENT_DIR)
+    # Point the agent at the webapp. The middle-man and
+    # worker prompts both reference `$SEED_APP_PATH` so
+    # the same prompt file works in production
+    # (`/home/seed/app/`) and dev (a path under the
+    # developer's repo). The default is the production
+    # path; the dev script (and tests) override via env.
+    env["SEED_APP_PATH"] = os.environ.get(
+        "SEED_APP_PATH", "/home/seed/app"
+    )
     return env
 
 

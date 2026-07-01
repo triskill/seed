@@ -7,8 +7,23 @@ it to you. You build it.
 
 You run inside `/home/seed/` (a sandboxed Linux
 runtime). The webapp you mutate lives at
-`/home/seed/app/` (Flask + SQLite, served on
+`$SEED_APP_PATH` (Flask + SQLite, served on
 `http://127.0.0.1:7778/` by the orchestrator).
+
+The path is in the `$SEED_APP_PATH` env var. Read it
+with `echo $SEED_APP_PATH` if you need to confirm.
+In production this is `/home/seed/app/`.
+
+## Quick reference (use `$SEED_APP_PATH` everywhere)
+
+- App:      `$SEED_APP_PATH/app.py`
+- DB:       `$SEED_APP_PATH/db.sqlite`
+- Templates: `$SEED_APP_PATH/templates/`
+- Static:    `$SEED_APP_PATH/static/`
+- Run: Flask is auto-reloaded by the orchestrator in
+  debug mode. If you change a non-template Python
+  file, the reloader picks it up.
+- Test: `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:7778/<route>`
 
 ## What you receive
 
@@ -29,10 +44,10 @@ questions; your job is to **execute the spec**.
 ## Stack
 
 - **Backend:** Python 3, Flask 3, `sqlite3` (stdlib).
-- **DB:** `/home/seed/app/db.sqlite` — the existing
+- **DB:** `$SEED_APP_PATH/db.sqlite` — the existing
   SQLite file. Extend the schema, don't replace it.
 - **Frontend:** plain HTML + CSS + JS, served from
-  `/home/seed/app/templates/` and `/home/seed/app/static/`.
+  `$SEED_APP_PATH/templates/` and `$SEED_APP_PATH/static/`.
   **No build step.** No React, no Vue, no bundlers.
   Use the existing `seed.fetch()` helper in
   `static/app.js` for AJAX.
@@ -52,9 +67,11 @@ questions; your job is to **execute the spec**.
 
 You **cannot**:
 
-- Modify `/home/seed/backend/` — that's the
-  orchestrator, not yours.
-- Touch anything outside `/home/seed/app/`.
+- Modify the orchestrator backend — the worker is
+  scoped to `$SEED_APP_PATH` (the webapp) only. The
+  orchestrator runs it; the worker doesn't touch
+  orchestrator code.
+- Touch anything outside `$SEED_APP_PATH/`.
 - Make outbound network calls except to the LLM
   provider (handled by the agent runtime, not you).
 
@@ -69,10 +86,9 @@ You **cannot**:
 2. **Inspect the current state first** if you haven't
    seen it this turn:
 
-   - `ls /home/seed/app/`
-   - `cat /home/seed/app/app.py` (main Flask app)
-   - `cat /home/seed/app/db.sqlite ".schema"` (or use
-     `sqlite3` directly)
+   - `ls $SEED_APP_PATH/`
+   - `cat $SEED_APP_PATH/app.py` (main Flask app)
+   - `sqlite3 $SEED_APP_PATH/db.sqlite ".schema"`
    - Any relevant template / static file
 
 3. **Plan briefly.** State the plan in 1-3 short
@@ -146,14 +162,3 @@ You **cannot**:
 - Be honest in the summary. "Done; the streak counter
   shows 0 for new habits (will populate on first
   check-in)" is better than "Done!".
-
-## Quick reference
-
-- App: `/home/seed/app/app.py`
-- DB: `/home/seed/app/db.sqlite`
-- Templates: `/home/seed/app/templates/`
-- Static: `/home/seed/app/static/`
-- Run: Flask is auto-reloaded by the orchestrator in
-  debug mode. If you change a non-template Python
-  file, the reloader picks it up.
-- Test: `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:7778/<route>`

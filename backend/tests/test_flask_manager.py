@@ -27,3 +27,37 @@ def test_flask_manager_starts_and_stops():
             await manager.stop()
 
     asyncio.run(scenario())
+
+
+def test_flask_manager_enables_flask_debug_for_reload():
+    """The worker agent mutates `app.py` while Flask is
+    running. Without debug mode, the Werkzeug reloader
+    doesn't watch the file and new routes don't appear
+    until restart. The manager must set `FLASK_DEBUG=1`
+    in the subprocess env so worker edits are picked up
+    on the next request.
+
+    We don't spawn Flask (that would be slow / flaky) —
+    we just verify the env dict that *would* be passed
+    to the child has `FLASK_DEBUG=1` set.
+    """
+    from unittest.mock import patch
+    captured: dict = {}
+
+    class FakeProcess:
+        returncode = None
+
+    async def fake_exec(*args, env=None, **kwargs):
+        captured["env"] = env
+        return FakeProcess()
+
+    async def scenario():
+        manager = FlaskManager(port=7778)
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=fake_exec
+        ):
+            await manager.start()
+
+    asyncio.run(scenario())
+    assert captured["env"] is not None
+    assert captured["env"].get("FLASK_DEBUG") == "1"
