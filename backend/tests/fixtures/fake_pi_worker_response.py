@@ -38,7 +38,14 @@ def main() -> int:
         sys.stdout.flush()
         time.sleep(0.1)
 
-    sys.stdout.write("done\n")
+    # Task-done marker. The orchestrator's worker read loop
+    # detects this and broadcasts `complete` + `app_reload`
+    # to chat clients (Task 3.6). We do NOT also write the
+    # plain `done` marker from fake_pi.py — the two are
+    # semantically different (turn boundary vs task
+    # complete) and we want tests to assert on the task-done
+    # marker specifically.
+    sys.stdout.write("<task:done/>\n")
     sys.stdout.flush()
     return 0
 
