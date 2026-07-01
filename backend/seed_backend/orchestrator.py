@@ -32,6 +32,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+from pathlib import Path
 
 from seed_backend.events import (
     TASK_DONE_MARKER,
@@ -59,28 +61,147 @@ _MIDDLEMAN_SCAN_BUFFER_MAX = 64 * 1024
 # string so the chat UI has something to render.
 _DEFAULT_COMPLETE_SUMMARY = "Task complete"
 
+# Project-local pi config directory. pi's `--config-dir`
+# (env: `PI_CODING_AGENT_DIR`) defaults to `~/.pi/agent`.
+# We override it to a path inside the repo so the project's
+# agent runs use our defaults (`opencode-go` /
+# `deepseek-v4-flash`) instead of the user's global config.
+#
+# The path is resolved relative to this source file:
+# `seed_backend/orchestrator.py` -> `backend/seed_backend/`
+# -> `backend/` -> repo root.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_PI_AGENT_DIR = _REPO_ROOT / ".pi" / "agent"
+
+# Default provider / model for the v0.1 test stack. Both are
+# overridable via env so a developer can swap to a different
+# model without touching code (e.g. `SEED_PI_MODEL=claude-haiku-4-5`
+# for a slightly smarter / more expensive run).
+_DEFAULT_PI_PROVIDER = "opencode-go"
+_DEFAULT_PI_MODEL = "deepseek-v4-flash"
+_DEFAULT_PI_THINKING = "low"
+
 
 def pi_cmd_for_role(role: str) -> list[str]:
     """Return the argv used to spawn the `pi` CLI for a given role.
 
-    Production default: real `pi` in RPC mode (TBD flags — Phase 4
-    will pin the exact invocation). Tests monkey-patch this to
-    return the in-tree `fake_pi*.py` fixture so the orchestrator
-    can be exercised without an LLM or a `pi` install.
+    Production default: real `pi` in RPC mode, pointed at
+    the cheap `deepseek-v4-flash` model on the `opencode-go`
+    provider. Tests monkey-patch this to return the
+    in-tree `fake_pi*.py` fixture so the orchestrator can
+    be exercised without an LLM or a `pi` install.
+
+    The flags:
+
+      * `--mode rpc`         : JSONL protocol over stdio
+                               (the wire format the
+                               orchestrator's read loop
+                               speaks — Task 2.2+).
+      * `--provider`         : overrides the default in
+                               `.pi/agent/settings.json` so
+                               a misconfigured local file
+                               can't silently route to a
+                               different model. Also
+                               makes the test explicit.
+      * `--model`            : same rationale as
+                               `--provider`. Cheap
+                               `deepseek-v4-flash` by
+                               default for testing.
+      * `--thinking`         : "low" for speed/cost; the
+                               model is a "flash" tier
+                               so high thinking is
+                               overkill for the
+                               orchestrator's prompts.
+      * `--no-session`       : the orchestrator drives
+                               long-running pi processes
+                               for the lifetime of the
+                               FastAPI app. Persisting
+                               per-process session files
+                               is unnecessary and would
+                               pollute the user's
+                               `~/.pi/agent/sessions/`
+                               with files tied to a
+                               dev server. (Chat history
+                               persistence is a separate
+                               concern — the orchestrator
+                               could log to
+                               `logs/tasks.jsonl` in a
+                               later task.)
+
+    Phase 4 will add `--append-system-prompt <file>` to
+    inject the role-specific prompt (`prompts/middleman.md`
+    or `prompts/worker.md`).
 
     Args:
-        role: "middleman" or "worker". Any other value raises
-              ValueError so a typo in the caller fails fast.
+        role: "middleman" or "worker". Any other value
+              raises ValueError so a typo in the caller
+              fails fast.
 
     Returns:
-        The argv list to pass to `PiRunner` / `os.execvp`.
+        The argv list to pass to `PiRunner` / `os.execvp(e)`.
 
     Raises:
         ValueError: if `role` is not one of the known roles.
     """
     if role not in ("middleman", "worker"):
         raise ValueError(f"unknown pi role: {role!r}")
-    return ["pi", "--mode", "rpc", "--role", role]
+    provider = os.environ.get("SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER)
+    model = os.environ.get("SEED_PI_MODEL", _DEFAULT_PI_MODEL)
+    thinking = os.environ.get("SEED_PI_THINKING", _DEFAULT_PI_THINKING)
+    return [
+        "pi",
+        "--mode", "rpc",
+        "--provider", provider,
+        "--model", model,
+        "--thinking", thinking,
+        "--no-session",
+    ]
+
+
+def pi_env_for_role(role: str) -> dict[str, str]:
+    """Return the env dict passed to the child `pi` process.
+
+    Starts from the parent's `os.environ` (so API keys set
+    in the shell, e.g. `OPENCODE_API_KEY`, are inherited
+    — we never want to bake secrets into argv) and
+    overrides `PI_CODING_AGENT_DIR` to point at the
+    project's local config directory. This is what makes
+    the project's `.pi/agent/settings.json` (with
+    `defaultProvider=opencode-go`, `defaultModel=
+    deepseek-v4-flash`) take effect, independent of the
+    user's `~/.pi/agent/`.
+
+    The path is computed once at import time (see
+    `_PI_AGENT_DIR`). If the directory doesn't exist yet,
+    we create it on first call so a fresh clone works
+    without a manual `mkdir`. We do NOT touch the
+    `settings.json` if it already exists — the user may
+    have customised it.
+
+    Args:
+        role: "middleman" or "worker". Currently unused
+              (both roles share the same env), but kept
+              in the signature for symmetry with
+              `pi_cmd_for_role` and to leave room for
+              per-role env differences in the future
+              (e.g. separate session dirs).
+
+    Returns:
+        A new env dict suitable for `os.execvpe`.
+
+    Raises:
+        ValueError: if `role` is not one of the known roles.
+    """
+    if role not in ("middleman", "worker"):
+        raise ValueError(f"unknown pi role: {role!r}")
+    env = dict(os.environ)
+    # Ensure the local config dir exists. The settings.json
+    # inside it is committed; the dir itself is what pi
+    # reads from. A fresh clone has the file but not the
+    # dir, so create on first use.
+    _PI_AGENT_DIR.mkdir(parents=True, exist_ok=True)
+    env["PI_CODING_AGENT_DIR"] = str(_PI_AGENT_DIR)
+    return env
 
 
 class Orchestrator:

@@ -1,0 +1,25 @@
+# Pi creates runtime files inside its config dir. We commit
+# only `settings.json` (no secrets) and ignore everything
+# else so a fresh clone doesn't accidentally check in a
+# session log or auth file.
+#
+# - sessions/  : per-pi-process session files (turn history).
+#                Useful for resuming a conversation, but
+#                noisy and not something we want in git.
+# - auth.json  : API keys. NEVER commit. Use the
+#                OPENCODE_API_KEY env var instead.
+# - models.json: custom model definitions. We don't ship
+#                any; the built-in registry covers the
+#                providers we use.
+# - bin/, git/, npm/, prompts/ : pi's extension install
+#                dirs. Mirror the global layout but stay
+#                local. Not relevant for this project.
+# - .cache/    : misc pi caches.
+sessions/
+auth.json
+models.json
+bin/
+git/
+npm/
+prompts/
+.cache/

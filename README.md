@@ -21,7 +21,8 @@ land in later phases.
 
 ## Quick start (host dev)
 
-Requires Python 3.11+ (3.12 is what we test on).
+Requires Python 3.11+ (3.12 is what we test on) and the
+`pi` CLI on `PATH` (v0.79+).
 
 ```bash
 # Create a venv (PEP 668 system Pythons require this)
@@ -33,15 +34,35 @@ pip install -U pip hatchling
 pip install -e "backend/[dev]"
 pip install -e "webapp/[dev]"
 
-# Smoke test
-pytest backend/tests -v
+# Smoke test (no API key needed — uses fake pi fixtures)
+pytest backend/ webapp/ -v
+# → 68 passed
 
-# Run the webapp
-cd webapp
-flask --app seed_app.app run --port 7778
-# → open http://127.0.0.1:7778/
-# → curl http://127.0.0.1:7778/api/ping
+# Run the dev server (orchestrator + Flask webapp)
+./backend/scripts/dev.sh
+# → curl http://127.0.0.1:7777/health
+
+# Open a real chat session (Phase 3 demo, no API key needed)
+.venv/bin/python backend/scripts/demo_phase3.py
+# → streams middleman_line → worker_line → complete → app_reload
 ```
+
+### Running the real agent loop
+
+The orchestrator uses real `pi` when started via
+`./backend/scripts/dev.sh`. You need an API key for the
+provider/model in `.pi/agent/settings.json` (default:
+`opencode-go` / `deepseek-v4-flash`). Set it in your
+shell — **never commit it**:
+
+```bash
+export OPENCODE_API_KEY="sk-..."
+./backend/scripts/dev.sh
+```
+
+See [`docs/pi-config.md`](docs/pi-config.md) for the full
+configuration story (local `.pi/agent/`, env var
+overrides, why no `auth.json` in the repo).
 
 ## Layout
 
