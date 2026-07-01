@@ -20,7 +20,7 @@ app inside the runtime; the App screen shows the result.
 | 1 | Shell endpoint (PTY-backed) | ✅ done (5/5) |
 | 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ✅ done (6/6) |
 | 3 | Middle-man + worker orchestration | ✅ done (7/7) |
-| 4 | System prompts + first real agent loop | ⬜ not started |
+| 4 | System prompts + first real agent loop | 🟡 in progress (3/4) |
 | 5 | Android shell (4 screens, nav, WebView) | ⬜ not started |
 | 6 | Android ↔ backend wiring | ⬜ not started |
 | 7 | Runtime extraction (proot + Alpine) | ⬜ not started |
@@ -28,7 +28,7 @@ app inside the runtime; the App screen shows the result.
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **68/68 passing** on a clean venv.
+Tests: **95/95 passing** on a clean venv.
 
 ---
 
@@ -115,10 +115,25 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 - `tests/test_worker_stream.py` — 2 tests (3 worker_line frames; worker + middleman distinguishable on the same WS). New in 3.5.
 - `tests/test_complete_signal.py` — 2 tests (complete + app_reload pair; multi-client fan-out). New in 3.6.
 
-## ⬜ Phase 4 — System prompts + first real agent loop
+## 🟡 Phase 4 — System prompts + first real agent loop (3/4)
 
-4 tasks: write `middleman.md` + `worker.md`, manual end-to-end test with real
-`pi`, iterate on prompts.
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 4.1 | `middleman.md` system prompt | `backend/prompts/middleman.md` (new), `backend/seed_backend/orchestrator.py` (wired via `--append-system-prompt`) | Defines the middle-man's role: read-only access to `/home/seed/app/`, ask 1–2 clarifying questions if ambiguous, emit a fenced JSON dispatch block when ready, answer questions directly (no JSON). Describes the wire format the orchestrator expects (`{"intent","feature","spec"}`). Updated `pi_cmd_for_role` to pass `--append-system-prompt <file>` so the role-specific prompt is injected at spawn time. |
+| 4.2 | `worker.md` system prompt | `backend/prompts/worker.md` (new), `backend/seed_backend/orchestrator.py` | Worker prompt: read state, plan, edit, verify (`curl` the new route, check the DB schema), emit `<task:done summary="..."/>` when done. Includes the `<task:done summary="..."/>` marker format the orchestrator's worker read loop watches for (Task 3.6 + Phase 4 enrichment). |
+| 4.3 | Orchestrator speaks pi's RPC protocol | `backend/seed_backend/events.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi*.py`, `backend/tests/test_events.py`, `backend/tests/test_prompts.py` | The orchestrator was built assuming pi outputs plain text. Real `pi --mode rpc` expects JSON commands on stdin (`{"type":"prompt","message":"..."}`) and emits JSONL events on stdout (`message_update`, `tool_execution_start`, `turn_end`, etc.). Added `translate_pi_line` (in `events.py`) that unwraps pi's events back to plain text deltas / tool-call JSON / turn-boundary signals. `send_to_middleman` and the worker send now wrap messages in `{"type":"prompt",...}`. The fake pi fixtures were updated to parse the JSON wrapper and use the `message` field as the prompt, so the existing 59 tests still pass without changes. New `scripts/demo_phase4_smoke.py` exercises the full stack with real `pi` (sends a question, gets a streamed text response). 13 new unit tests for the translator + 6 sanity tests for the prompt files. |
+| 4.4 | Iterate on prompts | (TBD) | Manual: drive real `pi` through build requests, watch the middle-man emit a dispatch, watch the worker build the feature, watch the chat UI get `complete` + `app_reload`. Refine the prompt text based on observed behavior. **Not done yet** — the real-pi loop is wired (4.3), but we haven't actually built a feature with real `pi` end-to-end. The next session should run a `user_message` like "build a /habits page" and watch the full chain fire, then iterate on prompt wording. |
+
+**Module shape after Phase 4 (so far):**
+- `backend/prompts/middleman.md` (new) — role prompt for the intent agent.
+- `backend/prompts/worker.md` (new) — role prompt for the builder agent.
+- `events.py` — added `parse_task_done` (summary attribute), `translate_pi_line` (JSONL unwrapper), `PI_EVENT_*` / `PI_CMD_*` constants. The existing `TASK_DONE_MARKER` constant is still defined for back-compat (it's used as a substring anchor in the `parse_task_done` regex).
+- `orchestrator.py` — `_read_middleman_loop` and `_read_worker_loop` use `translate_pi_line(line, role=...)`. New `_send_dispatch_to_worker` helper wraps the dispatch in an RPC `prompt` command.
+- `pi_runner.py` — already had `env=` kwarg from Phase 3 (for the local `PI_CODING_AGENT_DIR`); no change.
+- `fake_pi*.py` fixtures — parse the `{"type":"prompt","message":"..."}` wrapper; use `message` as the prompt.
+- `tests/test_events.py` — 21 tests (8 for marker parser, 13 for translator).
+- `tests/test_prompts.py` — 6 sanity tests (files exist, non-empty, mention key protocols).
+- `scripts/demo_phase4_smoke.py` (new) — manual end-to-end with real `pi`.
 
 ## ⬜ Phase 5 — Android shell (4 screens, nav, WebView)
 
