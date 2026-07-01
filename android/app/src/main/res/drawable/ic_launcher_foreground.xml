@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Foreground layer of the adaptive launcher icon. A
+  simple white circle (the "seed" silhouette) centred
+  in the safe zone. The system masks this with a
+  rounded square / circle / squircle, so the white
+  circle stays visible regardless of launcher.
+
+  The vector drawable format means there's no raster
+  to ship — the system rasterises at install time.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Adaptive icon safe zone: the inner ~66dp circle
+         is the guaranteed-visible region. Anything
+         outside can be clipped by the launcher mask. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,30 m-18,0 a18,18 0 1,0 36,0 a18,18 0 1,0 -36,0" />
+    <!-- The "sprout" stem: a small triangle from the
+         seed circle pointing up-left. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,30 L48,18 L60,18 Z" />
+</vector>

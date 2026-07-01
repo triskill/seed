@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Color palette for the Seed v0.1 app.
+
+  Phase 5.1 ships a minimal Material 3 baseline (we use
+  `Theme.Material3.DayNight` in themes.xml so the system
+  picks light vs dark automatically). The accent colour
+  is a warm green — "seed" — that we'll use as the
+  primary in the Chat and App screens once those land
+  in 5.2-5.3. A real Material 3 colour scheme has
+  dozens of tokens (primary/secondary/tertiary at
+  on*/container*/surface*/etc. levels); we ship the
+  minimum needed for the placeholder and let the
+  framework defaults handle the rest.
+-->
+<resources>
+    <color name="seed_green">#2E7D32</color>
+    <color name="seed_green_dark">#1B5E20</color>
+    <color name="seed_green_container">#A5D6A7</color>
+    <color name="seed_on_green">#FFFFFF</color>
+    <color name="seed_on_green_container">#0B2E0E</color>
+</resources>

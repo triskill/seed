@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AndroidManifest.xml — Phase 5.1 (minimal).
+
+  For Task 5.1 we declare the bare minimum: one Activity
+  (MainActivity) as the launcher. The application class,
+  theme, and icon are all referenced from resources in
+  `res/values/` and `res/mipmap-*/`.
+
+  Phase 5.3 (WebView) will add:
+    <uses-permission android:name="android.permission.INTERNET"/>
+  The dev backend is HTTP (not HTTPS) so we also need
+  `android:usesCleartextTraffic="true"` on the
+  application element (or a network-security-config XML
+  that whitelists 10.0.2.2 / 127.0.0.1). We'll do the
+  network-security-config approach in 5.3 — it's more
+  explicit about what's allowed.
+
+  Phase 6 (Android ↔ backend wiring) will add:
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  and a Service declaration for the background WebSocket
+  + agent runtime.
+
+  Phase 8 (foreground service) will add the runtime
+  permissions for notifications (API 33+).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:name=".SeedApp"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/Theme.Seed"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Seed">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>
