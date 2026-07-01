@@ -16,7 +16,12 @@ dependencies = [
     # Task 0.2: FastAPI orchestrator service.
     "fastapi>=0.110",
     "uvicorn>=0.27",
-    # pydantic, pyyaml, websockets are added in later tasks.
+    # Task 3.7: uvicorn needs an ASGI WS lib to handle the
+    # /chat upgrade. `uvicorn[standard]` pulls in `websockets`
+    # + `httptools` for production; tests can run without it
+    # because the starlette TestClient uses its own transport.
+    "uvicorn[standard]>=0.27",
+    # pydantic, pyyaml are added in later tasks.
 ]
 
 [project.optional-dependencies]
