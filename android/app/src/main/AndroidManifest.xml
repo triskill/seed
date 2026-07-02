@@ -7,14 +7,10 @@
   theme, and icon are all referenced from resources in
   `res/values/` and `res/mipmap-*/`.
 
-  Phase 5.3 (WebView) will add:
+  Phase 5.3 (WebView) added:
     <uses-permission android:name="android.permission.INTERNET"/>
-  The dev backend is HTTP (not HTTPS) so we also need
-  `android:usesCleartextTraffic="true"` on the
-  application element (or a network-security-config XML
-  that whitelists 10.0.2.2 / 127.0.0.1). We'll do the
-  network-security-config approach in 5.3 — it's more
-  explicit about what's allowed.
+  and `android:networkSecurityConfig=@xml/network_security_config`
+  to scope cleartext HTTP to the dev hosts only.
 
   Phase 6 (Android ↔ backend wiring) will add:
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
@@ -27,12 +23,27 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      Phase 5.3 (WebView): the dev backend is HTTP, so
+      the WebView needs INTERNET. The cleartext-HTTP
+      permission is scoped via `networkSecurityConfig`
+      below to just the two dev hosts (10.0.2.2 /
+      127.0.0.1) — see res/xml/network_security_config.xml.
+
+      Phase 6 (Android ↔ backend wiring) will add
+      ACCESS_NETWORK_STATE for connectivity checks
+      and FOREGROUND_SERVICE for the proot runtime
+      service (Phase 8).
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".SeedApp"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.Seed"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true">
 
         <activity
