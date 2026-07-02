@@ -1,4 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Strings for Seed v0.1.
+
+  Phase 5.1: just the app name.
+  Phase 5.2: tab labels + per-screen titles / subtitles
+             for the bottom-nav placeholder bodies.
+  Later phases add their own copy as the screens
+  acquire real functionality.
+-->
 <resources>
     <string name="app_name">Seed</string>
+
+    <!-- Bottom-nav tab labels (Phase 5.2). -->
+    <string name="tab_app">App</string>
+    <string name="tab_chat">Chat</string>
+    <string name="tab_shell">Shell</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Placeholder screen titles (Phase 5.2). -->
+    <string name="app_screen_title">App</string>
+    <string name="app_screen_subtitle">Your webapp will appear here</string>
+
+    <string name="chat_screen_title">Chat</string>
+    <string name="chat_screen_subtitle">Talk to the orchestrator</string>
+
+    <string name="shell_screen_title">Shell</string>
+    <string name="shell_screen_subtitle">Run commands in the runtime</string>
+
+    <string name="settings_screen_title">Settings</string>
+    <string name="settings_screen_subtitle">Provider, model, API key</string>
 </resources>
