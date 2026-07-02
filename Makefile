@@ -96,6 +96,15 @@ build: $(APK)  ## build the debug APK
 # `make run` depends on the APK file (not the build phony) so we
 # only rebuild when something actually changed. The recipe for
 # $(APK) below is the canonical build step.
+#
+# Backgrounding note: we use `setsid nohup ... < /dev/null &` to
+# fully detach the emulator from make's controlling terminal
+# (nohup alone ignores SIGHUP, setsid puts it in a new session
+# so SIGINT doesn't reach it either). The `2>/dev/null` redirect
+# on the start-server call suppresses the "daemon not running"
+# / "daemon started successfully" output that adb prints to
+# stderr. The `timeout 30` cap on `wait-for-device` keeps a
+# crashed emulator from hanging the Makefile indefinitely.
 .PHONY: run
 run: check-deps $(APK)  ## start emulator, install APK, launch app
 	@if [ ! -d $(ANDROID_AVD_HOME)/$(AVD_NAME).avd ]; then \
@@ -107,13 +116,6 @@ run: check-deps $(APK)  ## start emulator, install APK, launch app
 	else \
 		echo ">> Starting emulator '$(AVD_NAME)' (log: $(EMULATOR_LOG))..."; \
 		rm -f $(EMULATOR_PID); \
-		# `< /dev/null` + `setsid` so the emulator is fully
-		# detached from make's controlling terminal (no
-		# SIGINT propagation if the user Ctrl-C's the boot
-		# loop). nohup alone is enough to ignore SIGHUP,
-		# but on a noisy TTY SIGINT is the more common
-		# kill signal. `-gpu $(EMULATOR_GPU)` forces a
-		# software renderer; see EMULATOR_GPU above.
 		setsid nohup $(EMULATOR) -avd $(AVD_NAME) \
 			-no-snapshot-load -no-audio -gpu $(EMULATOR_GPU) \
 			> $(EMULATOR_LOG) 2>&1 < /dev/null & \
@@ -127,10 +129,6 @@ run: check-deps $(APK)  ## start emulator, install APK, launch app
 	fi
 	@echo ">> Waiting for adb to see the device..."
 	@$(ADB) start-server >/dev/null 2>&1
-	@# `wait-for-device` blocks indefinitely if adb never
-	@# sees the emulator. Cap it at 30s so a slow / crashed
-	@# emulator surfaces a clear error instead of hanging
-	@# the Makefile until the user Ctrl-C's.
 	@if ! timeout 30 $(ADB) wait-for-device; then \
 		echo "!! adb never saw the emulator after 30s. Tail of $(EMULATOR_LOG):"; \
 		tail -20 $(EMULATOR_LOG) | sed 's/^/    /'; \
