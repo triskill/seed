@@ -30,6 +30,18 @@ ANDROID_BUILD_TOOLS := 34.0.0
 SYSTEM_IMAGE       := system-images;android-34;default;x86_64
 AVD_NAME           := seed_dev
 
+# GPU mode for the emulator. The default `auto` resolves to
+# `host` (Vulkan passthrough) on systems with a discrete GPU,
+# which crashes silently on some dual-GPU setups (Intel +
+# NVIDIA, AMD + NVIDIA, etc.) — the qemu process dies a
+# few seconds after `Boot completed`, before adb ever
+# registers the device. `swiftshader` is pure software
+# rendering: slower, but stable across all GPU configs.
+# Note: `swiftshader_indirect` still uses the host GPU and
+# inherits the crash. Override on the command line with
+# `make run EMULATOR_GPU=host` if you have working drivers.
+EMULATOR_GPU ?= swiftshader
+
 # Pin AVD location inside ANDROID_HOME so it's deterministic across
 # machines (newer cmdline-tools default to $XDG_CONFIG_HOME/.android/avd,
 # which is harder to reference from a Makefile).
@@ -95,8 +107,16 @@ run: check-deps $(APK)  ## start emulator, install APK, launch app
 	else \
 		echo ">> Starting emulator '$(AVD_NAME)' (log: $(EMULATOR_LOG))..."; \
 		rm -f $(EMULATOR_PID); \
-		nohup $(EMULATOR) -avd $(AVD_NAME) -no-snapshot-load -no-audio \
-			> $(EMULATOR_LOG) 2>&1 & \
+		# `< /dev/null` + `setsid` so the emulator is fully
+		# detached from make's controlling terminal (no
+		# SIGINT propagation if the user Ctrl-C's the boot
+		# loop). nohup alone is enough to ignore SIGHUP,
+		# but on a noisy TTY SIGINT is the more common
+		# kill signal. `-gpu $(EMULATOR_GPU)` forces a
+		# software renderer; see EMULATOR_GPU above.
+		setsid nohup $(EMULATOR) -avd $(AVD_NAME) \
+			-no-snapshot-load -no-audio -gpu $(EMULATOR_GPU) \
+			> $(EMULATOR_LOG) 2>&1 < /dev/null & \
 		echo $$! > $(EMULATOR_PID); \
 		sleep 2; \
 		if ! kill -0 $$(cat $(EMULATOR_PID)) 2>/dev/null; then \
@@ -106,8 +126,16 @@ run: check-deps $(APK)  ## start emulator, install APK, launch app
 		fi; \
 	fi
 	@echo ">> Waiting for adb to see the device..."
-	@$(ADB) start-server >/dev/null
-	@$(ADB) wait-for-device
+	@$(ADB) start-server >/dev/null 2>&1
+	@# `wait-for-device` blocks indefinitely if adb never
+	@# sees the emulator. Cap it at 30s so a slow / crashed
+	@# emulator surfaces a clear error instead of hanging
+	@# the Makefile until the user Ctrl-C's.
+	@if ! timeout 30 $(ADB) wait-for-device; then \
+		echo "!! adb never saw the emulator after 30s. Tail of $(EMULATOR_LOG):"; \
+		tail -20 $(EMULATOR_LOG) | sed 's/^/    /'; \
+		exit 1; \
+	fi
 	@echo ">> Waiting for boot to complete (up to $(BOOT_TIMEOUT)s)..."
 	@i=0; while [ "$$($(ADB) shell getprop sys.boot_completed | tr -d '\r')" != "1" ]; do \
 		i=$$((i+1)); \
@@ -233,9 +261,24 @@ sdk-packages:
 .PHONY: avd
 avd:
 	@mkdir -p $(ANDROID_AVD_HOME)
-	@if [ -d $(ANDROID_AVD_HOME)/$(AVD_NAME).avd ]; then \
-		echo ">> AVD '$(AVD_NAME)' already exists."; \
-	else \
+	@if [ ! -d $(ANDROID_AVD_HOME)/$(AVD_NAME).avd ]; then \
 		echo ">> Creating AVD '$(AVD_NAME)' at $(ANDROID_AVD_HOME)..."; \
 		echo "no" | $(AVDMANAGER) create avd -n $(AVD_NAME) -k "$(SYSTEM_IMAGE)" -d pixel; \
+		echo ">> AVD created."; \
 	fi
+	@# Patch the AVD's GPU mode. `avdmanager create avd -d
+	@# pixel` bakes in `hw.gpu.mode = auto`, which resolves
+	@# to `host` (Vulkan passthrough) on systems with a
+	@# discrete GPU and crashes silently on dual-GPU
+	@# hardware. We force `swiftshader` (pure software)
+	@# here so the AVD works regardless of host GPU
+	@# drivers. Idempotent — running `make avd` again is a
+	@# no-op if the values are already correct.
+	@AVD_CFG=$(ANDROID_AVD_HOME)/$(AVD_NAME).avd/config.ini; \
+	if [ ! -f $$AVD_CFG ]; then \
+		echo "!! AVD config not found at $$AVD_CFG"; \
+		exit 1; \
+	fi; \
+	sed -i 's/^hw\.gpu\.enabled = .*/hw.gpu.enabled = yes/' $$AVD_CFG; \
+	sed -i 's/^hw\.gpu\.mode = .*/hw.gpu.mode = $(EMULATOR_GPU)/' $$AVD_CFG; \
+	echo ">> AVD GPU mode set to '$(EMULATOR_GPU)' (in $$AVD_CFG)."
