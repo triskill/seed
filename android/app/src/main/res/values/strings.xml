@@ -29,4 +29,15 @@
 
     <string name="settings_screen_title">Settings</string>
     <string name="settings_screen_subtitle">Provider, model, API key</string>
+
+    <!-- Settings form field labels (Phase 5.6). -->
+    <string name="settings_field_provider">Provider</string>
+    <string name="settings_field_model">Model</string>
+    <string name="settings_field_api_key">API key</string>
+    <string name="settings_field_backend_port">Backend port</string>
+    <string name="settings_field_webapp_port">Webapp port</string>
+    <string name="settings_field_log_level">Log level</string>
+    <string name="settings_action_save">Save</string>
+    <string name="settings_status_modified">Modified</string>
+    <string name="settings_status_saved">Saved</string>
 </resources>
