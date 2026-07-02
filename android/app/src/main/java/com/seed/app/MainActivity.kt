@@ -4,30 +4,23 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
+import com.seed.app.ui.nav.SeedNav
 
 /**
  * Single-Activity entry point for Seed v0.1.
  *
- * Phase 5.1 ships the minimum: a Compose surface that
- * renders "Seed" centred on screen. Tasks 5.2 (4-section
- * navigation) and 5.3 (WebView) replace this body with
- * the real `SeedNav` host. The `enableEdgeToEdge` call
- * opts into the modern Android 15+ edge-to-edge default
- * (so the system bars are transparent and our content
- * draws under them — the Scaffold's `contentWindowInsets`
- * handles the safe area).
+ * Phase 5.1 shipped a placeholder body that rendered a
+ * centred "Seed" Text. Phase 5.2 (4-section navigation)
+ * replaces it with the real `SeedNav` host — a `Scaffold`
+ * that owns the bottom `NavigationBar` and a `NavHost`
+ * with four destinations. Phases 5.3–5.9 will fill in
+ * each screen.
+ *
+ * `enableEdgeToEdge()` opts into the modern Android
+ * 15+ edge-to-edge default (transparent system bars);
+ * the Scaffold's `bottomBar` handles the safe area for
+ * the navigation bar.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,38 +28,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MaterialTheme {
-                SeedPlaceholderScreen()
+                SeedNav()
             }
         }
-    }
-}
-
-@Composable
-private fun SeedPlaceholderScreen() {
-    Scaffold { innerPadding ->
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            color = MaterialTheme.colorScheme.background,
-        ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "Seed",
-                    style = MaterialTheme.typography.headlineLarge,
-                )
-            }
-        }
-    }
-}
-
-@Preview(showBackground = true, name = "Seed placeholder")
-@Composable
-private fun SeedPlaceholderPreview() {
-    MaterialTheme {
-        SeedPlaceholderScreen()
     }
 }
