@@ -107,6 +107,16 @@ dependencies {
     // in Phase 5.3.
     implementation("androidx.webkit:webkit:1.11.0")
 
+    // SwipeRefreshLayout for the App tab's
+    // pull-to-refresh (Phase 5.3). Compose's
+    // `PullToRefreshBox` is only in material3 1.3+,
+    // and our Compose BOM (2024.06.00) ships
+    // material3 1.2.1. SwipeRefreshLayout is the
+    // stable, well-known option and matches the
+    // plan's suggestion. We wrap it in `AndroidView`
+    // alongside the WebView.
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+
     // Debug / tooling (not packaged in release builds).
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
