@@ -1,21 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   App theme (platform-level, used by the system bars
-  and the splash screen). The actual in-app colour
-  scheme is a Compose `MaterialTheme {}` call in
+  and the window background). The actual in-app colour
+  scheme is a Compose `SeedTheme {}` call in
   `MainActivity.kt` — this XML theme just gives the
   OS enough to draw the window background and the
   status / navigation bars before the Compose
   hierarchy attaches.
 
-  We use `Theme.DeviceDefault` (a framework theme,
-  no Material Components library required) so the
-  app blends in with the device's light/dark
-  setting. Phase 5.9 (polish) will add a custom
-  splash background and status-bar colour; for now
-  the framework default is fine.
+  We use `android:Theme.DeviceDefault` (a framework
+  theme, no Material Components library required) so
+  the app blends in with the device's light/dark
+  setting.
+
+  `android:windowBackground` is set to the brand
+  green so the few-frames gap between Activity start
+  and the first Compose paint flashes green (the
+  brand colour) instead of the framework default
+  white. With `enableEdgeToEdge()` in MainActivity,
+  the system bars are already transparent and
+  Compose's `SeedTheme` SideEffect (see
+  `ui/theme/SeedTheme.kt`) controls their icon
+  appearance.
 -->
 <resources>
     <style name="Theme.Seed" parent="android:Theme.DeviceDefault">
+        <item name="android:windowBackground">@color/seed_green</item>
     </style>
 </resources>
