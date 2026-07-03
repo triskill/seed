@@ -40,6 +40,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.seed.app.R
+import com.seed.app.data.AndroidSettingsRepo
+import com.seed.app.data.ApiModule
+import com.seed.app.data.ConfigSync
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 
 /**
  * Settings tab — provider, model, API key, ports, log
@@ -79,7 +85,9 @@ import com.seed.app.R
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
-    viewModel: SettingsViewModel = viewModel(),
+    viewModel: SettingsViewModel = viewModel(
+        factory = SettingsViewModel.Factory,
+    ),
 ) {
     val form by viewModel.form.collectAsState()
     val lastSaved by viewModel.lastSaved.collectAsState()

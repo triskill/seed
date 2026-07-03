@@ -1,7 +1,12 @@
 package com.seed.app.ui.settings
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import com.seed.app.data.AndroidSettingsRepo
 import com.seed.app.data.ApiModule
 import com.seed.app.data.ConfigSync
 import com.seed.app.data.SettingsRepo
@@ -123,6 +128,40 @@ class SettingsViewModel(
             repo.save(current)
             sync.sync(current)
             _lastSaved.value = current
+        }
+    }
+
+    companion object {
+        /**
+         * The default constructor takes [SettingsRepo.InMemory]
+         * (a no-op) so the ViewModel is unit-testable on the
+         * JVM without a `Context`. Production code uses
+         * [Factory] (below) which wires in [AndroidSettingsRepo]
+         * — the DataStore + EncryptedSharedPreferences-backed
+         * impl. The screen sets `factory = Factory` in its
+         * `viewModel()` call.
+         *
+         * **Why the `Context` comes from the factory and not
+         * the constructor:** the constructor signature is
+         * the test surface. A `Context` parameter would force
+         * every test (and every `RecordingSettingsRepo` /
+         * `FakeConfigSync` call site) to construct or mock
+         * one, which is heavy for what is otherwise a pure
+         * data class. The factory is the production-only
+         * wiring that knows how to get a `Context` from
+         * Android (via the `APPLICATION_KEY` extra that
+         * `viewModel()` populates from
+         * `LocalContext.current`).
+         */
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]
+                    ?: error("SettingsViewModel.Factory: APPLICATION_KEY missing from extras")
+                SettingsViewModel(
+                    repo = AndroidSettingsRepo(app as Context),
+                    sync = ConfigSync(ApiModule.default),
+                )
+            }
         }
     }
 }
