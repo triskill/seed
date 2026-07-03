@@ -23,7 +23,7 @@ app inside the runtime; the App screen shows the result.
 | 4 | System prompts + first real agent loop | ✅ done (4/4) |
 | 5 | Android shell (4 screens, nav, WebView) | 🟡 in progress (8/9) |
 | 6 | Android ↔ backend wiring | ✅ done (5/5) |
-| 7 | Runtime extraction (proot + Alpine) | ⬜ not started |
+| 7 | Runtime extraction (proot + Alpine) | ✅ done (5/5) |
 | 8 | Foreground service | ⬜ not started |
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
@@ -200,10 +200,21 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 
 **APK size:** 17.9 MB → 18.9 MB (+1 MB for Retrofit/OkHttp/Moshi/kotlin-reflect; this phase added WebSocket + chat-event serialization, no size delta vs. 6.4). All runtime deps in the 4.12.0 / 1.15.1 / 2.11.0 line; kotlin-reflect is the heaviest at ~3 MB and pays for the Moshi KotlinJsonAdapterFactory (the KSP-codegen alternative would be lighter but needs a build plugin and is overkill for ~3 DTOs).
 
-## ⬜ Phase 7 — Runtime extraction
+## ✅ Phase 7 — Runtime extraction (5/5)
 
-4 tasks: acquire proot + Alpine rootfs, build a deployable runtime,
-`RuntimeExtractor`, first-run trigger.
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 7.1 | Build script + asset layout + gitignore | `scripts/build-runtime.sh`, `android/app/src/main/assets/linux/seed_version.json`, `docs/build-runtime.md` | `scripts/build-runtime.sh` builds the runtime in a Docker arm64 container (so no host chroot needed) and produces `proot` (~2 MB), `rootfs.tar.gz` (~150 MB), and `seed_version.json` in `android/app/src/main/assets/linux/`. The binary outputs are gitignored; only the script, the docs, and the seed_version.json structure are tracked. The `runtime-build/` working dir is gitignored. |
+| 7.2 | Run the build, verify the assets | (verification) | Manual: run `./scripts/build-runtime.sh`, then `file proot` (must be aarch64 ELF), then `tar -tzf rootfs.tar.gz` to confirm `./home/seed/backend/`, `./home/seed/app/`, `./usr/bin/python3`, `./usr/bin/node`, `which pi` are all present. |
+| 7.3 | `RuntimeExtractor` | `app/src/main/java/com/seed/app/runtime/{ExtractionProgress,AssetSource,RuntimeExtractor}.kt` | `RuntimeExtractor(source: AssetSource).extract(targetDir: File): Flow<ExtractionProgress>`. Sealed `ExtractionProgress` = `Started(totalBytes, fileCount)` + per-file `FileProgress(name, bytesDone, totalBytes)` + `Finished`. `AssetSource` interface keeps the extractor pure and JVM-testable; production wires `AndroidAssetSource` (wraps `AssetManager.openFd` for exact sizes, marks `proot` executable). 3 unit tests cover the contract. |
+| 7.4 | `RootfsVersion` + `AndroidAssetSource` | `app/src/main/java/com/seed/app/runtime/{RootfsVersion,AndroidAssetSource}.kt` | `RootfsVersion(seedVersion, buildId)` data class with a tiny hand-rolled JSON parser (no Moshi dep — only two fields). `AndroidAssetSource` lists `assets/linux/`, marks the proot entry executable. 3 unit tests cover parse + equality + forward-compat with extra fields. |
+| 7.5 | Boot controller + extraction UI + MainActivity wiring | `app/src/main/java/com/seed/app/runtime/{BootState,BootController,ExtractionScreen}.kt`, `app/src/main/java/com/seed/app/MainActivity.kt` | `BootController` owns a `StateFlow<BootState>` (`NeedsExtraction` → `Extracting(progress)` → `Ready`), compares `filesDir/linux/.version` to the asset version, drives the extraction flow, writes `.version` on success. `MainActivity` now boots into either `ExtractionScreen` (full-screen blocker) or `SeedNav` based on state. 2 unit tests cover the controller. |
+
+**Module shape after Phase 7:** new package `com.seed.app.runtime` with 7 small files (no new third-party deps); `MainActivity` is a 25-line shell that defers to the controller. Total new tests: **8** (3 + 3 + 2), bringing Android to **103/103** unit tests passing.
+
+**APK size delta:** +~150 MB raw (the rootfs tarball — assets are compressed in the APK so the on-device delta is smaller, but the unzip-into-APK cost is real). AGP can be tuned later to split the asset out as an `.obb` if the APK size becomes a Play Store concern; for v0.1 side-loading we accept the size.
+
+**Build cost:** first `./scripts/build-runtime.sh` takes 5–15 min (Docker image pull + Alpine apk + npm install of pi). Re-runs are fast (~30 s) thanks to Docker layer caching and a deterministic tar pipeline.
 
 ## ⬜ Phase 8 — Foreground service
 
