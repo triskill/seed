@@ -113,7 +113,7 @@ class ChatWebSocket(
      */
     private val client: OkHttpClient = defaultClient(),
     private val moshi: Moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build(),
-) {
+) : ChatTransport {
 
     /**
      * Coarse-grained connection state for the UI
@@ -140,7 +140,7 @@ class ChatWebSocket(
         extraBufferCapacity = 64,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val events: SharedFlow<ChatEvent> = _events.asSharedFlow()
+    override val events: SharedFlow<ChatEvent> = _events.asSharedFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
@@ -155,7 +155,7 @@ class ChatWebSocket(
      * running is a no-op. The first [connect]
      * after a [disconnect] starts a fresh loop.
      */
-    fun connect() {
+    override fun connect() {
         if (loop?.isActive == true) return
         loop = scope.launch { runConnectionLoop() }
     }
@@ -186,7 +186,7 @@ class ChatWebSocket(
      * queue going idle). Production code
      * only needs [disconnect].
      */
-    fun close() {
+    override fun close() {
         disconnect()
         scope.cancel()
     }
@@ -205,7 +205,7 @@ class ChatWebSocket(
      * newlines, and backslashes in the input
      * are safe to send.
      */
-    fun send(text: String): Boolean {
+    override fun send(text: String): Boolean {
         val socket = ws ?: return false
         return socket.send(userMessageAdapter.toJson(UserMessage(type = USER_MESSAGE_TYPE, text = text)))
     }
