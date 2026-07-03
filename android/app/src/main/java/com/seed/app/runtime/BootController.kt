@@ -26,6 +26,12 @@ class BootController(
     private val targetDir: File,
     private val source: AssetSource,
     private val assetVersion: RootfsVersion,
+    // Default is test-only. Production must pass a lifecycle-aware
+    // scope (e.g. `ComponentActivity.lifecycleScope`) so the
+    // extraction is cancelled when the activity is destroyed —
+    // otherwise a recreated activity would race with the still-
+    // running previous extraction and two writers could corrupt
+    // the 150 MB rootfs tarball.
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
 ) {
     private val _states = MutableStateFlow<BootState>(initialState())

@@ -8,6 +8,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.lifecycleScope
 import com.seed.app.runtime.AndroidAssetSource
 import com.seed.app.runtime.BootController
 import com.seed.app.runtime.BootState
@@ -41,7 +42,15 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SeedTheme {
-                val boot = remember { BootController(targetDir, assetSource, assetVersion) }
+                // Pass lifecycleScope so the extraction is cancelled
+                // when the activity is destroyed (e.g. "Don't keep
+                // activities" dev option, memory pressure). Without
+                // this, a recreated activity would race with the
+                // still-running previous extraction and two writers
+                // could corrupt the rootfs tarball.
+                val boot = remember {
+                    BootController(targetDir, assetSource, assetVersion, lifecycleScope)
+                }
                 val state by boot.states.collectAsState()
                 LaunchedEffect(state) {
                     // Kick off extraction the first time we see NeedsExtraction.
