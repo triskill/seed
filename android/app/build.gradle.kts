@@ -117,6 +117,30 @@ dependencies {
     // alongside the WebView.
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 
+    // DataStore-Preferences (Phase 5.7) — the
+    // non-secret fields of the Settings form
+    // (provider, model, ports, log level) are
+    // stored here. Typed key access
+    // (stringPreferencesKey / intPreferencesKey) +
+    // a coroutine-friendly read/write API. The
+    // API key is stored in EncryptedSharedPreferences
+    // (see security-crypto below) so the secret
+    // never touches the plain-text DataStore file.
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+    // Security-Crypto (Phase 5.7) — wraps
+    // `EncryptedSharedPreferences`, which AES-encrypts
+    // the prefs file at rest using a master key in
+    // the Android Keystore. We use this for the
+    // Settings form's `apiKey` field only (one
+    // key-value pair, but the encryption boundary
+    // is the whole prefs file so we pay no extra
+    // per-key cost). 1.1.0 is the stable release
+    // (March 2024) — the API has been stable since
+    // 1.0.0 (2020) and 1.1.0 only adds a few
+    // opt-in features we don't use.
+    implementation("androidx.security:security-crypto:1.1.0")
+
     // Debug / tooling (not packaged in release builds).
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
