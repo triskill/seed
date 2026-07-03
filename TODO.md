@@ -22,13 +22,13 @@ app inside the runtime; the App screen shows the result.
 | 3 | Middle-man + worker orchestration | ✅ done (7/7) |
 | 4 | System prompts + first real agent loop | ✅ done (4/4) |
 | 5 | Android shell (4 screens, nav, WebView) | 🟡 in progress (8/9) |
-| 6 | Android ↔ backend wiring | ⬜ not started |
+| 6 | Android ↔ backend wiring | ✅ done (5/5) |
 | 7 | Runtime extraction (proot + Alpine) | ⬜ not started |
 | 8 | Foreground service | ⬜ not started |
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **102/102 backend + 46/46 Android unit** passing.
+Tests: **105/105 backend + 95/95 Android unit** passing.
 
 ---
 
@@ -115,7 +115,7 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 - `tests/test_worker_stream.py` — 2 tests (3 worker_line frames; worker + middleman distinguishable on the same WS). New in 3.5.
 - `tests/test_complete_signal.py` — 2 tests (complete + app_reload pair; multi-client fan-out). New in 3.6.
 
-## 🟡 Phase 4 — System prompts + first real agent loop (3/4)
+## ✅ Phase 4 — System prompts + first real agent loop (4/4)
 
 | # | Task | Files | Notes |
 |---|---|---|---|
@@ -135,7 +135,7 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 - `tests/test_prompts.py` — 6 sanity tests (files exist, non-empty, mention key protocols).
 - `scripts/demo_phase4_smoke.py` (new) — manual end-to-end with real `pi`.
 
-## 🟡 Phase 5 — Android shell (4 screens, nav, WebView) (6/9)
+## 🟡 Phase 5 — Android shell (4 screens, nav, WebView) (8/9)
 
 | # | Task | Files | Notes |
 |---|---|---|---|
@@ -155,21 +155,50 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 - Gradle 8.7 bootstrap'd the wrapper; `gradle-wrapper.jar` + `gradlew` are committed
 
 **Next** (buildable without device):
-- *(none — 5.7 + 5.8 done; only 5.9 remains, and it requires an emulator)*
+- ✅ ~~6.1 — Retrofit + OkHttp + Moshi backend client~~ done
+- ✅ ~~6.2 — WebSocket chat client~~ done
+- ✅ ~~6.3 — Wire Chat screen~~ done
+- ✅ ~~6.4 — Wire Shell screen~~ done
+- ✅ ~~6.5 — Wire Settings screen + `PUT /config` route~~ done
+- **7.1 — Phase 7: acquire proot + Alpine rootfs** (next phase; no Android UI work in 7.1)
 
-**Needs emulator or device for visual verification:** 5.9 demo (tap each tab, verify WebView loads host webapp via `adb reverse`, verify the green primary / dark-mode bar icons look right, verify settings save → reopen → form is re-hydrated).
+**Needs emulator or device for visual verification:**
+- 5.9 demo: tap each tab, verify WebView loads host webapp via `adb reverse`, verify the green primary / dark-mode bar icons look right, verify settings save → reopen → form is re-hydrated. (Phase 5.9 is the last carry-forward from Phase 5; the Phase 6 wiring doesn't change the visual story, but the WebView is now expected to actually load the Flask webapp at `10.0.2.2:7778` once the backend is up.)
+- 6.x end-to-end demo: bring up the backend + emulator, send a chat message, see the agent's response stream in, tap the WebView reload, see the new build land. Best done after Phase 6 lands in master and the user runs the dev stack end-to-end.
 
 **Verification what's possible without a device:**
 - ✅ `assembleDebug` produces APK
 - ✅ AAPT confirms manifest, resources, version codes
 - ✅ Lint runs against the project
+- ✅ Backend unit + integration tests pass
+- ✅ Android unit tests pass (95/95 — no emulator required)
 - ❌ No visual verification (rendering, animations, taps)
 - ❌ No runtime verification (do the screens work as expected?)
 
-## ⬜ Phase 6 — Android ↔ backend wiring
+## ✅ Phase 6 — Android ↔ backend wiring (5/5)
 
-5 tasks: Retrofit + OkHttp client, WebSocket chat client, wire Chat/Shell/
-Settings screens.
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 6.1 | Retrofit + OkHttp + Moshi backend client | `android/app/src/main/java/com/seed/app/data/BackendApi.kt` (new), `android/app/src/main/java/com/seed/app/data/ApiModule.kt` (new), `android/app/src/test/java/com/seed/app/data/BackendApiTest.kt` (new), `android/app/build.gradle.kts` (modified) | Adds the HTTP layer the Android app uses to talk to the FastAPI orchestrator. Three endpoints: `GET /health`, `POST /shell/exec`, `PUT /config`. Snake-case JSON fields (`exit_code`, `api_key`) are mapped to camelCase Kotlin properties via Moshi's `@Json(name=...)`. Manual DI: `ApiModule.default` lazy-binds to `BuildConfig.BACKEND_DEV_URL`; `ApiModule.forTesting(url)` builds a fresh Retrofit with debug logging forced on. No Hilt — the app is too small for the annotation-processor tax. **Deps:** retrofit 2.11.0, converter-moshi 2.11.0, okhttp 4.12.0 (+ logging-interceptor), moshi 1.15.1 + moshi-kotlin + kotlin-reflect 1.9.24, testImplementation mockwebserver 4.12.0. **APK:** 17.9 MB → 18.8 MB (+890 KB). **9 unit tests** via MockWebServer — pin the wire format (snake_case ↔ camelCase), the suspend boundary, the 422 path, and the body shape the backend's Pydantic models expect. |
+| 6.2 | WebSocket chat client | `android/app/src/main/java/com/seed/app/data/ChatEvent.kt` (new), `android/app/src/main/java/com/seed/app/data/ChatWebSocket.kt` (new), `android/app/src/test/java/com/seed/app/data/ChatWebSocketTest.kt` (new) | OkHttp `WebSocket` (no extra dep) wrapped in a small lifecycle class. Public surface: `connect()` (idempotent, starts a long-running coroutine), `disconnect()` (cancels the loop + closes the WS cleanly with code 1000), `send(text)` (JSON-escapes via Moshi, returns `false` if not connected), `events: SharedFlow<ChatEvent>` (0 replay, 64-slot buffer, `DROP_OLDEST`, `tryEmit` for order-preservation across concurrent `onMessage` calls), `state: StateFlow<ConnectionState>`. **Reconnect with backoff:** `ReconnectBackoff` is 1s/2s/4s/8s/16s/30s (cap), no jitter, reset on successful `onOpen`. **ChatEvent** sealed class: MiddlemanLine / WorkerLine / Complete / AppReload / Error — gives the ChatViewModel's `when` a compile-time exhaustiveness check. **12 unit tests** + 3 `ReconnectBackoffTest` tests via MockWebServer's `WebSocketListener` (the 4.12.0 API — no `WebSocketHandler` class in 4.x). The `tearDown` catches `MockWebServer.shutdown()`'s "Gave up waiting for queue to shut down" — a known interop quirk with OkHttp 4.x WebSocket; the test body has already passed by then. |
+| 6.3 | Wire Chat screen | `android/app/src/main/java/com/seed/app/data/ChatTransport.kt` (new), `android/app/src/main/java/com/seed/app/data/ChatWebSocket.kt` (modified), `android/app/src/main/java/com/seed/app/ui/chat/ChatViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/ui/chat/ChatViewModelTest.kt` (modified) | `ChatTransport` interface (connect/send/events/close) is the testability seam — `ChatWebSocket` implements it; tests provide a `FakeChatTransport` that captures outbound `send` calls and emits canned `ChatEvent`s via `MutableSharedFlow.tryEmit`. The ViewModel's constructor takes `chat: ChatTransport = ChatWebSocket(BuildConfig.BACKEND_DEV_URL)`. `init` calls `chat.connect()` and launches a `viewModelScope` collector that translates each `ChatEvent` to a `ChatMessage` (MiddlemanLine → `Agent(MIDDLEMAN)`, WorkerLine → `Agent(WORKER)`, Complete → `System(COMPLETE)`, AppReload → `System(APP_RELOAD)`, Error → `System(ERROR)`). `send()` now also calls `chat.send(text)` after appending the local User bubble. `onCleared` calls `chat.close()` so the connection loop and scope don't outlive the screen. The Compose `ChatScreen.kt` doesn't change — the public API (`messages`, `inputText`, `onInputChange`, `send`) is the same shape as Phase 5.4. **10 new unit tests** (8 pre-existing local-only tests, updated to pass `FakeChatTransport`); total ChatViewModelTest 18/18. `onCleared` coverage is omitted — `ViewModel.onCleared` is `protected` and the JVM unit test classpath can't easily trigger it; the close logic is exercised in `ChatWebSocketTest`. |
+| 6.4 | Wire Shell screen | `android/app/src/main/java/com/seed/app/ui/shell/ShellViewModel.kt` (modified), `android/app/src/main/java/com/seed/app/ui/shell/ShellScreen.kt` (modified), `android/app/src/test/java/com/seed/app/ui/shell/ShellViewModelTest.kt` (modified) | Constructor takes `backend: BackendApi = ApiModule.default`. `submit()` launches a `viewModelScope` coroutine that calls `POST /shell/exec`, then appends `Stdout` (if stdout non-empty) + `Stderr` (if stderr non-empty) + `Exit(exitCode)` lines. Network/HTTP failures surface as a sentinel `Exit(-1)` so the user sees something went wrong without crashing. New `isExecuting: StateFlow<Boolean>` (true while a call is in flight) drives the Shell screen's Cancel button. New `cancel()` is a stub for v0.1 — the backend has no cancel endpoint (the orchestrator's `session.exec()` runs to completion); tapping Cancel flips `isExecuting` to false but the HTTP call continues and the response still lands. A future task (Phase 10) will add a real cancel. Guard against concurrent submits: a second `submit` while a call is in flight is a no-op (the Run button is also visually disabled in the screen via the same `isExecuting` flow). The Compose `ShellScreen.kt` reads `isExecuting` and passes it to the input bar; Run button enabled = `value.isNotBlank() && !isExecuting`. **7 new unit tests** + an `in-flight` test that holds the call open with a `CompletableDeferred`; total ShellViewModelTest 15/15. `FakeBackendApi` (in the test file) captures every `shellExec` call; `health()` and `putConfig()` are `TODO()` because the Shell screen doesn't use them. |
+| 6.5 | Wire Settings screen + `PUT /config` route | `backend/seed_backend/service.py` (modified), `backend/tests/test_config_route.py` (new), `android/app/src/main/java/com/seed/app/data/ConfigSync.kt` (new), `android/app/src/main/java/com/seed/app/ui/settings/SettingsViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/data/ConfigSyncTest.kt` (new), `android/app/src/test/java/com/seed/app/ui/settings/SettingsViewModelTest.kt` (modified) | **Backend:** new `ConfigPayload` (Pydantic, mirrors the Android `ConfigRequest`), new `ConfigResponse` (`{ok: bool}`), new `PUT /config` route that writes the payload via `Config.save(DEFAULT_CONFIG_PATH)` where `DEFAULT_CONFIG_PATH = Path("config.json")` (the uvicorn CWD — the Makefile's `dev.sh` `cd`s into `backend/` so this resolves to `backend/config.json` in dev). `min_length=1` on `provider` and `model`; `api_key` accepts the empty string (a fresh install's default). **5 backend tests** pin the wire format, the overwrite-not-append behaviour, the 422-on-empty-provider path, and non-default port handling. **Android:** new `ConfigSync` class (open, so tests can subclass) bridges `SettingsForm` → `ConfigRequest` and PUTs to the backend. Constructor takes `BackendApi`; `sync(form)` returns true on `ok=true`, false on any failure (network, HTTP 4xx/5xx, `ok=false`) — no exceptions leak. The `toRequest` mapping drops `logLevel` (the orchestrator has no log level concept yet; Phase 7+ will wire it). The SettingsViewModel's `save()` now: `repo.save(current)` → `sync.sync(current)` → `_lastSaved.value = current` — best-effort; a sync failure doesn't roll back the local save or block the status-pill flip (the local save is authoritative, the backend sync is a sink). **3 new SettingsViewModel tests** + **5 new ConfigSync tests** (the wire format — snake_case `api_key`, nested `ports`, the `logLevel` drop). Total: 95/95 Android + 105/105 backend. |
+
+**Module shape after Phase 6:**
+- `data/BackendApi.kt` — Retrofit interface (`/health`, `/shell/exec`, `/config`) + DTOs (HealthResponse, ShellExecRequest, ShellExecResponse, ConfigRequest, ConfigPorts, ConfigResponse).
+- `data/ApiModule.kt` — manual-DI factory (`default` lazy-bound to `BuildConfig.BACKEND_DEV_URL`; `forTesting(url)` for tests).
+- `data/ChatTransport.kt` — narrow interface (connect/send/events/close) the ChatViewModel needs.
+- `data/ChatWebSocket.kt` — OkHttp-based WebSocket client with reconnect + backoff. Implements `ChatTransport`.
+- `data/ChatEvent.kt` — sealed class: MiddlemanLine / WorkerLine / Complete / AppReload / Error.
+- `data/ConfigSync.kt` — SettingsForm → ConfigRequest mapper + PUT /config caller. `open` so tests can subclass.
+- `ui/chat/ChatViewModel.kt` — wired to ChatTransport; `init` connects + collects events, `send` forwards the prompt, `onCleared` closes.
+- `ui/shell/ShellViewModel.kt` — wired to BackendApi; `submit` calls `shellExec` + appends Stdout/Stderr/Exit, `isExecuting` drives the Cancel button, `cancel` is a v0.1 no-op.
+- `ui/shell/ShellScreen.kt` — reads `isExecuting`, passes to input bar; Run button enabled = non-blank AND not executing; Cancel button enabled = executing.
+- `ui/settings/SettingsViewModel.kt` — wired to SettingsRepo + ConfigSync; `save` does local + backend in order; public API unchanged from 5.7.
+- `seed_backend/service.py` — new `ConfigPayload` / `ConfigResponse` / `PUT /config` route + `DEFAULT_CONFIG_PATH`.
+
+**APK size:** 17.9 MB → 18.9 MB (+1 MB for Retrofit/OkHttp/Moshi/kotlin-reflect; this phase added WebSocket + chat-event serialization, no size delta vs. 6.4). All runtime deps in the 4.12.0 / 1.15.1 / 2.11.0 line; kotlin-reflect is the heaviest at ~3 MB and pays for the Moshi KotlinJsonAdapterFactory (the KSP-codegen alternative would be lighter but needs a build plugin and is overkill for ~3 DTOs).
 
 ## ⬜ Phase 7 — Runtime extraction
 
