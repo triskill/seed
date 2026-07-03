@@ -40,4 +40,11 @@
     <string name="settings_action_save">Save</string>
     <string name="settings_status_modified">Modified</string>
     <string name="settings_status_saved">Saved</string>
+
+    <!-- Runtime extraction screen (Phase 7.5). -->
+    <string name="extraction_screen_title">Preparing Seed runtime</string>
+    <string name="extraction_screen_started">%1$d files, %2$d KiB</string>
+    <string name="extraction_asset_proot">Proot binary</string>
+    <string name="extraction_asset_rootfs">Linux environment</string>
+    <string name="extraction_asset_version">Version metadata</string>
 </resources>

@@ -12,7 +12,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.seed.app.R
 
 /**
  * Full-screen "preparing runtime" UI shown while [BootController]
@@ -35,7 +37,7 @@ fun ExtractionScreen(state: BootState) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "Preparing Seed runtime",
+                text = stringResource(R.string.extraction_screen_title),
                 style = MaterialTheme.typography.titleLarge,
             )
             when (val s = state) {
@@ -44,7 +46,11 @@ fun ExtractionScreen(state: BootState) {
                     is ExtractionProgress.Started -> {
                         CircularProgressIndicator()
                         Text(
-                            "${p.fileCount} files, ${p.totalBytes / 1024} KiB",
+                            stringResource(
+                                R.string.extraction_screen_started,
+                                p.fileCount,
+                                p.totalBytes / 1024,
+                            ),
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -53,7 +59,7 @@ fun ExtractionScreen(state: BootState) {
                             progress = { (p.bytesDone.toFloat() / p.totalBytes).coerceIn(0f, 1f) },
                         )
                         Text(
-                            p.name,
+                            friendlyAssetName(p.name),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -67,4 +73,16 @@ fun ExtractionScreen(state: BootState) {
             }
         }
     }
+}
+
+/**
+ * Map the technical asset filename to a user-friendly label.
+ * Falls back to the raw filename for assets that don't need a label.
+ */
+@Composable
+private fun friendlyAssetName(name: String): String = when (name) {
+    "proot" -> stringResource(R.string.extraction_asset_proot)
+    "rootfs.tar.gz" -> stringResource(R.string.extraction_asset_rootfs)
+    "seed_version.json" -> stringResource(R.string.extraction_asset_version)
+    else -> name
 }
