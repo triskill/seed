@@ -47,3 +47,13 @@ proot
 backend.pid
 emulator.pid
 .tmp/
+
+# Build-time working dir for the Android runtime (Task 7.1).
+# Lives at repo root, NOT under android/app/src/main/assets/linux/
+# (which is tracked and ships with the APK).
+runtime-build/
+
+# Allow the assets/linux/ dir to be tracked even though the
+# generic `linux/` pattern above would match it.
+!android/app/src/main/assets/linux/
+!android/app/src/main/assets/linux/seed_version.json
