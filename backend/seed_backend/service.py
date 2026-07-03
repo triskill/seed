@@ -18,11 +18,13 @@ itself is defined in `orchestrator.py` (not here) to keep
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket
 from pydantic import BaseModel, Field
 
 from seed_backend.chat import handle_chat
+from seed_backend.config import Config, DEFAULT_PORTS
 from seed_backend.flask_manager import FlaskManager
 from seed_backend.orchestrator import (
     Orchestrator,
@@ -38,6 +40,27 @@ from seed_backend.shell import ShellSession
 # cap; the cap stays.
 SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS: float = 60.0
 
+# Where the orchestrator reads / writes its
+# config.json. The Android Settings screen
+# (Phase 6.5) PUTs the user's settings to
+# `PUT /config` and the route persists them
+# to this path. The next orchestrator start
+# will read the file in a future task (the
+# orchestrator currently reads API keys
+# from environment variables; the config
+# file is the v0.2+ mechanism).
+#
+# v0.1 keeps the path hardcoded relative to
+# the uvicorn CWD. The Makefile's `dev.sh`
+# script `cd`s into `backend/` before
+# starting uvicorn, so `./config.json`
+# resolves to `backend/config.json` in
+# dev. A future task may make this
+# configurable via an env var
+# (`SEED_CONFIG_PATH`) so production
+# deployments can put it wherever they want.
+DEFAULT_CONFIG_PATH: Path = Path("config.json")
+
 
 __all__ = [
     "app",
@@ -46,8 +69,11 @@ __all__ = [
     "pi_env_for_role",
     "Orchestrator",
     "SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS",
+    "DEFAULT_CONFIG_PATH",
     "ShellExecRequest",
     "ShellExecResponse",
+    "ConfigPayload",
+    "ConfigResponse",
 ]
 
 
@@ -206,3 +232,84 @@ async def chat_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=1011, reason="orchestrator not initialized")
         return
     await handle_chat(websocket, orchestrator)
+
+
+class ConfigPayload(BaseModel):
+    """Request body for `PUT /config` (Phase 6.5).
+
+    Mirrors the Android `data.ConfigRequest` DTO field-for-field
+    so a `PUT /config` from the Settings screen lands directly
+    in the on-disk `config.json` (via [seed_backend.config.Config.save]).
+
+    The `ports` sub-object matches the backend's
+    [seed_backend.config.DEFAULT_PORTS] dict: `backend` (FastAPI,
+    default 7777) and `flask` (webapp, default 7778). The Android
+    side maps its `SettingsForm.backendPort` → `ports.backend`
+    and `SettingsForm.webappPort` → `ports.flask` in
+    `ConfigSync.toRequest`.
+
+    **Why a `ports` sub-object (not two top-level fields):**
+    the on-disk format already uses a `ports` dict (the
+    dataclass field is `ports: dict[str, int]`), so PUTting a
+    flat shape would force the route to flatten on write and
+    the next reader to re-nest. Keeping the wire shape the
+    same as the file shape is the smallest delta.
+
+    **Why no `logLevel` here:** the Android Settings form has
+    a `logLevel` field (Phase 5.6) but the orchestrator has no
+    concept of log level yet (Phase 7+ will add a `RuntimeService`
+    log view). The Android side doesn't send `logLevel` to the
+    backend — it stays a client-side concern. The
+    `ConfigSync.toRequest` deliberately drops the field.
+    """
+
+    provider: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    api_key: str = ""
+    ports: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_PORTS))
+
+
+class ConfigResponse(BaseModel):
+    """Response body for `PUT /config`.
+
+    A small ack: `{"ok": true}` on success. The Android
+    [com.seed.app.data.ConfigSync] checks [ok] and surfaces a
+    "sync failed" error in the Settings UI if it's `false` (a
+    future task may add a banner; for Phase 6.5 we just log
+    the failure and let the local save stand).
+    """
+
+    ok: bool
+
+
+@app.put("/config", response_model=ConfigResponse)
+async def put_config(payload: ConfigPayload) -> ConfigResponse:
+    """Persist the user's settings to [DEFAULT_CONFIG_PATH].
+
+    Phase 6.5 wires the Android Settings screen to this route
+    via [com.seed.app.data.ConfigSync]. The flow is:
+      1. User taps Save on the Settings screen.
+      2. Android's `SettingsViewModel.save()` calls
+         `SettingsRepo.save(form)` (local persistence to
+         DataStore + EncryptedSharedPreferences) and then
+         `ConfigSync.sync(form)` (this endpoint).
+      3. The route builds a [Config] from [payload] and
+         writes it via `Config.save(DEFAULT_CONFIG_PATH)`.
+      4. On the next orchestrator start (Phase 7+ will wire
+         this), the file is read back via
+         `Config.load(DEFAULT_CONFIG_PATH)`.
+
+    **Defensive — 422 on missing fields:** the `Field(..., min_length=1)`
+    on `provider` and `model` matches the Android
+    `SettingsForm.DEFAULTS` (which always populates both), but a
+    hand-rolled curl call could send `{"provider": ""}` and get
+    a 422. The Android side never does that.
+    """
+    cfg = Config(
+        provider=payload.provider,
+        model=payload.model,
+        api_key=payload.api_key,
+        ports=payload.ports,
+    )
+    cfg.save(DEFAULT_CONFIG_PATH)
+    return ConfigResponse(ok=True)
