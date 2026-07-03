@@ -38,6 +38,18 @@ ALPINE_SHA="041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de"
 DOCKER_IMAGE_TAG="seed-runtime:$(date +%s)"
 DOCKER_CONTAINER_NAME="seed-runtime-export-$$"
 
+# Always clean up — even on error or signal. Without this, a failure
+# between `docker create` and the success-path `docker rm`/`docker
+# rmi`/`rm -rf` would leak the named container and the image in the
+# local Docker daemon. trap ... EXIT fires on any exit (success,
+# failure, signal) so the buildscript never leaves dangling state.
+cleanup() {
+    docker rm -f "$DOCKER_CONTAINER_NAME" >/dev/null 2>&1 || true
+    docker rmi -f "$DOCKER_IMAGE_TAG" >/dev/null 2>&1 || true
+    rm -rf "$BUILD_DIR"
+}
+trap cleanup EXIT
+
 # ---- Preflight ----
 command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
 command -v curl >/dev/null || { echo "curl required" >&2; exit 1; }
