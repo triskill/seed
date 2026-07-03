@@ -141,6 +141,32 @@ dependencies {
     // opt-in features we don't use.
     implementation("androidx.security:security-crypto:1.1.0")
 
+    // Phase 6.1: Retrofit + OkHttp + Moshi — the
+    // HTTP client the Android app uses to talk to
+    // the FastAPI backend. Retrofit 2.11.0 has
+    // first-class `suspend` support (so the
+    // [BackendApi] interface is plain `suspend fun`
+    // declarations, no Call<...> wrapping). OkHttp
+    // 4.12.0 is the latest stable in the 4.x line
+    // (5.x is still alpha as of 2024). The logging
+    // interceptor is wired only in debug builds
+    // (see [ApiModule]) so release APKs don't
+    // leak request/response bodies to logcat.
+    //
+    // Moshi 1.15.1 + moshi-kotlin + kotlin-reflect:
+    // we use Moshi's `KotlinJsonAdapterFactory` to
+    // deserialize the DTOs in [BackendApi]. This
+    // requires `kotlin-reflect` at runtime; the
+    // alternative (Moshi codegen via KSP) needs a
+    // build plugin and is overkill for ~3 DTOs.
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation("com.squareup.moshi:moshi:1.15.1")
+    implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
+    implementation("org.jetbrains.kotlin:kotlin-reflect:1.9.24")
+
     // Debug / tooling (not packaged in release builds).
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
@@ -148,6 +174,11 @@ dependencies {
     // Unit tests (run on JVM, no emulator).
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    // Phase 6.1: MockWebServer for the [BackendApi]
+    // contract tests. Lives in OkHttp's test artifact
+    // (not the main one) so it doesn't end up in
+    // production APKs.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
     // Instrumented tests (require emulator / device).
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
