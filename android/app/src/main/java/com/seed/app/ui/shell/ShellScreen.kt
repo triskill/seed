@@ -63,25 +63,17 @@ import androidx.lifecycle.viewmodel.compose.viewModel
  * appears at the bottom of the scrollable area,
  * right above the keyboard.
  *
- * **No backend wiring yet.** `ShellViewModel.submit()`
- * just appends a `Command` and a fake `Exit(0)` to
- * the in-memory list. The `ShellApi` (Retrofit
- * client for `POST /shell/exec`) lands in Task 6.1
- * and the screen wiring lands in Task 6.4
- * ("Wire Shell screen"). Both phases will only
- * *add* behaviour to the existing ViewModel
- * methods — the public API
- * ([ShellViewModel.output], [ShellViewModel.input],
- * [ShellViewModel.onInputChange],
- * [ShellViewModel.submit]) stays the same.
- *
- * **Cancel button** is rendered (so the layout is
- * stable when Phase 6.4 enables it) but is
- * permanently `enabled = false` in 5.5 — there
- * is no "command running" state. Phase 6.4 will
- * add a `cancel()` method on the ViewModel and
- * an `isExecuting` flow that drives the button's
- * `enabled` flag.
+ * **Phase 6.4** wires the screen to the backend
+ * via [ShellViewModel.backend]. The Cancel
+ * button — permanently disabled in 5.5 — is now
+ * enabled while a `POST /shell/exec` is in
+ * flight (the ViewModel's [ShellViewModel.isExecuting]
+ * flow drives it). The cancel action itself
+ * is a v0.1 no-op (see [ShellViewModel.cancel]):
+ * tapping it doesn't actually abort the HTTP
+ * call, the response still lands in the
+ * output. A future task (Phase 10) will add
+ * a real cancel.
  */
 @Composable
 fun ShellScreen(
@@ -90,6 +82,7 @@ fun ShellScreen(
 ) {
     val output by viewModel.output.collectAsState()
     val input by viewModel.input.collectAsState()
+    val isExecuting by viewModel.isExecuting.collectAsState()
     val listState = rememberLazyListState()
 
     // Auto-scroll to the bottom whenever the list
@@ -112,6 +105,8 @@ fun ShellScreen(
             value = input,
             onValueChange = viewModel::onInputChange,
             onRun = viewModel::submit,
+            onCancel = viewModel::cancel,
+            isExecuting = isExecuting,
         )
 
         LazyColumn(
@@ -144,6 +139,8 @@ private fun ShellInputBar(
     value: String,
     onValueChange: (String) -> Unit,
     onRun: () -> Unit,
+    onCancel: () -> Unit,
+    isExecuting: Boolean,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -186,8 +183,11 @@ private fun ShellInputBar(
                 // or whitespace-only so the user
                 // can't submit a blank command. We
                 // mirror the `submit()` policy
-                // here.
-                enabled = value.isNotBlank(),
+                // here. Also disabled while a
+                // command is in flight (the
+                // ViewModel guards this too, but
+                // the visual feedback helps).
+                enabled = value.isNotBlank() && !isExecuting,
                 modifier = Modifier.semantics { testTag = "shell-run" },
             ) {
                 Icon(
@@ -196,17 +196,18 @@ private fun ShellInputBar(
                 )
             }
             Spacer(modifier = Modifier.width(4.dp))
-            // Permanently disabled in 5.5 — see
-            // [ShellScreen] kdoc.
+            // Phase 6.4: enabled while a command
+            // is in flight. The cancel action is
+            // a v0.1 no-op (see ShellViewModel.cancel
+            // kdoc) — Phase 10 will add a real
+            // cancel.
             IconButton(
-                onClick = { /* Phase 6.4: viewModel.cancel() */ },
-                enabled = false,
+                onClick = onCancel,
+                enabled = isExecuting,
                 modifier = Modifier.semantics { testTag = "shell-cancel" },
             ) {
                 Icon(
                     imageVector = Icons.Filled.Block,
-                    // Hidden from a11y / TalkBack
-                    // while the button is disabled.
                     contentDescription = "Cancel running command",
                 )
             }
