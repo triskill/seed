@@ -24,8 +24,15 @@ class AndroidAssetSource(
     override fun entries(): List<AssetEntry> {
         val names = assets.list(assetsDir) ?: return emptyList()
         return names.map { name ->
-            // AssetManager.openFd gives us the exact uncompressed size
-            // (the APK compresses assets, but openFd accounts for it).
+            // AssetManager.openFd gives us the exact byte size and
+            // is the only way to read an uncompressed asset in place.
+            // It THROWS FileNotFoundException on compressed assets,
+            // even ones the rest of AssetManager can read — so the
+            // build must keep `linux/**` on the noCompress list in
+            // app/build.gradle.kts. Drop that line and the app
+            // crashes on first launch with "This file can not be
+            // opened as a file descriptor; it is probably
+            // compressed".
             val fd = assets.openFd("$assetsDir/$name")
             AssetEntry(
                 name = name,

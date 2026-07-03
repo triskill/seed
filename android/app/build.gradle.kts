@@ -78,6 +78,25 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    // The runtime assets (proot binary, rootfs tarball,
+    // seed_version.json) are read by AssetManager.openFd
+    // — see AndroidAssetSource.entries(). openFd throws
+    // FileNotFoundException on compressed entries, so we
+    // have to keep these uncompressed in the APK. The
+    // rootfs.tar.gz is already gzipped, so storing it
+    // uncompressed in the APK costs no extra space and
+    // extraction is faster (no deflate at install time).
+    // The patterns are matched against paths under
+    // `assets/` (not the full APK path), so the
+    // `linux/` prefix is what AAPT actually sees.
+    androidResources {
+        noCompress += listOf(
+            "linux/seed_version.json",
+            "linux/proot",
+            "linux/rootfs.tar.gz",
+        )
+    }
 }
 
 dependencies {
