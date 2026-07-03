@@ -4,39 +4,55 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import com.seed.app.runtime.AndroidAssetSource
+import com.seed.app.runtime.BootController
+import com.seed.app.runtime.BootState
+import com.seed.app.runtime.ExtractionScreen
+import com.seed.app.runtime.RootfsVersion
 import com.seed.app.ui.nav.SeedNav
 import com.seed.app.ui.theme.SeedTheme
+import java.io.File
 
 /**
  * Single-Activity entry point for Seed v0.1.
  *
- * Phase 5.1 shipped a placeholder body that rendered a
- * centred "Seed" Text. Phase 5.2 (4-section navigation)
- * replaced it with the real `SeedNav` host — a `Scaffold`
- * that owns the bottom `NavigationBar` and a `NavHost`
- * with four destinations. Phases 5.3–5.7 filled in
- * each screen.
- *
- * **Phase 5.8** wraps the content in [SeedTheme]
- * (was bare `MaterialTheme {}` from 5.2–5.7).
- * `SeedTheme` provides the green primary palette,
- * the light/dark switch, and the `SideEffect` that
- * tints the system bars to match the active scheme.
- *
- * `enableEdgeToEdge()` opts into the modern Android
- * 15+ edge-to-edge default (transparent system bars);
- * the Scaffold's `bottomBar` handles the safe area for
- * the navigation bar, and the `SideEffect` in
- * `SeedTheme` keeps the bar icons legible on the
- * translucent surface.
+ * Phase 7.5 added the boot controller: on first launch, or whenever
+ * the runtime version in the APK doesn't match the on-disk version,
+ * we show a full-screen extraction progress UI until the runtime is
+ * on disk, then proceed to the normal `SeedNav`. See
+ * `com.seed.app.runtime` for the controller + screen + extractor.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // BootController owns the "is the runtime on disk and up to date?"
+        // decision. The asset source wraps AssetManager; the asset version
+        // is read once from the JSON file the build script dropped in.
+        val targetDir = File(filesDir, "linux")
+        val assetSource = AndroidAssetSource(assets)
+        val assetVersion = assets.open("linux/seed_version.json").bufferedReader()
+            .use { RootfsVersion.parse(it.readText()) }
+
         setContent {
             SeedTheme {
-                SeedNav()
+                val boot = remember { BootController(targetDir, assetSource, assetVersion) }
+                val state by boot.states.collectAsState()
+                LaunchedEffect(state) {
+                    // Kick off extraction the first time we see NeedsExtraction.
+                    if (state is BootState.NeedsExtraction) {
+                        boot.runExtraction()
+                    }
+                }
+                when (state) {
+                    BootState.Ready -> SeedNav()
+                    else -> ExtractionScreen(state)
+                }
             }
         }
     }
