@@ -23,7 +23,7 @@ app inside the runtime; the App screen shows the result.
 | 4 | System prompts + first real agent loop | ✅ done (4/4) |
 | 5 | Android shell (4 screens, nav, WebView) | 🟡 in progress (8/9) |
 | 6 | Android ↔ backend wiring | ✅ done (5/5) |
-| 7 | Runtime extraction (proot + Alpine) | ✅ done (5/5) |
+| 7 | Runtime extraction (proot + Alpine) | 🟡 in progress (5/5 extraction code done, 7.2 asset build pending) |
 | 8 | Foreground service | ⬜ not started |
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
@@ -216,19 +216,40 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 
 **Build cost:** first `./scripts/build-runtime.sh` takes 5–15 min (Docker image pull + Alpine apk + npm install of pi). Re-runs are fast (~30 s) thanks to Docker layer caching and a deterministic tar pipeline.
 
-## ⬜ Phase 8 — Foreground service
+## 🟡 Phase 8 — Foreground service (run the embedded runtime)
 
-4 tasks: `ProotRunner`, `RuntimeService` (foreground), health check polling,
-boot receiver.
+**Full design:** [`docs/plans/2026-07-03-embedded-runtime.md`](docs/plans/2026-07-03-embedded-runtime.md).
+Phase 7 built the *extraction* half of the embedded runtime; this phase
+builds the *process supervision* half — the foreground service that
+spawns `proot` and keeps it alive while the app is foregrounded.
 
-## ⬜ Phase 9 — First-run setup wizard
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 8.0 | Asset build (Phase 7.2, carryover) | `android/app/src/main/assets/linux/{proot,rootfs.tar.gz,seed_version.json}` | Run `./scripts/build-runtime.sh`; verify `file proot` = aarch64, `tar -tzf rootfs.tar.gz` contains the expected paths. **The rootfs is what Task 2 of the design doc validates first by `docker run`-ing the image and checking that `python -m seed_backend.service` actually starts — if it doesn't, the proot launch in 8.1 won't work either, and we have to fix the rootfs first.** |
+| 8.1 | `ProotRunner` | `app/src/main/java/com/seed/app/runtime/ProotRunner.kt` (new), `app/src/test/java/com/seed/app/runtime/ProotRunnerTest.kt` (new) | Spawns `proot -r filesDir/linux/rootfs /bin/sh -c "cd /home/seed/backend && exec uvicorn seed_backend.service:app --host 127.0.0.1 --port 7777"` as a `Process`, line-buffers stdout/stderr into `Flow<String>`, exposes `pid` / `isAlive` / `kill()`. `ProcessBuilder` from the stdlib — no new deps. JVM-unit-testable via a `ProcessFactory` seam. **No `--reload`** (host `dev.sh` has it; the embedded path has no source watcher, and the reload-spawned child is unwanted inside proot). |
+| 8.2 | `HealthMonitor` | `app/src/main/java/com/seed/app/runtime/HealthMonitor.kt` (new), `app/src/test/java/com/seed/app/runtime/HealthMonitorTest.kt` (new) | Coroutine that polls `BackendApi.health()` every 500 ms, up to 60 attempts (30 s total); emits a `HealthState` flow (`Unknown` / `Polling(attempt)` / `Healthy(flask)` / `Unhealthy(msg)`). `flask="down"` still counts as `Healthy` — the orchestrator is up, the webapp just isn't yet. |
+| 8.3 | `RuntimeService` (foreground) | `app/src/main/java/com/seed/app/runtime/{RuntimeService,RuntimeBinder}.kt` (new) | Android `Service`. `onCreate` builds `ProotRunner` + `HealthMonitor`, calls `startForeground` with `foregroundServiceType="dataSync"`, spawns proot, and republishes the `HealthState` flow through a `Binder` for `MainActivity` to consume. `onDestroy` cancels the scope and kills proot. Defer Robolectric tests to a future task; the integration test on the emulator is the v0.1 verification. |
+| 8.4 | Manifest + permissions + notification channel | `app/src/main/AndroidManifest.xml` (modified), `app/src/main/java/com/seed/app/SeedApp.kt` (modified), `app/src/main/res/drawable/ic_stat_seed.xml` (new) | Add `<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>`, `<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>`, and the `<service android:name=".runtime.RuntimeService" android:foregroundServiceType="dataSync" android:exported="false"/>` declaration. `SeedApp.onCreate` creates the `NotificationChannel("seed_runtime", IMPORTANCE_LOW)` (API 26+; minSdk is 26 so no fallback needed). 24-dp monochrome notification icon (placeholder `ic_info_outline`-style vector for v0.1). |
 
-3 tasks: `SetupScreen`, wire `MainActivity`, cold-start timing.
+## ⬜ Phase 9 — First-run setup wizard (boot → start service → wait for health → show nav)
+
+| # | Task | Files | Notes |
+|---|---|---|---|
+| 9.1 | `BootState` extension | `app/src/main/java/com/seed/app/runtime/BootState.kt` (modified) | New states `Starting(attempt: Int)` and `RuntimeError(message: String)` between `Ready` and "show the nav". `MainActivity` branches on the combined `BootState` + `HealthState` to render the right screen. |
+| 9.2 | `StartRuntimeScreen` | `app/src/main/java/com/seed/app/runtime/StartRuntimeScreen.kt` (new) | `CircularProgressIndicator` + "Starting runtime…" caption while `HealthState.Polling`; the same screen with a red banner + retry button for `HealthState.Unhealthy`. Reuses the extraction-screen layout primitives (full-bleed centered column). |
+| 9.3 | `MainActivity` wiring | `app/src/main/java/com/seed/app/MainActivity.kt` (modified) | When `BootState.Ready`: `ContextCompat.startForegroundService(this, Intent(this, RuntimeService::class.java))`, then `bindService(...)` and collect `binder.health` into a local `StateFlow<HealthState>`. The Compose layer branches: `Ready && Healthy` → `SeedNav`; `Ready && !Healthy` → `StartRuntimeScreen`. `onStop` keeps the service alive (that's the whole point); `onDestroy` unbinds. |
+| 9.4 | `BackendApi` / `WebView` default URL flip | `app/src/main/java/com/seed/app/data/BackendApi.kt` (modified), `app/src/main/java/com/seed/app/ui/settings/SettingsForm.kt` (modified), `app/src/main/java/com/seed/app/data/ApiModule.kt` (modified), `app/build.gradle.kts` (modified) | `BuildConfig.BACKEND_DEV_URL` flips from `http://10.0.2.2:7777/` to `http://127.0.0.1:7777/`. `SettingsForm` gains `host: String = "127.0.0.1"` (was implicit). `ApiModule.default()` reads the active form (or build config as fallback) and constructs the URL. `WebViewConfig` / `WEBAPP_DEV_URL` flip the same way: `127.0.0.1:7778`. The previous `10.0.2.2` is now a user-selectable override in Settings (Phase 10 polish for the UI, the data model supports it from day one). |
 
 ## ⬜ Phase 10 — End-to-end polish
 
 6 tasks: App screen auto-reload, error banners, cancel button in Shell,
 "Add a habit tracker" full demo, polish + edge cases, final demo.
+
+Plus the **deferred items from the embedded-runtime design doc §4**:
+notification icon design, "stop / restart / wipe" runtime controls in
+Settings, health-status pill in the App bar, multi-process proot
+supervision / auto-restart on crash, splitting the rootfs into a
+separate `.obb` to shrink the APK.
 
 ---
 
