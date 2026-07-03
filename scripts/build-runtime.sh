@@ -70,9 +70,14 @@ cp -r "$REPO_ROOT/backend" "$BUILD_DIR/ctx/backend"
 cp -r "$REPO_ROOT/webapp" "$BUILD_DIR/ctx/webapp"
 
 cat > "$BUILD_DIR/ctx/Dockerfile" <<'DOCKERFILE'
-FROM arm64v8/alpine:3.20
+# Pinned for reproducible builds. Update both pins together when bumping:
+#   - base image: arm64v8/alpine 3.20.x (must match ALPINE_URL below)
+#   - pi: @earendil-works/pi-coding-agent <exact version> (run `npm view` to check)
+# Last bumped: 2026-07-03, pi 0.80.3, alpine 3.20.3.
+# Full digest pinning is a v0.2 follow-up.
+FROM arm64v8/alpine:3.20.3
 RUN apk add --no-cache --update python3 py3-pip nodejs npm git tmux
-RUN npm install -g @earendil-works/pi-coding-agent
+RUN npm install -g @earendil-works/pi-coding-agent@0.80.3
 COPY backend /home/seed/backend
 COPY webapp /home/seed/app
 RUN cd /home/seed/app && git init -q
