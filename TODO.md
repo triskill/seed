@@ -221,6 +221,47 @@ boot receiver.
 
 ---
 
+## Phase 5.9 — visual verification (carried forward + completed)
+
+**Status: ✅ verified on the emulator (2026-07-03).** This section
+documents what the on-device demo showed end-to-end with the
+Phase 6 wiring in place.
+
+**What was verified** (screenshots in `.pi/scratch/seed-shots/`):
+
+| # | Verification | Result |
+|---|---|---|
+| 5.9.1 | App tab loads the Flask webapp at `10.0.2.2:7778` | ✅ "Hello, what should I become?" + "ready (ping ok)" rendered. Proves the backend is reachable from the emulator and the WebView + network-security-config allowlist is correct. |
+| 5.9.2 | Seed green theme + dark-mode bar icons | ✅ Status bar + system bar use the Seed green; icons are light on dark in dark mode (the SideEffect in `SeedTheme` flips the `isAppearanceLight*` flags). |
+| 5.9.3 | 4-tab bottom nav | ✅ App / Chat / Shell / Settings; selected tab gets the purple pill indicator. |
+| 5.9.4 | Chat send → WS connect → fake-pi response stream | ✅ User message bubble appears; worker emits 3 progress events + `<task:done/>`; chat UI shows Worker cards (purple surfaceVariant) + "Task complete" banner (pink errorContainer) + "App reloading" banner. All 5 ChatEvent → ChatMessage translations working. |
+| 5.9.5 | Shell submit → POST /shell/exec → render | ✅ `$ echo hi from the shell` → `hi from the shell` → `[exit 0]` rendered with monospaced font + green `$` prompt + muted exit. Backend log shows `POST /shell/exec 200 OK`. |
+| 5.9.6 | Settings save → backend `PUT /config` + config.json | ✅ `model` field edited, tap Save, status pill flips "Modified" → "Saved", `PUT /config 200 OK` in backend log, `backend/config.json` written with the new model + nested ports + logLevel correctly dropped. |
+| 5.9.7 | Settings persistence after kill+relaunch | ✅ Force-stop + relaunch: form re-hydrates to the saved model (not the default), status pill stays "Saved" (form == lastSaved). Proves DataStore round-trip. |
+
+**Bug found + fixed during 5.9:** the SettingsViewModel
+production code was defaulting to `SettingsRepo.InMemory`
+(a no-op) instead of `AndroidSettingsRepo` (DataStore +
+EncryptedSharedPreferences). Phase 5.7 had introduced the
+abstraction but never wired it into the ViewModel — the
+Compose `viewModel<SettingsViewModel>()` no-arg overload
+silently used the in-memory repo, so saves to the local
+DataStore were dropped on every relaunch. Fix is a
+`SettingsViewModel.Factory` companion that uses the
+`APPLICATION_KEY` extra + `AndroidSettingsRepo(context)`,
+referenced by `SettingsScreen` via `viewModel(factory = Factory)`.
+The unit tests (which pass explicit repos) were unaffected.
+Commit: `4f69f74 fix(android): wire SettingsViewModel.Factory to AndroidSettingsRepo`.
+
+**Bug found during 6.x dev stack bring-up:** the project's
+`.venv` was missing `uvicorn[standard]` (the ASGI WS lib
+that handles the `/chat` upgrade). `pyproject.toml` declares
+the dep correctly (`"uvicorn[standard]>=0.27"`), so a fresh
+`pip install -e "./backend[dev]"` would have it — the venv
+just hadn't been re-installed since the dep was added. Fixed
+locally with `pip install 'uvicorn[standard]'`. A fresh
+`make install` (or equivalent) gets it for new clones.
+
 ## Known v0.1 limitations (carry-forward TODOs)
 
 - **`os.fork()` from a multi-threaded process emits a `DeprecationWarning` in Python 3.12+.** Safe in practice here (child immediately `execvp`s — no Python state is touched) but the long-term fix is a `subprocess.Popen` + PTY abstraction or a dedicated single-threaded worker process. Phase 2+ is a good time to address.
