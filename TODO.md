@@ -28,7 +28,7 @@ app inside the runtime; the App screen shows the result.
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **105/105 backend + 95/95 Android unit** passing.
+Tests: **105/105 backend + 103/103 Android unit** passing.
 
 ---
 
