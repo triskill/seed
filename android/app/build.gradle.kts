@@ -84,17 +84,29 @@ android {
     // — see AndroidAssetSource.entries(). openFd throws
     // FileNotFoundException on compressed entries, so we
     // have to keep these uncompressed in the APK. The
-    // rootfs.tar.gz is already gzipped, so storing it
+    // rootfs is already gzipped, so storing it
     // uncompressed in the APK costs no extra space and
     // extraction is faster (no deflate at install time).
     // The patterns are matched against paths under
     // `assets/` (not the full APK path), so the
     // `linux/` prefix is what AAPT actually sees.
+    //
+    // Naming trap: the source asset is `rootfs.tar.gz`,
+    // but the Android Gradle Plugin's CompressAssetsTask
+    // auto-decompresses `.gz` files in `assets/` and
+    // strips the extension, so the merged asset on disk
+    // (and inside the APK) is `rootfs.tar`. The pattern
+    // must match the merged name, not the source name —
+    // using `linux/rootfs.tar.gz` here would let the
+    // 348 MB tarball slip through DEFLATE compression
+    // and crash the app on first launch with "This file
+    // can not be opened as a file descriptor; it is
+    // probably compressed".
     androidResources {
         noCompress += listOf(
             "linux/seed_version.json",
             "linux/proot",
-            "linux/rootfs.tar.gz",
+            "linux/rootfs.tar",
         )
     }
 }

@@ -78,11 +78,17 @@ fun ExtractionScreen(state: BootState) {
 /**
  * Map the technical asset filename to a user-friendly label.
  * Falls back to the raw filename for assets that don't need a label.
+ *
+ * Names match what [AndroidAssetSource.entries] returns, which
+ * are the merged-asset names inside the APK — not the source
+ * filenames in `assets/linux/`. The merged name for the rootfs
+ * is `rootfs.tar` (the source's `.gz` is stripped by the AGP
+ * CompressAssetsTask; see `app/build.gradle.kts` for why).
  */
 @Composable
 private fun friendlyAssetName(name: String): String = when (name) {
     "proot" -> stringResource(R.string.extraction_asset_proot)
-    "rootfs.tar.gz" -> stringResource(R.string.extraction_asset_rootfs)
+    "rootfs.tar" -> stringResource(R.string.extraction_asset_rootfs)
     "seed_version.json" -> stringResource(R.string.extraction_asset_version)
     else -> name
 }
