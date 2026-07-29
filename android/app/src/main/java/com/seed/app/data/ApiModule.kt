@@ -75,6 +75,11 @@ object ApiModule {
      */
     val default: BackendApi by lazy { build(BuildConfig.BACKEND_DEV_URL, debugLogging = BuildConfig.DEBUG) }
 
+    /** Loopback client used by the embedded-runtime health monitor. */
+    val embedded: BackendApi by lazy {
+        build(EMBEDDED_BACKEND_URL, debugLogging = BuildConfig.DEBUG)
+    }
+
     /**
      * Build a [BackendApi] pointed at an arbitrary
      * base URL, with logging forced on. Used by the
@@ -150,4 +155,6 @@ object ApiModule {
             .build()
             .create(BackendApi::class.java)
     }
+
+    private const val EMBEDDED_BACKEND_URL = "http://127.0.0.1:7777/"
 }

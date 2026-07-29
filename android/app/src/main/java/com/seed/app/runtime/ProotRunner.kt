@@ -9,6 +9,8 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Spawns the proot process and exposes its lifetime as a
@@ -50,6 +52,7 @@ class ProotRunner(
     private val workDir: File = rootfsDir,
     private val env: Map<String, String> = System.getenv(),
     private val factory: ProcessFactory = JvmProcessFactory,
+    private val terminationGracePeriodMs: Long = 5_000,
 ) {
 
     fun start(scope: CoroutineScope): ProotHandle {
@@ -60,15 +63,17 @@ class ProotRunner(
             LAUNCH_COMMAND,
         )
         val process = factory.start(command, workDir, env)
-        return ProcessHandleImpl(process, scope)
+        return ProcessHandleImpl(process, scope, terminationGracePeriodMs)
     }
 
     private class ProcessHandleImpl(
         private val process: Process,
         scope: CoroutineScope,
+        private val terminationGracePeriodMs: Long,
     ) : ProotHandle {
         private val stdoutFlow = MutableSharedFlow<String>(replay = 64)
         private val stderrFlow = MutableSharedFlow<String>(replay = 64)
+        private val stopping = AtomicBoolean(false)
 
         init {
             // The drain coroutines are the only reason the handle
@@ -93,7 +98,26 @@ class ProotRunner(
         override val stdout: Flow<String> = stdoutFlow.asSharedFlow()
         override val stderr: Flow<String> = stderrFlow.asSharedFlow()
         override fun destroy() {
+            if (!stopping.compareAndSet(false, true)) return
             process.destroy()
+
+            // Service.onDestroy runs on the main thread, so waiting there
+            // would risk an ANR. A short-lived daemon watcher provides the
+            // graceful deadline and escalates independently of the service's
+            // coroutine scope, which is cancelled during teardown.
+            Thread({
+                try {
+                    if (!process.waitFor(terminationGracePeriodMs, TimeUnit.MILLISECONDS)) {
+                        process.destroyForcibly()
+                    }
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    if (process.isAlive) process.destroyForcibly()
+                }
+            }, "seed-proot-stop").apply {
+                isDaemon = true
+                start()
+            }
         }
 
         private suspend fun drain(stream: InputStream, sink: MutableSharedFlow<String>) {
@@ -138,7 +162,7 @@ interface ProotHandle {
     val stdout: Flow<String>
     val stderr: Flow<String>
 
-    /** Sends SIGTERM. Does not block. */
+    /** Sends SIGTERM and asynchronously escalates after a five-second grace period. */
     fun destroy()
 }
 

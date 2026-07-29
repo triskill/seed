@@ -198,6 +198,11 @@ dependencies {
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
     implementation("org.jetbrains.kotlin:kotlin-reflect:1.9.24")
 
+    // Embedded-runtime extraction: the APK asset is an uncompressed TAR at
+    // runtime (AGP strips the source .gz suffix). Commons Compress provides
+    // TAR entry parsing, including Alpine's symbolic and hard links.
+    implementation("org.apache.commons:commons-compress:1.27.1")
+
     // Debug / tooling (not packaged in release builds).
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

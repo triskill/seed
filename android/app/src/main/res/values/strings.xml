@@ -47,4 +47,10 @@
     <string name="extraction_asset_proot">Proot binary</string>
     <string name="extraction_asset_rootfs">Linux environment</string>
     <string name="extraction_asset_version">Version metadata</string>
+
+    <!-- Embedded runtime foreground service (Phase 8). -->
+    <string name="runtime_notification_channel_name">Seed runtime</string>
+    <string name="runtime_notification_channel_description">Keeps the local Seed backend running</string>
+    <string name="runtime_notification_title">Seed runtime is running</string>
+    <string name="runtime_notification_text">Local app builder and backend are active</string>
 </resources>

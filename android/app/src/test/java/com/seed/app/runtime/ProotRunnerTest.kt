@@ -175,6 +175,28 @@ class ProotRunnerTest {
 
         assertTrue(process.destroyed)
     }
+
+    @Test
+    fun destroyEscalatesWhenProcessDoesNotExitAfterSigterm() = runTest(UnconfinedTestDispatcher()) {
+        val rootfs = tempFolder.newFolder("rootfs")
+        val proot = tempFolder.newFile("proot")
+        val process = FakeProcess(stdout = "", stderr = "", exitsOnDestroy = false)
+        val fake = RecordingProcessFactory(process)
+
+        val handle = ProotRunner(
+            proot,
+            rootfs,
+            factory = fake,
+            terminationGracePeriodMs = 1,
+        ).start(this)
+        handle.destroy()
+
+        assertTrue(
+            "destroyForcibly should follow an unsuccessful graceful wait",
+            process.forciblyDestroyed.await(1, TimeUnit.SECONDS),
+        )
+        assertFalse(process.isAlive)
+    }
 }
 
 // ---- Test doubles -------------------------------------------------------
@@ -227,6 +249,7 @@ private class RecordingProcessFactory(
 private class FakeProcess(
     stdout: String,
     stderr: String,
+    private val exitsOnDestroy: Boolean = true,
 ) : Process() {
 
     private val stdoutBytes = stdout.toByteArray(Charsets.UTF_8)
@@ -236,6 +259,7 @@ private class FakeProcess(
     private val stdin = ByteArrayOutputStream()
     private var exitCode: Int = 0
     val destroyed: Boolean get() = !alive.get()
+    val forciblyDestroyed = CountDownLatch(1)
 
     override fun getOutputStream(): OutputStream = stdin
     override fun getInputStream(): InputStream = ByteArrayInputStream(stdoutBytes)
@@ -257,14 +281,12 @@ private class FakeProcess(
     }
 
     override fun destroy() {
-        if (alive.compareAndSet(true, false)) {
-            exitCode = 143   // SIGTERM convention
-            exitLatch.countDown()
-        }
+        if (exitsOnDestroy) simulateExit(143)
     }
 
     override fun destroyForcibly(): Process {
-        destroy()
+        forciblyDestroyed.countDown()
+        simulateExit(137)
         return this
     }
 

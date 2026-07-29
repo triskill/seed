@@ -1,13 +1,21 @@
 package com.seed.app
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import com.seed.app.runtime.RuntimeService
 
-/**
- * Application class. Phase 5.1 has nothing to do here; the
- * class is declared so the manifest can reference it (and
- * the `android:name` attribute is reserved for future use)
- * without us having to add it mid-phase. Phase 6 will wire
- * up the dependency container; Phase 8 will create the
- * notification channels here for the foreground service.
- */
-class SeedApp : Application()
+/** Process-level setup shared by every Seed activity and service. */
+class SeedApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        val channel = NotificationChannel(
+            RuntimeService.CHANNEL_ID,
+            getString(R.string.runtime_notification_channel_name),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = getString(R.string.runtime_notification_channel_description)
+        }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+}
