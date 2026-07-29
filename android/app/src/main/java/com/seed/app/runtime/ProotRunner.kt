@@ -67,8 +67,8 @@ class ProotRunner(
         private val process: Process,
         scope: CoroutineScope,
     ) : ProotHandle {
-        private val stdoutFlow = MutableSharedFlow<String>(extraBufferCapacity = 64)
-        private val stderrFlow = MutableSharedFlow<String>(extraBufferCapacity = 64)
+        private val stdoutFlow = MutableSharedFlow<String>(replay = 64)
+        private val stderrFlow = MutableSharedFlow<String>(replay = 64)
 
         init {
             // The drain coroutines are the only reason the handle
@@ -79,12 +79,12 @@ class ProotRunner(
             // the foreground service; tests: the `TestScope`'s
             // `UnconfinedTestDispatcher`) so `readLine()` runs on
             // a thread appropriate to the caller. The 64-line
-            // buffer is the backpressure knob — if the consumer
-            // (the HealthMonitor / logcat logger) falls behind,
-            // the buffer fills and the process's write to its
-            // stdout/stderr pipe blocks, throttling the process.
-            // That's the right behaviour: a runaway log spew is
-            // the symptom, not the problem.
+            // replay buffer prevents fast startup output from
+            // being lost in the small gap between start() launching
+            // these drains and RuntimeService subscribing to the
+            // returned handle. Once a subscriber exists, a full
+            // buffer suspends emission and throttles a runaway log
+            // producer instead of growing memory without bound.
             scope.launch { drain(process.inputStream, stdoutFlow) }
             scope.launch { drain(process.errorStream, stderrFlow) }
         }

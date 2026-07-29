@@ -23,12 +23,12 @@ app inside the runtime; the App screen shows the result.
 | 4 | System prompts + first real agent loop | ✅ done (4/4) |
 | 5 | Android shell (4 screens, nav, WebView) | 🟡 in progress (8/9) |
 | 6 | Android ↔ backend wiring | ✅ done (5/5) |
-| 7 | Runtime extraction (proot + Alpine) | 🟡 in progress (5/5 extraction code done, 7.2 asset build pending) |
-| 8 | Foreground service | ⬜ not started |
+| 7 | Runtime extraction (proot + Alpine) | ✅ done (5/5) |
+| 8 | Foreground service | 🟡 in progress (2/4) |
 | 9 | First-run setup wizard | ⬜ not started |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **105/105 backend + 103/103 Android unit** passing.
+Tests: **107/107 backend + 119/119 Android unit** passing.
 
 ---
 
@@ -225,9 +225,9 @@ spawns `proot` and keeps it alive while the app is foregrounded.
 
 | # | Task | Files | Notes |
 |---|---|---|---|
-| 8.0 | Asset build (Phase 7.2, carryover) | `android/app/src/main/assets/linux/{proot,rootfs.tar.gz,seed_version.json}` | Run `./scripts/build-runtime.sh`; verify `file proot` = aarch64, `tar -tzf rootfs.tar.gz` contains the expected paths. **The rootfs is what Task 2 of the design doc validates first by `docker run`-ing the image and checking that `python -m seed_backend.service` actually starts — if it doesn't, the proot launch in 8.1 won't work either, and we have to fix the rootfs first.** |
-| 8.1 | `ProotRunner` | `app/src/main/java/com/seed/app/runtime/ProotRunner.kt` (new), `app/src/test/java/com/seed/app/runtime/ProotRunnerTest.kt` (new) | Spawns `proot -r filesDir/linux/rootfs /bin/sh -c "cd /home/seed/backend && exec uvicorn seed_backend.service:app --host 127.0.0.1 --port 7777"` as a `Process`, line-buffers stdout/stderr into `Flow<String>`, exposes `pid` / `isAlive` / `kill()`. `ProcessBuilder` from the stdlib — no new deps. JVM-unit-testable via a `ProcessFactory` seam. **No `--reload`** (host `dev.sh` has it; the embedded path has no source watcher, and the reload-spawned child is unwanted inside proot). |
-| 8.2 | `HealthMonitor` | `app/src/main/java/com/seed/app/runtime/HealthMonitor.kt` (new), `app/src/test/java/com/seed/app/runtime/HealthMonitorTest.kt` (new) | Coroutine that polls `BackendApi.health()` every 500 ms, up to 60 attempts (30 s total); emits a `HealthState` flow (`Unknown` / `Polling(attempt)` / `Healthy(flask)` / `Unhealthy(msg)`). `flask="down"` still counts as `Healthy` — the orchestrator is up, the webapp just isn't yet. |
+| 8.0 | Asset build (Phase 7.2, carryover) | `android/app/src/main/assets/linux/{proot,rootfs.tar.gz,seed_version.json}` | ✅ Runtime assets built. `proot` is a statically linked aarch64 ELF; `rootfs.tar.gz` contains `/home/seed/backend`, `/home/seed/app`, Python, Node, and `/usr/local/bin/pi`. Binary assets remain gitignored and are rebuilt locally with `./scripts/build-runtime.sh`; `seed_version.json` tracks the build ID. |
+| 8.1 | `ProotRunner` | `app/src/main/java/com/seed/app/runtime/ProotRunner.kt` (new), `app/src/test/java/com/seed/app/runtime/ProotRunnerTest.kt` (new) | ✅ Spawns `proot -r filesDir/linux/rootfs /bin/sh -c "cd /home/seed/backend && exec uvicorn seed_backend.service:app --host 127.0.0.1 --port 7777"` via an injected `ProcessFactory`; exposes `isAlive`, `destroy()`, and separate stdout/stderr flows. The flows retain the latest 64 lines so startup output emitted before `RuntimeService` subscribes is not lost. **8 JVM tests.** |
+| 8.2 | `HealthMonitor` | `app/src/main/java/com/seed/app/runtime/HealthMonitor.kt` (new), `app/src/test/java/com/seed/app/runtime/HealthMonitorTest.kt` (new) | ✅ Cold `Flow<HealthState>` emits `Unknown`, then polls `BackendApi.health()` every 500 ms for up to 60 attempts. Each request has a 500 ms timeout; failed probes retry, exhaustion emits the final error as `Unhealthy`, and cancellation propagates. Any successful backend response is `Healthy(flask)`, including `flask="down"`. **8 JVM tests** cover immediate success, Flask-down readiness, fixed retry cadence, exhausted attempts, request timeout, and cancellation during both a probe and retry delay. |
 | 8.3 | `RuntimeService` (foreground) | `app/src/main/java/com/seed/app/runtime/{RuntimeService,RuntimeBinder}.kt` (new) | Android `Service`. `onCreate` builds `ProotRunner` + `HealthMonitor`, calls `startForeground` with `foregroundServiceType="dataSync"`, spawns proot, and republishes the `HealthState` flow through a `Binder` for `MainActivity` to consume. `onDestroy` cancels the scope and kills proot. Defer Robolectric tests to a future task; the integration test on the emulator is the v0.1 verification. |
 | 8.4 | Manifest + permissions + notification channel | `app/src/main/AndroidManifest.xml` (modified), `app/src/main/java/com/seed/app/SeedApp.kt` (modified), `app/src/main/res/drawable/ic_stat_seed.xml` (new) | Add `<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>`, `<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>`, and the `<service android:name=".runtime.RuntimeService" android:foregroundServiceType="dataSync" android:exported="false"/>` declaration. `SeedApp.onCreate` creates the `NotificationChannel("seed_runtime", IMPORTANCE_LOW)` (API 26+; minSdk is 26 so no fallback needed). 24-dp monochrome notification icon (placeholder `ic_info_outline`-style vector for v0.1). |
 
