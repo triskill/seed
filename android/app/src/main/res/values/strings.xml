@@ -48,6 +48,13 @@
     <string name="extraction_asset_rootfs">Linux environment</string>
     <string name="extraction_asset_version">Version metadata</string>
 
+    <!-- Embedded runtime startup screen (Phase 9). -->
+    <string name="runtime_start_title">Starting Seed runtime</string>
+    <string name="runtime_start_waiting">Starting local services…</string>
+    <string name="runtime_start_polling">Startup attempt %1$d</string>
+    <string name="runtime_start_error_title">Seed runtime could not start</string>
+    <string name="runtime_start_retry">Retry</string>
+
     <!-- Embedded runtime foreground service (Phase 8). -->
     <string name="runtime_notification_channel_name">Seed runtime</string>
     <string name="runtime_notification_channel_description">Keeps the local Seed backend running</string>

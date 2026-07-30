@@ -26,6 +26,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // The embedded backend and webapp run on the
         // device and bind to these fixed loopback ports.
