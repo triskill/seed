@@ -21,15 +21,18 @@ import com.seed.app.BuildConfig
  *
  * Phase 5.3 replaces the Phase 5.2 placeholder with
  * an `AndroidView` wrapping a `WebView` that loads
- * `BuildConfig.WEBAPP_DEV_URL` (the host's Flask
- * webapp on port 7778).
+ * `BuildConfig.WEBAPP_DEV_URL` (the embedded webapp
+ * at `127.0.0.1:7778` by default). `10.0.2.2` remains
+ * allowed for development against an emulator-hosted
+ * webapp.
  *
  * **Security model (defence in depth, two layers):**
  *
  *   1. `network_security_config.xml` only permits
- *      cleartext HTTP to the two dev hosts
- *      (10.0.2.2 / 127.0.0.1). All other cleartext
- *      traffic is blocked at the platform level by
+ *      cleartext HTTP to the embedded default
+ *      (`127.0.0.1`) and the emulator host alias
+ *      (`10.0.2.2`) used for host development. All
+ *      other cleartext traffic is blocked at the platform level by
  *      Android 9+.
  *   2. `WebViewConfig.isAllowedUrl` is the second
  *      filter — the `WebViewClient.shouldOverrideUrlLoading`

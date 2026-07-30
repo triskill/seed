@@ -8,18 +8,14 @@ import java.net.URI
  * security-relevant bits (the URL allowlist) can be
  * unit-tested on the JVM without an emulator.
  *
- * The dev WebView points at the host's Flask webapp
- * (port 7778) via:
- *   - `10.0.2.2` — the emulator's alias for the
- *     host machine's loopback. Works out of the box.
- *   - `127.0.0.1` — used by physical devices that
- *     tunnel the port back with `adb reverse tcp:7778
- *     tcp:7778`.
- *
- * In production (Phase 7+, after the proot runtime
- * lands) the WebView will point at the in-device
- * backend at `http://127.0.0.1:7778/`, so 127.0.0.1
- * stays in the allowlist.
+ * The WebView defaults to the embedded webapp at
+ * `http://127.0.0.1:7778/`. Its development allowlist
+ * also includes:
+ *   - `10.0.2.2` — the emulator's alias for services
+ *     running on the host machine's loopback.
+ *   - `127.0.0.1` — the embedded runtime and physical
+ *     devices tunnelling a host service with
+ *     `adb reverse tcp:7778 tcp:7778`.
  */
 object WebViewConfig {
 

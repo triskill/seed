@@ -14,12 +14,11 @@ import java.util.concurrent.TimeUnit
  * app uses to talk to the FastAPI orchestrator.
  *
  * **Phase 6.1** wires this up so the Shell and
- * Settings ViewModels (Phase 6.4, 6.5) can call
- * `ApiModule.get()` and get a ready-to-use
+ * Settings ViewModels (Phase 6.4, 6.5) can use
+ * [ApiModule.default] to get a ready-to-use
  * [BackendApi] bound to `BuildConfig.BACKEND_DEV_URL`
- * (compile-time, defaults to `http://10.0.2.2:7777/`
- * on the emulator; flip to `127.0.0.1:7777` for a
- * physical device using `adb reverse`).
+ * (compile-time, defaults to the embedded backend at
+ * `http://127.0.0.1:7777/`).
  *
  * **Design notes:**
  *

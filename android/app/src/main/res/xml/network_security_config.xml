@@ -2,19 +2,16 @@
 <!--
   Network security config for Seed v0.1.
 
-  Phase 5.3 (WebView): the dev backend is plain HTTP
-  (Flask in dev mode does not serve TLS). Android 9+
-  blocks cleartext HTTP by default, so we need to
-  opt in — but only for the two hosts we actually
-  talk to:
+  The embedded backend and webapp use plain HTTP on
+  the device's loopback. Android 9+ blocks cleartext
+  HTTP by default, so we opt in only for the two
+  hosts the app supports:
 
+    - 127.0.0.1 — the device's own loopback and the
+      default for the embedded backend and webapp.
     - 10.0.2.2 — the emulator's alias for the host
-      machine's loopback (the Flask dev server
-      running on the developer's laptop).
-    - 127.0.0.1 — the device's own loopback, used
-      by physical devices that tunnel the dev port
-      back with `adb reverse tcp:7777 tcp:7777`
-      and `adb reverse tcp:7778 tcp:7778`.
+      machine's loopback, retained for development
+      against services running on the host.
 
   This is intentionally narrower than
   `android:usesCleartextTraffic="true"`, which would
@@ -24,18 +21,17 @@
   and this config is the first. Two layers, both
   narrow.
 
-  When the proot runtime lands (Phase 7+), the
-  WebView will hit the in-device backend at
-  `http://127.0.0.1:7778/`, so 127.0.0.1 stays in
-  the list and 10.0.2.2 stays in for continued
-  emulator dev.
+  The WebView defaults to the embedded webapp at
+  `http://127.0.0.1:7778/`; 10.0.2.2 remains in the
+  list for emulator-based host development.
 -->
 <network-security-config>
     <!-- Default: HTTPS only, no cleartext. -->
     <base-config cleartextTrafficPermitted="false" />
 
     <!--
-      Narrow cleartext exception for the two dev hosts.
+      Narrow cleartext exception for the two
+      supported hosts.
       `cleartextTrafficPermitted="true"` here scopes the
       cleartext permission to these domains only — every
       other host still gets the default (HTTPS only).

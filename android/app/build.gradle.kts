@@ -27,12 +27,12 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        // The dev backend runs on the host machine; on
-        // emulator we use the special 10.0.2.2 alias.
-        // On a physical device we'd need a real LAN IP.
-        // Phase 5.3 (WebView) reads this from BuildConfig.
-        buildConfigField("String", "WEBAPP_DEV_URL", "\"http://10.0.2.2:7778/\"")
-        buildConfigField("String", "BACKEND_DEV_URL", "\"http://10.0.2.2:7777/\"")
+        // The embedded backend and webapp run on the
+        // device and bind to these fixed loopback ports.
+        // 10.0.2.2 remains in the URL/network allowlists
+        // for development against services on the host.
+        buildConfigField("String", "WEBAPP_DEV_URL", "\"http://127.0.0.1:7778/\"")
+        buildConfigField("String", "BACKEND_DEV_URL", "\"http://127.0.0.1:7777/\"")
     }
 
     buildTypes {
@@ -44,10 +44,8 @@ android {
             )
         }
         debug {
-            // Default: dev URLs from BuildConfig above.
-            // Phase 5.3 will switch the WebView to these
-            // at runtime so the app works on physical
-            // devices too.
+            // Uses the embedded loopback URLs from
+            // BuildConfig above.
         }
     }
 

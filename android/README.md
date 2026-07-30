@@ -2,7 +2,10 @@
 
 Phase 5 — the Android shell. 4 screens (App, Chat, Shell,
 Settings) with bottom navigation; a WebView in the App
-tab that loads the dev backend at `http://10.0.2.2:7778/`.
+tab that loads the embedded webapp at
+`http://127.0.0.1:7778/` by default. `10.0.2.2`
+remains allowed for development against a server
+running on the emulator host.
 
 ## Building
 

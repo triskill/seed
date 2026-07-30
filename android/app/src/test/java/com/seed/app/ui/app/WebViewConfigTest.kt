@@ -7,7 +7,8 @@ import org.junit.Test
 /**
  * Unit tests for [WebViewConfig.isAllowedUrl] — the
  * security boundary the App tab's WebView uses to
- * block navigation to anything outside the dev hosts.
+ * block navigation outside the embedded default and
+ * the emulator host alias allowed for host development.
  *
  * These run on the JVM (no Android, no Robolectric)
  * because the predicate is a pure function over a
@@ -17,12 +18,12 @@ import org.junit.Test
 class WebViewConfigTest {
 
     @Test
-    fun `allows http URL on 10_0_2_2 (emulator alias for host)`() {
+    fun `allows http URL on 10_0_2_2 for host development`() {
         assertTrue(WebViewConfig.isAllowedUrl("http://10.0.2.2:7778/"))
     }
 
     @Test
-    fun `allows http URL on 127_0_0_1 (physical device with adb reverse)`() {
+    fun `allows http URL on 127_0_0_1 as embedded default`() {
         assertTrue(WebViewConfig.isAllowedUrl("http://127.0.0.1:7778/"))
     }
 
