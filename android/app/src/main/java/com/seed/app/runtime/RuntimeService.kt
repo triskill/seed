@@ -13,24 +13,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 
 /** Foreground owner of the embedded proot + FastAPI runtime. */
 class RuntimeService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val healthState = MutableStateFlow<HealthState>(HealthState.Unknown)
+    private lateinit var supervisor: RuntimeSupervisor
     private val binder by lazy {
         RuntimeBinder(
-            health = healthState.asStateFlow(),
-            runtimeIsAlive = { prootHandle?.isAlive == true },
+            supervisor = supervisor,
             stopService = ::stopSelf,
         )
     }
-
-    private var prootHandle: ProotHandle? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -43,19 +38,13 @@ class RuntimeService : Service() {
             env = RUNTIME_ENVIRONMENT,
         )
 
-        try {
-            prootHandle = runner.start(serviceScope).also(::collectRuntimeLogs)
-            serviceScope.launch {
-                HealthMonitor(ApiModule.embedded).states().collect { state ->
-                    healthState.value = state
-                }
-            }
-        } catch (failure: Exception) {
-            Log.e(TAG, "Could not start embedded runtime", failure)
-            healthState.value = HealthState.Unhealthy(
-                failure.message ?: "Could not start embedded runtime",
-            )
-        }
+        supervisor = RuntimeSupervisor(
+            scope = serviceScope,
+            startProcess = { runner.start(serviceScope).also(::collectRuntimeLogs) },
+            healthStates = { HealthMonitor(ApiModule.embedded).states() },
+            onFailure = { message, failure -> Log.e(TAG, message, failure) },
+        )
+        supervisor.startOrRetry()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -63,8 +52,7 @@ class RuntimeService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
-        prootHandle?.destroy()
-        prootHandle = null
+        if (::supervisor.isInitialized) supervisor.stop()
         serviceScope.cancel()
         super.onDestroy()
     }

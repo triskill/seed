@@ -1,6 +1,7 @@
 package com.seed.app.runtime
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -161,6 +162,38 @@ class ProotRunnerTest {
         val handle = ProotRunner(proot, rootfs, factory = fake).start(this)
 
         assertEquals("no newline here", handle.stdout.first())
+    }
+
+    @Test
+    fun stdoutFlowCompletesAtEof() = runTest(UnconfinedTestDispatcher()) {
+        val rootfs = tempFolder.newFolder("rootfs")
+        val proot = tempFolder.newFile("proot")
+        val process = FakeProcess(stdout = "first\nsecond\n", stderr = "")
+        val handle = ProotRunner(
+            prootExecutable = proot,
+            rootfsDir = rootfs,
+            factory = RecordingProcessFactory(process),
+        ).start(this)
+
+        val lines = withTimeout(1_000) { handle.stdout.toList() }
+
+        assertEquals(listOf("first", "second"), lines)
+    }
+
+    @Test
+    fun stderrFlowCompletesAtEof() = runTest(UnconfinedTestDispatcher()) {
+        val rootfs = tempFolder.newFolder("rootfs")
+        val proot = tempFolder.newFile("proot")
+        val process = FakeProcess(stdout = "", stderr = "warning\nfailed\n")
+        val handle = ProotRunner(
+            prootExecutable = proot,
+            rootfsDir = rootfs,
+            factory = RecordingProcessFactory(process),
+        ).start(this)
+
+        val lines = withTimeout(1_000) { handle.stderr.toList() }
+
+        assertEquals(listOf("warning", "failed"), lines)
     }
 
     @Test

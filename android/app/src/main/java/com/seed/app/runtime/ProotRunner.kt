@@ -1,9 +1,9 @@
 package com.seed.app.runtime
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.File
@@ -19,11 +19,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * **Process model.** The Android foreground service
  * ([RuntimeService]) owns the [CoroutineScope] passed to
  * [start]; the scope is what keeps the stream-draining
- * coroutines alive. The [ProotHandle] is a thin query surface —
- * it does not own the scope, so the service can stop the runtime
- * by cancelling the scope (which kills the coroutines + lets the
- * [Process] be reaped when proot exits) and start a new one
- * without leaking handles.
+ * coroutines alive. Each output flow is backed by a bounded,
+ * closeable channel and completes when its process stream reaches
+ * EOF (or its drain is cancelled), so collectors from replaced
+ * processes do not accumulate. The [ProotHandle] is a thin query
+ * surface — it does not own the scope, so service teardown can
+ * cancel all remaining work in one place.
  *
  * **Why a [ProcessFactory] seam.** The `java.lang.Process` class
  * is hard to fake in unit tests (it's an abstract class with
@@ -71,32 +72,31 @@ class ProotRunner(
         scope: CoroutineScope,
         private val terminationGracePeriodMs: Long,
     ) : ProotHandle {
-        private val stdoutFlow = MutableSharedFlow<String>(replay = 64)
-        private val stderrFlow = MutableSharedFlow<String>(replay = 64)
+        private val stdoutLines = Channel<String>(capacity = EARLY_OUTPUT_BUFFER_LINES)
+        private val stderrLines = Channel<String>(capacity = EARLY_OUTPUT_BUFFER_LINES)
+        private val stdoutFlow = stdoutLines.receiveAsFlow()
+        private val stderrFlow = stderrLines.receiveAsFlow()
         private val stopping = AtomicBoolean(false)
 
         init {
-            // The drain coroutines are the only reason the handle
-            // is "alive" in any meaningful sense: if they stop,
-            // stdout/stderr flow emissions stop. We inherit the
-            // scope's dispatcher (production: a
-            // `SupervisorJob + Dispatchers.IO` scope owned by
-            // the foreground service; tests: the `TestScope`'s
-            // `UnconfinedTestDispatcher`) so `readLine()` runs on
-            // a thread appropriate to the caller. The 64-line
-            // replay buffer prevents fast startup output from
-            // being lost in the small gap between start() launching
-            // these drains and RuntimeService subscribing to the
-            // returned handle. Once a subscriber exists, a full
-            // buffer suspends emission and throttles a runaway log
-            // producer instead of growing memory without bound.
-            scope.launch { drain(process.inputStream, stdoutFlow) }
-            scope.launch { drain(process.errorStream, stderrFlow) }
+            // We inherit the scope's dispatcher (production: a
+            // `SupervisorJob + Dispatchers.IO` scope owned by the
+            // foreground service; tests: the `TestScope`'s
+            // `UnconfinedTestDispatcher`) so `readLine()` runs on a
+            // thread appropriate to the caller. Each channel keeps
+            // up to 64 early lines during the gap between launching
+            // these drains and RuntimeService subscribing. A full
+            // channel suspends the drain, applying backpressure
+            // instead of allowing runaway log output to grow memory.
+            // drain() closes the channel at EOF so service collectors
+            // naturally finish when a process exits or is replaced.
+            scope.launch { drain(process.inputStream, stdoutLines) }
+            scope.launch { drain(process.errorStream, stderrLines) }
         }
 
         override val isAlive: Boolean get() = process.isAlive
-        override val stdout: Flow<String> = stdoutFlow.asSharedFlow()
-        override val stderr: Flow<String> = stderrFlow.asSharedFlow()
+        override val stdout: Flow<String> = stdoutFlow
+        override val stderr: Flow<String> = stderrFlow
         override fun destroy() {
             if (!stopping.compareAndSet(false, true)) return
             process.destroy()
@@ -120,18 +120,24 @@ class ProotRunner(
             }
         }
 
-        private suspend fun drain(stream: InputStream, sink: MutableSharedFlow<String>) {
-            BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
-                var line = reader.readLine()
-                while (line != null) {
-                    sink.emit(line)
-                    line = reader.readLine()
+        private suspend fun drain(stream: InputStream, sink: Channel<String>) {
+            try {
+                BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
+                    var line = reader.readLine()
+                    while (line != null) {
+                        sink.send(line)
+                        line = reader.readLine()
+                    }
                 }
+            } finally {
+                sink.close()
             }
         }
     }
 
     private companion object {
+        const val EARLY_OUTPUT_BUFFER_LINES = 64
+
         // The shell command run inside proot. Hard-coded for v0.1
         // — see class KDoc and docs/plans/2026-07-03-embedded-runtime.md
         // §2.3 for why we don't extract it to a rootfs script yet.
@@ -144,7 +150,8 @@ class ProotRunner(
  * Live handle to a running proot process. Returned by
  * [ProotRunner.start]; the caller is responsible for the
  * [CoroutineScope] that owns the underlying stream-draining
- * coroutines.
+ * coroutines. [stdout] and [stderr] each complete when their
+ * corresponding process stream reaches EOF.
  *
  * **No `pid` field** — Android's [java.lang.Process] does not
  * expose `pid()` (it was added in JDK 9 but not to the Android

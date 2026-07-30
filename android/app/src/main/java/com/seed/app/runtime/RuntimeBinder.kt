@@ -8,14 +8,16 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * The process PID is intentionally not exposed: Android's Process API does not
  * provide it on the project's API level. Callers only need liveness, health,
- * and an explicit way to stop the foreground service.
+ * retry, and an explicit way to stop the foreground service.
  */
 class RuntimeBinder internal constructor(
-    val health: StateFlow<HealthState>,
-    private val runtimeIsAlive: () -> Boolean,
+    private val supervisor: RuntimeSupervisor,
     private val stopService: () -> Unit,
 ) : Binder() {
-    val isRuntimeAlive: Boolean get() = runtimeIsAlive()
+    val health: StateFlow<HealthState> = supervisor.health
+    val isRuntimeAlive: Boolean get() = supervisor.isRuntimeAlive
+
+    fun retry() = supervisor.startOrRetry()
 
     fun stop() = stopService()
 }
