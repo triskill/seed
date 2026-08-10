@@ -25,10 +25,10 @@ app inside the runtime; the App screen shows the result.
 | 6 | Android ↔ backend wiring | ✅ done (5/5) |
 | 7 | Runtime extraction (proot + Alpine) | ✅ done (5/5) |
 | 8 | Foreground service | ✅ done (4/4) |
-| 9 | First-run setup wizard | ⬜ not started |
+| 9 | First-run runtime startup gate | ✅ done (4/4) |
 | 10 | End-to-end polish | ⬜ not started |
 
-Tests: **107/107 backend + 124/124 Android unit** passing.
+Tests: **107/107 backend + 157/157 Android unit** passing. Phase 9 also has 4 Compose instrumentation tests.
 
 ---
 
@@ -233,14 +233,16 @@ spawns `proot` and keeps it alive while the app is foregrounded.
 
 **Module shape after Phase 8:** the runtime package now owns installation (`RuntimeExtractor`), process launch/termination (`ProotRunner`), readiness polling (`HealthMonitor`), and Android lifetime (`RuntimeService` + `RuntimeBinder`). Phase 9 only needs to start/bind the service after `BootState.Ready` and gate `SeedNav` on binder health. Total Android unit tests: **124/124 passing**.
 
-## ⬜ Phase 9 — First-run setup wizard (boot → start service → wait for health → show nav)
+## ✅ Phase 9 — First-run runtime startup gate (4/4)
 
 | # | Task | Files | Notes |
 |---|---|---|---|
-| 9.1 | `BootState` extension | `app/src/main/java/com/seed/app/runtime/BootState.kt` (modified) | New states `Starting(attempt: Int)` and `RuntimeError(message: String)` between `Ready` and "show the nav". `MainActivity` branches on the combined `BootState` + `HealthState` to render the right screen. |
-| 9.2 | `StartRuntimeScreen` | `app/src/main/java/com/seed/app/runtime/StartRuntimeScreen.kt` (new) | `CircularProgressIndicator` + "Starting runtime…" caption while `HealthState.Polling`; the same screen with a red banner + retry button for `HealthState.Unhealthy`. Reuses the extraction-screen layout primitives (full-bleed centered column). |
-| 9.3 | `MainActivity` wiring | `app/src/main/java/com/seed/app/MainActivity.kt` (modified) | When `BootState.Ready`: `ContextCompat.startForegroundService(this, Intent(this, RuntimeService::class.java))`, then `bindService(...)` and collect `binder.health` into a local `StateFlow<HealthState>`. The Compose layer branches: `Ready && Healthy` → `SeedNav`; `Ready && !Healthy` → `StartRuntimeScreen`. `onStop` keeps the service alive (that's the whole point); `onDestroy` unbinds. |
-| 9.4 | `BackendApi` / `WebView` default URL flip | `app/src/main/java/com/seed/app/data/BackendApi.kt` (modified), `app/src/main/java/com/seed/app/ui/settings/SettingsForm.kt` (modified), `app/src/main/java/com/seed/app/data/ApiModule.kt` (modified), `app/build.gradle.kts` (modified) | `BuildConfig.BACKEND_DEV_URL` flips from `http://10.0.2.2:7777/` to `http://127.0.0.1:7777/`. `SettingsForm` gains `host: String = "127.0.0.1"` (was implicit). `ApiModule.default()` reads the active form (or build config as fallback) and constructs the URL. `WebViewConfig` / `WEBAPP_DEV_URL` flip the same way: `127.0.0.1:7778`. The previous `10.0.2.2` is now a user-selectable override in Settings (Phase 10 polish for the UI, the data model supports it from day one). |
+| 9.1 | Startup state resolver | `runtime/RuntimeStartup.kt`, `RuntimeStartupTest.kt` | ✅ Keeps extraction-owned `BootState` separate from service-owned `HealthState`. A pure resolver maps the pair to extraction UI, runtime UI, or `SeedNav`; a single-fire gate starts the service only after extraction is ready. This supersedes the older duplicate `BootState.Starting` / `RuntimeError` proposal. |
+| 9.2 | Runtime startup + retry UI | `runtime/StartRuntimeScreen.kt`, `androidTest/.../StartRuntimeScreenTest.kt`, `res/values/strings.xml` | ✅ Shows polling progress and attempt count, or an error banner and Retry action. Four Compose instrumentation tests compile; running them still requires an emulator/device. |
+| 9.3 | Service lifecycle wiring + retry | `MainActivity.kt`, `runtime/{RuntimeSupervisor,RuntimeService,RuntimeBinder}.kt` | ✅ `MainActivity` starts and binds the foreground service after extraction, mirrors binder health, requests Android 13+ notification permission once, gates navigation until healthy, retains the service in the background, and unbinds on destroy. Retry re-polls a live process or replaces a dead one. Extraction is single-flight across activity recreation. |
+| 9.4 | Embedded endpoint defaults + host persistence | `app/build.gradle.kts`, `data/{ApiModule,AndroidSettingsRepo}.kt`, `ui/{app,settings}/*`, related tests | ✅ HTTP, WebSocket, and WebView defaults now use `127.0.0.1:7777/7778`; cleartext and navigation allowlists remain restricted to loopback plus `10.0.2.2`. `SettingsForm.host` defaults to and persists `127.0.0.1`, with migration for older saved forms. Dynamic client rebuilding and the host UI remain Phase 10 because the embedded runtime ports are currently fixed. |
+
+**Module shape after Phase 9:** `RuntimeSupervisor` owns retryable process/health startup, `RuntimeStartup` owns pure UI gating, and `MainActivity` is the Android lifecycle adapter. Android JVM coverage is **157/157** plus 4 Compose instrumentation tests.
 
 ## ⬜ Phase 10 — End-to-end polish
 

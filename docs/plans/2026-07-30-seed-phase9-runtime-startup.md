@@ -17,7 +17,7 @@ The current Phase 8 implementation supersedes several older notes in `TODO.md` a
 - Keep `BootState` limited to `NeedsExtraction`, `Extracting`, and `Ready`. Runtime startup already has `HealthState.Unknown`, `Polling`, `Healthy`, and `Unhealthy`; duplicating these in `BootState` would create conflicting state owners.
 - Start `RuntimeService` from `MainActivity` only after extraction reaches `Ready`. `SeedApp` continues to create the notification channel but must not race extraction by starting the service.
 - Treat any successful `/health` response as ready, including `flask="down"`, matching the tested `HealthMonitor` contract.
-- Flip the fixed defaults to `127.0.0.1`. Do not add a settings `host` field in Phase 9: persisting a host without rebuilding the lazy Retrofit, WebSocket, and WebView clients would expose a control that does not take effect reliably.
+- Flip the fixed defaults to `127.0.0.1`. Add and persist `SettingsForm.host` with a legacy migration, but do not expose or dynamically apply it until Phase 10 can rebuild Retrofit, WebSocket, and WebView clients atomically.
 - Keep runtime ports fixed at 7777/7778. Runtime restart on port changes is outside this phase.
 - Do not add automatic crash supervision, runtime controls, App-screen reload, Shell cancellation, or status pills; those remain Phase 10 work.
 
@@ -351,7 +351,19 @@ git add android/app/src/main/java/com/seed/app/MainActivity.kt
 git commit -m "feat(android): start runtime after extraction"
 ```
 
-## Task 6: Documentation and final verification
+## Task 6: Persist the future host setting
+
+**Files:**
+- Modify: `android/app/src/main/java/com/seed/app/ui/settings/SettingsForm.kt`
+- Modify: `android/app/src/main/java/com/seed/app/data/AndroidSettingsRepo.kt`
+- Create: `android/app/src/test/java/com/seed/app/data/SettingsPreferencesTest.kt`
+
+Add `host = "127.0.0.1"` to the form, persist it with the non-secret DataStore
+fields, and migrate settings written before Phase 9 by defaulting a missing host
+to loopback. Keep active clients on the fixed BuildConfig endpoints until Phase
+10 provides coordinated client rebuilding.
+
+## Task 7: Documentation and final verification
 
 **Files:**
 - Modify: `TODO.md`
@@ -360,7 +372,7 @@ git commit -m "feat(android): start runtime after extraction"
 
 **Step 1: Update documentation**
 
-Record the implemented ownership model, retry behavior, loopback defaults, API 33 permission request, and tests. Mark Phase 9 complete only after automated verification. Explicitly mark the older `BootState.Starting/RuntimeError` and settings-host proposals as superseded.
+Record the implemented ownership model, retry behavior, loopback defaults, persisted-but-not-active host model, API 33 permission request, and tests. Mark Phase 9 complete only after automated verification. Explicitly mark the older `BootState.Starting/RuntimeError` and immediately-active host proposals as superseded.
 
 Document that ignored runtime assets are absent from a fresh worktree and must be generated with `scripts/build-runtime.sh`. The bundled proot is arm64, so a real runtime test requires an arm64 device/emulator; an x86_64 emulator can only verify Compose UI.
 

@@ -1,7 +1,7 @@
 # Embedded runtime: run Alpine inside the Android app
 
 **Date:** 2026-07-03
-**Status:** design, validated 2026-07-03
+**Status:** implemented through Phase 9 on 2026-07-30; arm64 device acceptance remains manual
 **Owner:** seed-dev
 **Goal:** the existing Phase 7/8/9 plan finally lands end-to-end — the Seed
 APK boots an `Alpine + Python + pi` runtime inside the device and the
@@ -15,28 +15,27 @@ The v0.1 bootstrap plan (`docs/plans/2026-06-30-seed-v0.1-bootstrap.md`)
 defined a three-layer architecture: Android shell → embedded Linux
 runtime (proot + Alpine) → webapp. The runtime layer was scoped across
 **Phase 7** (extraction), **Phase 8** (foreground service), and
-**Phase 9** (first-run setup wizard). Status as of this document:
+**Phase 9** (runtime startup gate). Current implementation status:
 
 | Component | Status |
 |---|---|
-| `scripts/build-runtime.sh` (Docker arm64 build) | ✅ written, **never executed** |
-| `assets/linux/proot` (aarch64 static binary) | ❌ **missing** |
-| `assets/linux/rootfs.tar.gz` (Alpine + python + node + pi + backend + webapp) | ❌ **missing** |
-| `assets/linux/seed_version.json` | ✅ present |
-| `RuntimeExtractor` + `AndroidAssetSource` + `BootController` + `ExtractionScreen` (Phase 7.3–7.5) | ✅ implemented, unit-tested, **5/5 marked done in TODO.md** |
-| `noCompress` for `assets/linux/**` in `build.gradle.kts` | ✅ in working tree (uncommitted) |
-| `ProotRunner` / `RuntimeService` / `HealthMonitor` (Phase 8.1–8.4) | ❌ **never written** |
-| `AndroidManifest.xml`: `FOREGROUND_SERVICE` + `<service>` + notification icon | ❌ **missing** |
-| `SeedApp.onCreate` starts `RuntimeService` | ❌ **missing** |
-| `BackendApi` default URL | Hard-coded to `10.0.0.2:7777` (host dev mode) — **must flip to `127.0.0.1:7777` (embedded) for this work to land** |
-| Rootfs entrypoint (how the orchestrator is launched inside proot) | not defined in the current Dockerfile |
+| `scripts/build-runtime.sh` (Docker arm64 build) | ✅ implemented and exercised; generated binaries remain gitignored |
+| `assets/linux/proot` + `rootfs.tar.gz` | ✅ generated locally when needed; absent from fresh clones/worktrees until the build script runs |
+| `assets/linux/seed_version.json` | ✅ tracked |
+| Runtime extraction and versioning | ✅ implemented, traversal-hardened, and JVM-tested |
+| `ProotRunner` / `HealthMonitor` / `RuntimeService` | ✅ implemented and JVM-tested at the process/health seams |
+| Foreground-service manifest, notification channel, and icon | ✅ implemented |
+| Runtime start ownership | ✅ `MainActivity` starts/binds only after extraction; `SeedApp` creates the channel only |
+| Retry | ✅ `RuntimeSupervisor` re-polls a live process or replaces a dead process |
+| Client defaults | ✅ fixed loopback defaults at `127.0.0.1:7777/7778` |
+| Settings host model | ✅ defaults to and persists `127.0.0.1`; dynamic client rebuilding is deferred |
+| Rootfs entrypoint | ✅ hard-coded in `ProotRunner` as the v0.1 launch command |
 
-The Phase 7 plan (`docs/plans/2026-07-03-seed-phase7-runtime-extraction.md`)
-already lays out the extraction code, but it explicitly defers the
-"actually run the build" step to **Task 7.2**, which was never executed.
-Phase 8 was never started. The current APK installs, displays the four
-screens, and times out on every backend call with
-`Failed to connect to /10.0.2.2:7777`.
+The implementation deliberately keeps extraction `BootState` and runtime
+`HealthState` as separate owners. A pure `RuntimeStartup` resolver combines
+them for UI gating instead of adding duplicate `BootState.Starting` and
+`BootState.RuntimeError` variants proposed earlier in this document. The
+arm64 runtime acceptance checklist in §6 remains a manual device step.
 
 ---
 
@@ -99,8 +98,8 @@ Modified files:
 
 ```
 android/app/src/main/AndroidManifest.xml            # FOREGROUND_SERVICE, <service>
-android/app/src/main/java/com/seed/app/SeedApp.kt   # SeedApp.onCreate → start RuntimeService
-android/app/src/main/java/com/seed/app/MainActivity.kt  # bind RuntimeService, show StartRuntimeScreen until healthy
+android/app/src/main/java/com/seed/app/SeedApp.kt   # create runtime notification channel
+android/app/src/main/java/com/seed/app/MainActivity.kt  # start/bind RuntimeService after extraction; gate UI on health
 android/app/src/main/java/com/seed/app/data/BackendApi.kt  # default URL 10.0.2.2:7777 → 127.0.0.1:7777
 android/app/src/main/java/com/seed/app/ui/settings/SettingsForm.kt  # add `host` field (127.0.0.1 / 10.0.2.2)
 android/app/build.gradle.kts                       # backport noCompress (already in working tree)
@@ -141,11 +140,12 @@ Two options for the embedded path:
 | **A. Flip the default to `127.0.0.1:7777` in the `buildConfigField`, keep the same mechanism** | One-line change, existing tests still work via build flavor | No way to talk to a host backend from a release APK |
 | **B. Add a `host` field to `SettingsForm` (already a data class) so the user can pick `127.0.0.1` (embedded) or `10.0.2.2` (host dev) at runtime** | Toggle in-app, no rebuild needed | Slightly more code, more tests |
 
-**Decision: B.** The Settings screen already has the `backendPort`
-field; adding a `host: String` (defaults to `127.0.0.1`) is one line.
-The `buildConfigField` becomes the **default** for the field, not a
-hard-coded URL. A future task can add a "Connect to dev backend"
-quick-toggle in `Settings` for users iterating on the host backend.
+**Implemented decision: staged B.** Fixed build defaults now point to
+`127.0.0.1`, and `SettingsForm.host` defaults to and persists that value.
+The host is intentionally not exposed or applied to already-created Retrofit,
+WebSocket, and WebView clients yet. Phase 10 must rebuild all three client types
+atomically before a "Connect to dev backend" toggle can be truthful. The
+embedded service also keeps ports 7777/7778 fixed for v0.1.
 
 ### 2.5 The "Starting runtime…" UX
 
@@ -162,21 +162,18 @@ NeedsExtraction ──extract──▶ Extracting(progress)
                                                              └──▶ SeedNav
 ```
 
-For v0.1 we keep the sealed-class enum flat:
+The implementation keeps the two existing state owners separate:
 
-```kotlin
-sealed class BootState {
-    object NeedsExtraction : BootState()
-    data class Extracting(val progress: ExtractionProgress) : BootState()
-    data class Starting(val attempt: Int) : BootState()       // NEW
-    data class RuntimeError(val message: String) : BootState() // NEW
-    object Ready : BootState()
-}
-```
+- `BootState` describes only extraction (`NeedsExtraction`, `Extracting`,
+  `Ready`).
+- `HealthState` describes runtime startup (`Unknown`, `Polling`, `Healthy`,
+  `Unhealthy`).
+- `resolveStartupDestination(boot, health)` maps those values to
+  `ExtractionScreen`, `StartRuntimeScreen`, or `SeedNav`.
 
-`Starting` shows a `CircularProgressIndicator` + a "Starting
-runtime…" caption. `RuntimeError` shows a retry button (future task
-may add a "view logcat" action).
+This avoids contradictory transitions between the extraction controller and
+foreground service. `StartRuntimeScreen` shows a progress indicator and attempt
+count for polling, then an error banner and Retry action for unhealthy state.
 
 ---
 
@@ -336,19 +333,19 @@ Add a simple notification icon (`res/drawable/ic_stat_seed.xml` —
    foreground service is to survive the activity).
 5. On `onDestroy`: `unbindService`.
 
-### Task 8 — `BackendApi` default URL flip
+### Task 8 — Client default URL flip and future host model
 - `BuildConfig.BACKEND_DEV_URL` becomes `"http://127.0.0.1:7777/"` (was `"http://10.0.2.2:7777/"`).
-- `SettingsForm` gains `host: String = "127.0.0.1"` (was implicit in the build config).
-- `ApiModule.default()` reads the active `SettingsForm` (or the
-  build config as fallback) and constructs the URL.
-- `WebViewConfig` and `WebView`'s `WEBAPP_DEV_URL` flip the same
-  way: `127.0.0.1:7778`.
+- `BuildConfig.WEBAPP_DEV_URL` becomes `"http://127.0.0.1:7778/"`.
+- HTTP, WebSocket, and WebView production defaults all consume those fixed
+  build constants.
+- `SettingsForm` gains and persists `host: String = "127.0.0.1"`; older saved
+  forms migrate to that value when the key is absent.
+- `10.0.2.2` remains allowed by the WebView and cleartext-security filters.
 
-**Open question:** how to thread the active `SettingsForm` into
-`ApiModule.default()`. v0.1 keeps it simple — `ApiModule` is a
-`object` and `default()` reads the form via a `lateinit var` that
-`SeedApp` sets on init (after the repo loads). This is the same
-trick `ConfigSync` uses in Phase 6.5.
+Dynamic host activation is deferred: changing the stored field must eventually
+rebuild Retrofit, WebSocket, and WebView clients together, and embedded runtime
+ports remain fixed at 7777/7778. Phase 9 does not expose a control that would
+appear to work while leaving existing clients connected to stale endpoints.
 
 ### Task 9 — First integration test on the emulator
 - Rebuild the APK with the new code + the freshly built `proot` +
