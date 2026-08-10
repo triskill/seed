@@ -28,7 +28,12 @@ export ANDROID_HOME
 ANDROID_PLATFORM    := android-34
 ANDROID_BUILD_TOOLS := 34.0.0
 SYSTEM_IMAGE       := system-images;android-34;default;x86_64
+EMULATOR_ARCH       = $(lastword $(subst ;, ,$(SYSTEM_IMAGE)))
 AVD_NAME           := seed_dev
+
+# Runtime generation is always explicit because it builds a large asset.
+# This setting is used only by `make runtime`, never as a run prerequisite.
+RUNTIME_ARCH ?= arm64
 
 # GPU mode for the emulator. The default `auto` resolves to
 # `host` (Vulkan passthrough) on systems with a discrete GPU,
@@ -91,11 +96,27 @@ install: check-deps cmdline-tools licenses sdk-packages avd  ## one-time: instal
 	@echo "Next: \`make build\` then \`make run\`."
 
 .PHONY: build
-build: $(APK)  ## build the debug APK
+build:  ## build the debug APK
+	@echo ">> Building debug APK..."
+	@cd android && ./gradlew :app:assembleDebug
+	@echo ">> APK ready: $(APK)"
 
-# `make run` depends on the APK file (not the build phony) so we
-# only rebuild when something actually changed. The recipe for
-# $(APK) below is the canonical build step.
+.PHONY: runtime
+runtime: override export RUNTIME_ARCH := $(value RUNTIME_ARCH)
+runtime:  ## explicitly build arm64 or x86_64 runtime assets (set RUNTIME_ARCH)
+	@case "$$RUNTIME_ARCH" in \
+		arm64|x86_64) ;; \
+		*) echo "!! unsupported runtime architecture: $$RUNTIME_ARCH (expected arm64 or x86_64)" >&2; exit 2 ;; \
+	esac
+	@./scripts/build-runtime.sh
+
+.PHONY: check-runtime-arch
+check-runtime-arch:
+	@./scripts/check-runtime-arch.sh "$(EMULATOR_ARCH)" "android/app/src/main/assets/linux/proot"
+
+# `make run` performs lightweight preflights before recursively
+# invoking `make build`, so even parallel make cannot start Gradle for
+# runtime assets that do not match the configured emulator.
 #
 # Backgrounding note: we use `setsid nohup ... < /dev/null &` to
 # fully detach the emulator from make's controlling terminal
@@ -106,7 +127,8 @@ build: $(APK)  ## build the debug APK
 # stderr. The `timeout 30` cap on `wait-for-device` keeps a
 # crashed emulator from hanging the Makefile indefinitely.
 .PHONY: run
-run: check-deps $(APK)  ## start emulator, install APK, launch app
+run: check-deps check-runtime-arch  ## start emulator, install APK, launch app
+	@$(MAKE) --no-print-directory build
 	@if [ ! -d $(ANDROID_AVD_HOME)/$(AVD_NAME).avd ]; then \
 		echo "!! AVD '$(AVD_NAME)' not found. Run \`make install\` first."; \
 		exit 1; \
@@ -198,15 +220,6 @@ clean:  ## clean android build outputs, python caches, logs
 	@rm -rf .tmp
 	@echo ">> Cleaned."
 
-# ---- Build recipe ----------------------------------------------------------
-# Used by both `make build` and `make run` (the latter only invokes
-# it if the APK is missing or out of date).
-
-$(APK):
-	@echo ">> Building debug APK..."
-	@cd android && ./gradlew :app:assembleDebug
-	@echo ">> APK ready: $@"
-
 # ---- Install helpers -------------------------------------------------------
 # Each prerequisite is independently idempotent: skipping the work
 # when the artifact already exists is the whole point. They print
@@ -220,6 +233,8 @@ check-deps:
 		echo "!! curl not found. Install: sudo apt install curl"; exit 1; }
 	@command -v unzip >/dev/null || { \
 		echo "!! unzip not found. Install: sudo apt install unzip"; exit 1; }
+	@command -v file >/dev/null || { \
+		echo "!! file not found. Install: sudo apt install file"; exit 1; }
 	@[ -e /dev/kvm ] || { \
 		echo "!! /dev/kvm not found. The emulator needs KVM."; \
 		echo "   On a VM, enable nested virtualization."; \
