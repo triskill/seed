@@ -2,14 +2,15 @@
 # scripts/build-runtime.sh — Build the Seed Android runtime.
 #
 # Produces:
-#   android/app/src/main/assets/linux/proot         (~2 MB, arm64)
+#   android/app/src/main/assets/linux/proot         (~2 MB, selected architecture)
 #   android/app/src/main/assets/linux/rootfs.tar.gz  (~150 MB, Alpine + python + node + pi + backend + webapp)
 #   android/app/src/main/assets/linux/seed_version.json
 #
-# Requires: docker (with buildx / arm64 support), curl, tar.
-# Idempotent: re-running rebuilds from scratch in a fresh mktemp dir.
-# Net effect on the assets dir: proot + rootfs.tar.gz are overwritten;
-# seed_version.json is overwritten with a fresh build_id.
+# Set RUNTIME_ARCH=arm64 (default) or RUNTIME_ARCH=x86_64.
+# Requires: docker (with buildx support for the selected target), curl, file, tar.
+# Idempotent: re-running rebuilds from scratch in fresh temporary dirs.
+# Changed assets are staged beside the assets directory and published only
+# after every download, build, export, and validation succeeds.
 #
 # Run from repo root: ./scripts/build-runtime.sh
 #
@@ -26,62 +27,85 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ASSETS_DIR="$REPO_ROOT/android/app/src/main/assets/linux"
+# shellcheck source=runtime-target.sh
+source "$REPO_ROOT/scripts/runtime-target.sh"
+configure_runtime_target "${RUNTIME_ARCH:-arm64}"
+
+ASSETS_DIR="${ASSETS_DIR:-$REPO_ROOT/android/app/src/main/assets/linux}"
+DOCKER_IMAGE_TAG="seed-runtime:$(date +%s)"
+DOCKER_CONTAINER_NAME="seed-runtime-export-$$"
+BUILD_DIR=""
+STAGING_DIR=""
+
+# Always clean up — even on error or signal. Variables and commands are
+# guarded so validation and preflight failures are safe before Docker or
+# the temporary build directory are available.
+cleanup() {
+    if command -v docker >/dev/null 2>&1; then
+        docker rm -f "$DOCKER_CONTAINER_NAME" >/dev/null 2>&1 || true
+        docker rmi -f "$DOCKER_IMAGE_TAG" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$BUILD_DIR" ]]; then
+        rm -rf "$BUILD_DIR"
+    fi
+    if [[ -n "$STAGING_DIR" ]]; then
+        rm -rf "$STAGING_DIR"
+    fi
+}
+trap cleanup EXIT
+
 # Fresh temp dir each run (so we never have to rm -rf a dir containing
 # root-owned files left by a previous interrupted docker invocation).
 BUILD_DIR="$(mktemp -d -t seed-runtime-build.XXXXXXXXXX)"
-ROOTFS_TAR_OUT="$BUILD_DIR/rootfs-out.tar.gz"
-
-PROOT_URL="https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static"
-ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz"
-ALPINE_SHA="041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de"
-DOCKER_IMAGE_TAG="seed-runtime:$(date +%s)"
-DOCKER_CONTAINER_NAME="seed-runtime-export-$$"
-
-# Always clean up — even on error or signal. Without this, a failure
-# between `docker create` and the success-path `docker rm`/`docker
-# rmi`/`rm -rf` would leak the named container and the image in the
-# local Docker daemon. trap ... EXIT fires on any exit (success,
-# failure, signal) so the buildscript never leaves dangling state.
-cleanup() {
-    docker rm -f "$DOCKER_CONTAINER_NAME" >/dev/null 2>&1 || true
-    docker rmi -f "$DOCKER_IMAGE_TAG" >/dev/null 2>&1 || true
-    rm -rf "$BUILD_DIR"
-}
-trap cleanup EXIT
 
 # ---- Preflight ----
 command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
 command -v curl >/dev/null || { echo "curl required" >&2; exit 1; }
+command -v file >/dev/null || { echo "file required" >&2; exit 1; }
 mkdir -p "$ASSETS_DIR"
+# This directory must share a filesystem with ASSETS_DIR so publishing each
+# completed asset is an atomic rename rather than a cross-filesystem copy.
+STAGING_DIR="$(mktemp -d "$ASSETS_DIR/.seed-runtime-stage.XXXXXXXXXX")"
+ROOTFS_TAR_OUT="$STAGING_DIR/rootfs.tar.gz"
 
 # ---- Compute build_id (timestamp + script hash) ----
 BUILD_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(sha256sum "$0" | cut -c1-8)"
 
-# ---- Step A: fetch proot (arm64 static) ----
-if [ ! -f "$ASSETS_DIR/proot" ]; then
-    echo "→ fetching proot"
-    curl -fsSL -o "$ASSETS_DIR/proot" "$PROOT_URL"
-    chmod +x "$ASSETS_DIR/proot"
-fi
-# Sanity: must be an aarch64 ELF
-file "$ASSETS_DIR/proot" | grep -q "aarch64" || { echo "proot is not aarch64" >&2; exit 1; }
+# ---- Step A: fetch proot (selected architecture, static) ----
+proot_matches_target() {
+    local description
+    [[ -f "$1" ]] || return 1
+    description="$(LC_ALL=C file -Lb "$1" 2>/dev/null)" || return 1
+    [[ "$description" == "ELF 64-bit"* && "$description" == *"$PROOT_FILE_MARKER"* ]]
+}
 
-# ---- Step B: fetch + verify Alpine minirootfs (aarch64) ----
+# Reuse a matching binary, but stage a replacement when switching targets.
+PUBLISH_PROOT=0
+if ! proot_matches_target "$ASSETS_DIR/proot"; then
+    echo "→ fetching proot for $RUNTIME_ARCH"
+    PROOT_DOWNLOAD="$STAGING_DIR/proot"
+    curl -fsSL -o "$PROOT_DOWNLOAD" "$PROOT_URL"
+    chmod +x "$PROOT_DOWNLOAD"
+    proot_matches_target "$PROOT_DOWNLOAD" \
+        || { echo "downloaded proot is not $RUNTIME_ARCH (expected file marker: $PROOT_FILE_MARKER)" >&2; exit 1; }
+    PUBLISH_PROOT=1
+fi
+
+# ---- Step B: fetch + verify Alpine minirootfs (selected architecture) ----
 echo "→ fetching Alpine minirootfs"
 ROOTFS_TAR_IN="$BUILD_DIR/rootfs-in.tar.gz"
 curl -fsSL -o "$ROOTFS_TAR_IN" "$ALPINE_URL"
 echo "$ALPINE_SHA  $ROOTFS_TAR_IN" | sha256sum -c - || { echo "Alpine sha256 mismatch" >&2; exit 1; }
 
-# ---- Step C: build the runtime in a Dockerfile (arm64) ----
+# ---- Step C: build the runtime in a Dockerfile (selected architecture) ----
 # Layout: copy backend + webapp into the build context so the
 # Dockerfile can COPY them in (no bind-mount games needed).
 #
 # Two subtle traps to avoid here:
-#   (1) The host's `backend/.venv` is an x86_64 Python venv; copying
-#       it into an arm64 image bakes 50 MB of unusable binaries into
-#       the rootfs AND (worse) `pip install -e` paths inside the
-#       container that don't exist on arm64. The `.dockerignore`
+#   (1) The host's `backend/.venv` may target a different architecture;
+#       copying it into the image can bake 50 MB of unusable binaries
+#       into the rootfs AND (worse) `pip install -e` paths inside the
+#       container that don't exist there. The `.dockerignore`
 #       below excludes `**/.venv/**` (and friends) so the COPY step
 #       only sees the source.
 #   (2) The Dockerfile needs a `requirements.txt` to install the
@@ -116,9 +140,9 @@ echo "  requirements.txt: $(wc -l < "$BUILD_DIR/ctx/backend/requirements.txt") p
 # still build?". v0.1's minimum is .venv/** (the bug fix); the
 # rest is hygiene.
 cat > "$BUILD_DIR/ctx/.dockerignore" <<'DI'
-# Host venvs are wrong-arch and would silently bake dead weight
-# into the arm64 image. This was the root cause of the
-# 'ModuleNotFoundError: fastapi' smoke-test failure on 2026-07-03.
+# Host venvs may be wrong-arch and would silently bake dead weight
+# into the image. This was the root cause of the 'ModuleNotFoundError:
+# fastapi' smoke-test failure on 2026-07-03.
 **/.venv/**
 **/venv/**
 # Standard Python dev crud.
@@ -138,11 +162,12 @@ DI
 
 cat > "$BUILD_DIR/ctx/Dockerfile" <<'DOCKERFILE'
 # Pinned for reproducible builds. Update both pins together when bumping:
-#   - base image: arm64v8/alpine 3.20.x (must match ALPINE_URL below)
+#   - base image: selected by ALPINE_BASE_IMAGE (must match ALPINE_URL)
 #   - pi: @earendil-works/pi-coding-agent <exact version> (run `npm view` to check)
 # Last bumped: 2026-07-03, pi 0.80.3, alpine 3.20.3.
 # Full digest pinning is a v0.2 follow-up.
-FROM arm64v8/alpine:3.20.3
+ARG ALPINE_BASE_IMAGE=alpine:3.20.3
+FROM ${ALPINE_BASE_IMAGE}
 RUN apk add --no-cache --update python3 py3-pip nodejs npm git tmux
 RUN npm install -g @earendil-works/pi-coding-agent@0.80.3
 COPY backend /home/seed/backend
@@ -159,16 +184,20 @@ RUN pip install --no-cache-dir --break-system-packages -r /home/seed/backend/req
 RUN printf '%s' '{"model":"deepseek-v4-flash","provider":"opencode-go","ports":{"backend":7777,"flask":7778},"logLevel":"info"}' > /home/seed/backend/config.json
 DOCKERFILE
 
-echo "→ building runtime image in arm64 container (this takes a few minutes on first run)"
-docker buildx build --platform linux/arm64 --load --tag "$DOCKER_IMAGE_TAG" "$BUILD_DIR/ctx"
+echo "→ building runtime image for $RUNTIME_ARCH (this takes a few minutes on first run)"
+docker buildx build \
+    --platform "$DOCKER_PLATFORM" \
+    --build-arg "ALPINE_BASE_IMAGE=$ALPINE_BASE_IMAGE" \
+    --load --tag "$DOCKER_IMAGE_TAG" "$BUILD_DIR/ctx"
 
-# Sanity: verify the image was actually built for arm64.
-docker image inspect "$DOCKER_IMAGE_TAG" --format '{{.Architecture}}' | grep -q "arm64" \
-    || { echo "image is not arm64" >&2; exit 1; }
+# Sanity: verify the image was actually built for the selected target.
+ACTUAL_IMAGE_ARCH="$(docker image inspect "$DOCKER_IMAGE_TAG" --format '{{.Architecture}}')"
+[[ "$ACTUAL_IMAGE_ARCH" == "$DOCKER_IMAGE_ARCH" ]] \
+    || { echo "image architecture is $ACTUAL_IMAGE_ARCH, expected $DOCKER_IMAGE_ARCH" >&2; exit 1; }
 
 # ---- Step D: export the container's filesystem to a tarball ----
 echo "→ exporting rootfs from container"
-docker create --platform linux/arm64 --name "$DOCKER_CONTAINER_NAME" "$DOCKER_IMAGE_TAG"
+docker create --platform "$DOCKER_PLATFORM" --name "$DOCKER_CONTAINER_NAME" "$DOCKER_IMAGE_TAG"
 # `docker export` writes an uncompressed tar stream (not gzipped).
 # We pipe through gzip to produce the .tar.gz the app expects.
 docker export "$DOCKER_CONTAINER_NAME" | gzip > "$ROOTFS_TAR_OUT"
@@ -195,19 +224,26 @@ grep -qE '^(\./)?home/seed/backend/seed_backend/' "$TAR_LISTING" \
 grep -qE '^(\./)?home/seed/app/seed_app/' "$TAR_LISTING" \
     || { echo "webapp not in rootfs" >&2; exit 1; }
 
-# ---- Step E: move tarball into the assets dir ----
-mv "$ROOTFS_TAR_OUT" "$ASSETS_DIR/rootfs.tar.gz"
-
-# ---- Step F: write seed_version.json ----
-cat > "$ASSETS_DIR/seed_version.json" <<JSON
+# ---- Step E: stage seed_version.json ----
+cat > "$STAGING_DIR/seed_version.json" <<JSON
 {
   "seed_version": "0.1.0",
   "build_id": "$BUILD_ID"
 }
 JSON
 
+# ---- Step F: publish completed assets with same-filesystem renames ----
+# seed_version.json is the completion marker and must always be published last.
+if [[ "$PUBLISH_PROOT" -eq 1 ]]; then
+    mv "$STAGING_DIR/proot" "$ASSETS_DIR/proot"
+fi
+mv "$ROOTFS_TAR_OUT" "$ASSETS_DIR/rootfs.tar.gz"
+mv "$STAGING_DIR/seed_version.json" "$ASSETS_DIR/seed_version.json"
+
 # ---- Step G: clean up ----
-rm -rf "$BUILD_DIR"
+rm -rf "$BUILD_DIR" "$STAGING_DIR"
+BUILD_DIR=""
+STAGING_DIR=""
 
 echo ""
 echo "✓ runtime built → $ASSETS_DIR"
