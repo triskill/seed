@@ -34,18 +34,33 @@ cd android
 # APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-A fresh checkout contains only `assets/linux/seed_version.json`. Generate the
-arm64 proot binary and Alpine rootfs before an embedded-runtime build or device
-test:
+A fresh checkout contains only `assets/linux/seed_version.json`; the generated
+`proot` and `rootfs.tar.gz` are gitignored. Each APK bundles whichever one
+runtime architecture is currently present in that directory.
+
+Runtime generation defaults to arm64. For an arm64 physical-device build, run
+from the repository root:
 
 ```bash
-./scripts/build-runtime.sh
+make runtime RUNTIME_ARCH=arm64
+make build
 ```
 
-See [`../docs/build-runtime.md`](../docs/build-runtime.md) for prerequisites and
-artifact verification. The generated proot is arm64, so end-to-end runtime
-verification requires an arm64 device/emulator. JVM tests, APK assembly, lint,
-and Compose-test compilation do not require a device.
+The development AVD configured by the repository is x86_64, so its runtime must
+be generated explicitly before building or running:
+
+```bash
+make runtime RUNTIME_ARCH=x86_64
+make build
+make run
+```
+
+`make run` does not build the large runtime. Before building the APK or starting
+the emulator, it rejects a missing, invalid, or architecture-mismatched proot
+and prints the matching `make runtime RUNTIME_ARCH=...` command. JVM tests, APK
+assembly, lint, and Compose-test compilation do not require a device. See
+[`../docs/build-runtime.md`](../docs/build-runtime.md) for Docker prerequisites,
+artifact publication, and versioning.
 
 ## Startup lifecycle
 

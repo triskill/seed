@@ -119,7 +119,6 @@ need an API key to run the tests:
 
 ```bash
 .venv/bin/python -m pytest backend/ webapp/ -v
-# 68 passed
 ```
 
 The Phase 3 manual demo (`scripts/demo_phase3.py`) also

@@ -11,13 +11,12 @@ end of day 1, the user has the web app they asked for.
 
 **v0.1 bootstrap.** The repo currently contains:
 
-- `backend/` — Python package (`seed_backend`) that will host the FastAPI
-  orchestrator, pi runner, and Flask subprocess manager.
+- `backend/` — Python package (`seed_backend`) for the FastAPI orchestrator,
+  pi runner, and Flask subprocess manager.
 - `webapp/` — Flask app (`seed_app`) that the worker mutates.
-- `docs/plans/` — full design and phased implementation plan.
-
-The Android shell, the embedded Linux runtime, and the real agent loop
-land in later phases.
+- `android/` — Compose shell that extracts and starts the embedded runtime.
+- `scripts/` — architecture-aware runtime build and validation tooling.
+- `docs/plans/` — full design and phased implementation plans.
 
 ## Quick start (host dev)
 
@@ -36,7 +35,6 @@ pip install -e "webapp/[dev]"
 
 # Smoke test (no API key needed — uses fake pi fixtures)
 pytest backend/ webapp/ -v
-# → 68 passed
 
 # Run the dev server (orchestrator + Flask webapp)
 ./backend/scripts/dev.sh
@@ -63,6 +61,34 @@ export OPENCODE_API_KEY="sk-..."
 See [`docs/pi-config.md`](docs/pi-config.md) for the full
 configuration story (local `.pi/agent/`, env var
 overrides, why no `auth.json` in the repo).
+
+## Android runtime workflow
+
+An APK bundles one runtime architecture at a time. Runtime generation defaults
+to arm64, whether invoked directly with `./scripts/build-runtime.sh` or through
+`make runtime`.
+
+For the repository's x86_64 Android emulator, build matching assets explicitly
+before building or running the APK:
+
+```bash
+make runtime RUNTIME_ARCH=x86_64
+make build
+make run
+```
+
+For an arm64 physical-device build:
+
+```bash
+make runtime RUNTIME_ARCH=arm64
+make build
+```
+
+`make run` never starts the large runtime build automatically. It validates the
+packaged proot first and fails on a missing, invalid, or mismatched binary with
+the explicit matching `make runtime RUNTIME_ARCH=...` command. See
+[`docs/build-runtime.md`](docs/build-runtime.md) for Docker prerequisites,
+architecture switching, and generated-asset versioning.
 
 ## Layout
 

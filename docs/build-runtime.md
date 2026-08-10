@@ -1,63 +1,92 @@
 # Building the Seed Android runtime
 
-The Android APK ships with three files under
-`android/app/src/main/assets/linux/`:
+The Android APK bundles one runtime architecture at a time. The selected proot
+and rootfs are generated under `android/app/src/main/assets/linux/`:
 
 | File | Size | What |
 |---|---|---|
-| `proot` | ~2 MB | arm64 static binary that runs the rootfs unprivileged |
-| `rootfs.tar.gz` | ~150 MB | Alpine + python3 + nodejs + npm + git + tmux + `pi` (npm) + our `backend/` + a fresh `webapp/` skeleton |
+| `proot` | ~2 MB | arm64 or x86_64 static binary that runs the rootfs unprivileged |
+| `rootfs.tar.gz` | ~150 MB | Matching Alpine rootfs with python3, nodejs, npm, git, tmux, `pi`, the backend, and a fresh webapp skeleton |
 | `seed_version.json` | ~100 B | `{ "seed_version": "0.1.0", "build_id": "<timestamp>-<script-hash>" }` |
 
-These are **not committed to git** (only `seed_version.json`'s structure is —
-the real `build_id` is generated per build). To build them, run:
+The build requires Docker with buildx, `curl`, `file`, `grep`, `gzip`, `tar`,
+`uv`, and GNU coreutils (including `sha256sum`). Runtime generation defaults to
+arm64 with either entry point:
 
 ```bash
 ./scripts/build-runtime.sh
+# equivalent
+make runtime
 ```
 
-This script is idempotent and rebuilds from scratch in a `runtime-build/`
-working directory (gitignored). The expansion step runs in a one-shot
-`arm64v8/alpine:3.20` Docker container so the script works on any host
-with Docker, regardless of the host arch.
+Prefer an explicit target when preparing an APK:
 
-This script uses `docker run --platform linux/arm64` to run the
-expansion step. On an arm64 host it Just Works. On an x86_64 host
-you need QEMU user-mode emulation registered with `binfmt_misc` —
-either install the `qemu-user-static` package and run
-`docker run --privileged --rm tonistiigi/binfmt --install all`
-once, or use a recent Docker Desktop (which ships with the
-emulators pre-registered). After registration, the script works
-on any host.
+```bash
+# arm64 physical device/runtime
+make runtime RUNTIME_ARCH=arm64
+make build
 
-## Build workflow
+# repository's x86_64 Android emulator
+make runtime RUNTIME_ARCH=x86_64
+make build
+make run
+```
 
-After `./scripts/build-runtime.sh` finishes, you'll see
-`android/app/src/main/assets/linux/seed_version.json` modified in
-`git status`. This is expected — the script bumped the `build_id`.
-The change should be committed as part of the same PR that bumps
-the runtime (e.g. "feat(android): rebuild runtime with pi v0.81").
-Without the commit, the next CI build will re-bump and the in-APK
-version will lag the source of truth.
+With the direct entry point, select a target as
+`RUNTIME_ARCH=x86_64 ./scripts/build-runtime.sh` (or `arm64`).
 
-The `proot` and `rootfs.tar.gz` artifacts inside `assets/linux/`
-are gitignored and don't show up in `git status`.
+## Docker platforms
 
-## When to rebuild
+The script uses `docker buildx build` with `linux/arm64` for arm64 or
+`linux/amd64` for x86_64. Both select the corresponding variant of the
+multi-platform `alpine:3.20.3` base image. QEMU user-mode emulation registered
+with `binfmt_misc` is needed only when the selected target differs from the
+Docker host architecture. A recent Docker Desktop commonly provides this; on
+Linux it can be registered, for example, with:
 
-- The rootfs image (Alpine version) changes.
-- `pi` is upgraded.
-- The backend or webapp skeleton changes.
-- A new system package is needed inside the runtime.
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install all
+```
 
-In all cases, just re-run the script. The new `build_id` will be
-different, the app will detect the version mismatch on next launch, and
-re-extract automatically.
+No emulation setup is required for a native-architecture target.
 
-## How the app knows to re-extract
+## Safe architecture switching
 
-`MainActivity` reads `assets/seed_version.json` and compares it to
-`filesDir/linux/.version`. If they differ (or the latter is missing),
-`RuntimeExtractor` re-extracts, overwrites `.version`, and the app
-proceeds. See `app/src/main/java/com/seed/app/runtime/` for the
-implementation and tests.
+Each invocation creates a fresh temporary build context rather than reusing the
+old `runtime-build/` directory. Completed assets are staged on the same
+filesystem as the destination. The script validates the selected proot ELF,
+Alpine checksum, Docker image architecture, and required rootfs contents before
+publishing anything.
+
+When changing architectures, the replacement proot and complete rootfs are
+therefore staged and validated before they replace the previous bundle.
+`seed_version.json` is renamed into place last as the completion marker, so the
+app never observes a new version for a partially published bundle.
+
+## `make run` preflight
+
+`make run` never invokes the large runtime build automatically. Before APK
+assembly or emulator startup, it checks the packaged proot against the ABI from
+the configured `SYSTEM_IMAGE`. A missing, non-ELF, unsupported, or mismatched
+binary causes an immediate failure and prints the explicit repair command, such
+as:
+
+```text
+make runtime RUNTIME_ARCH=x86_64
+```
+
+Generate the matching bundle, then rerun `make build` or `make run`.
+
+## Gitignore and versioning
+
+A fresh checkout contains only the tracked
+`android/app/src/main/assets/linux/seed_version.json`. Generated `proot` and
+`rootfs.tar.gz` files are gitignored and must not be committed. A successful
+runtime build updates the tracked marker's `build_id`, so it appears in
+`git status`. Commit that marker when intentionally publishing a runtime update;
+architecture-specific binaries remain local build artifacts. During local
+architecture switching, keep the generated marker with the APK being tested.
+
+Rebuild whenever Alpine, `pi`, backend/webapp sources, or required system
+packages change. On launch, `BootController` compares the bundled marker with
+`filesDir/linux/.version`; a difference causes the runtime to be re-extracted.
