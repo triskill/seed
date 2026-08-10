@@ -26,8 +26,9 @@ import java.nio.file.Paths
  * `rootfs.tar.gz` and exposes it through [AssetSource] as `rootfs.tar`.
  *
  * Rootfs extraction accepts regular files, directories, symbolic links, and
- * hard links (the entry types present in Alpine's minirootfs). Entry paths are
- * normalized and constrained to the rootfs directory, and extraction refuses
+ * hard links (the entry types present in Alpine's minirootfs); hard-link entries
+ * are materialized as independent copies. Entry paths are normalized and
+ * constrained to the rootfs directory, and extraction refuses
  * to write through a symlink created by an earlier entry. A failed extraction
  * removes the partial rootfs so the next boot starts from a clean directory.
  */
@@ -100,7 +101,10 @@ class RuntimeExtractor(
         extractedFiles: MutableSet<Path>,
     ) {
         val output = resolveArchivePath(root, entry.name)
-        ensureSafeParentDirectories(root, output.parent ?: root)
+        if (output == root && !entry.isDirectory) {
+            throw IOException("Non-directory TAR entry cannot replace rootfs: ${entry.name}")
+        }
+        ensureSafeParentDirectories(root, if (output == root) root else output.parent ?: root)
 
         when {
             entry.isDirectory -> {
@@ -115,11 +119,17 @@ class RuntimeExtractor(
 
             entry.isLink -> {
                 val target = resolveArchivePath(root, entry.linkName)
-                if (target !in extractedFiles) {
-                    throw IOException("Hard-link target is not an extracted file: ${entry.linkName}")
+                if (target !in extractedFiles || !Files.isRegularFile(target, NOFOLLOW_LINKS)) {
+                    throw IOException("Hard-link target is not an extracted regular file: ${entry.linkName}")
                 }
+                val executable = target.toFile().canExecute()
                 Files.deleteIfExists(output)
-                Files.createLink(output, target)
+                Files.newInputStream(target, NOFOLLOW_LINKS).use { source ->
+                    Files.newOutputStream(output).use { sink ->
+                        copyCancellable(source, sink)
+                    }
+                }
+                applyExecutableMode(output, if (executable) EXECUTABLE_MODE_MASK else 0)
                 extractedFiles.add(output)
             }
 

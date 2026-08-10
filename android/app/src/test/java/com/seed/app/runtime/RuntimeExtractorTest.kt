@@ -111,7 +111,10 @@ class RuntimeExtractorTest {
         assertTrue("archive executable mode should be preserved", tool.canExecute())
         assertTrue(Files.isSymbolicLink(symbolicLink.toPath()))
         assertEquals(Paths.get("tool"), Files.readSymbolicLink(symbolicLink.toPath()))
-        assertTrue("hard link should share the target inode", Files.isSameFile(tool.toPath(), hardLink.toPath()))
+        assertEquals(tool.readText(), hardLink.readText())
+        assertTrue("hard-link copy should preserve executable mode", hardLink.canExecute())
+        // Android SELinux denies filesystem hard links in private app data.
+        assertFalse("hard-link entry should be an independent file", Files.isSameFile(tool.toPath(), hardLink.toPath()))
         assertFalse("the staging TAR should not remain on disk", target.resolve("rootfs.tar").exists())
     }
 
@@ -131,6 +134,41 @@ class RuntimeExtractorTest {
 
         assertNotNull("path traversal must fail extraction", failure)
         assertFalse("path traversal must not write outside rootfs", escaped.exists())
+    }
+
+    @Test
+    fun nonDirectoryEntryCannotReplaceRootfsDirectory() = runTest {
+        val target = tempFolder.newFolder("linux")
+        val outsideDir = tempFolder.newFolder("outside")
+        val escaped = outsideDir.resolve("escaped")
+        val archive = tarOf(
+            TarSymbolicLink(".", outsideDir.absolutePath),
+            TarFile("escaped", "owned".toByteArray()),
+        )
+
+        val failure = runCatching {
+            RuntimeExtractor(
+                MapAssetSource("rootfs.tar" to archive),
+            ).extract(target).toList()
+        }.exceptionOrNull()
+
+        assertNotNull("non-directory root entry must fail extraction", failure)
+        assertFalse("root replacement must not write outside rootfs", escaped.exists())
+    }
+
+    @Test
+    fun directoryEntryMayRepresentRootfsDirectory() = runTest {
+        val target = tempFolder.newFolder("linux")
+        val archive = tarOf(
+            TarDirectory("."),
+            TarFile("inside", "safe".toByteArray()),
+        )
+
+        RuntimeExtractor(
+            MapAssetSource("rootfs.tar" to archive),
+        ).extract(target).toList()
+
+        assertEquals("safe", target.resolve("rootfs/inside").readText())
     }
 
     @Test
