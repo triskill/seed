@@ -3,6 +3,7 @@ package com.seed.app.data
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -25,6 +26,7 @@ private const val SECURE_PREFS_NAME = "secure_settings"
 
 private val KEY_PROVIDER = stringPreferencesKey("provider")
 private val KEY_MODEL = stringPreferencesKey("model")
+private val KEY_HOST = stringPreferencesKey("host")
 private val KEY_BACKEND_PORT = intPreferencesKey("backend_port")
 private val KEY_WEBAPP_PORT = intPreferencesKey("webapp_port")
 private val KEY_LOG_LEVEL = intPreferencesKey("log_level")
@@ -54,7 +56,7 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  * **Why two stores?** The Settings form has two
  * kinds of fields:
  *
- *   - **Non-secret** (provider, model, backend
+ *   - **Non-secret** (provider, model, host, backend
  *     port, webapp port, log level) — stored in
  *     `DataStore-Preferences`, which is a
  *     coroutine-friendly, typed key-value store
@@ -121,23 +123,8 @@ class AndroidSettingsRepo(context: Context) : SettingsRepo {
         // is treated as not-saved — the user just
         // has to tap Save again. The cost is low and
         // it keeps the contract simple.
-        val provider = prefs[KEY_PROVIDER] ?: return null
-        val model = prefs[KEY_MODEL] ?: return null
-        val backendPort = prefs[KEY_BACKEND_PORT] ?: return null
-        val webappPort = prefs[KEY_WEBAPP_PORT] ?: return null
-        val logLevelOrdinal = prefs[KEY_LOG_LEVEL] ?: return null
-        val logLevel = LogLevel.values().getOrNull(logLevelOrdinal) ?: return null
-
         val apiKey = securePrefs.getString(KEY_API_KEY, null).orEmpty()
-
-        return SettingsForm(
-            provider = provider,
-            model = model,
-            apiKey = apiKey,
-            backendPort = backendPort,
-            webappPort = webappPort,
-            logLevel = logLevel,
-        )
+        return prefs.toSettingsForm(apiKey)
     }
 
     override suspend fun save(form: SettingsForm) {
@@ -154,13 +141,39 @@ class AndroidSettingsRepo(context: Context) : SettingsRepo {
         // succeed (if the DataStore edit landed)
         // or return null (if it didn't) — no
         // half-form is observable.
-        ds.edit { prefs ->
-            prefs[KEY_PROVIDER] = form.provider
-            prefs[KEY_MODEL] = form.model
-            prefs[KEY_BACKEND_PORT] = form.backendPort
-            prefs[KEY_WEBAPP_PORT] = form.webappPort
-            prefs[KEY_LOG_LEVEL] = form.logLevel.ordinal
-        }
+        ds.edit { prefs -> prefs.putNonSecretSettings(form) }
         securePrefs.edit().putString(KEY_API_KEY, form.apiKey).apply()
     }
+}
+
+/** Decode persisted non-secret settings and combine them with the encrypted key. */
+internal fun Preferences.toSettingsForm(apiKey: String): SettingsForm? {
+    val provider = this[KEY_PROVIDER] ?: return null
+    val model = this[KEY_MODEL] ?: return null
+    val backendPort = this[KEY_BACKEND_PORT] ?: return null
+    val webappPort = this[KEY_WEBAPP_PORT] ?: return null
+    val logLevelOrdinal = this[KEY_LOG_LEVEL] ?: return null
+    val logLevel = LogLevel.values().getOrNull(logLevelOrdinal) ?: return null
+
+    return SettingsForm(
+        provider = provider,
+        model = model,
+        apiKey = apiKey,
+        // Settings saved before Phase 9 have no host. Migrate those installs
+        // to the embedded-runtime default instead of discarding the form.
+        host = this[KEY_HOST] ?: SettingsForm.DEFAULTS.host,
+        backendPort = backendPort,
+        webappPort = webappPort,
+        logLevel = logLevel,
+    )
+}
+
+/** Persist every non-secret field in one atomic DataStore edit. */
+internal fun MutablePreferences.putNonSecretSettings(form: SettingsForm) {
+    this[KEY_PROVIDER] = form.provider
+    this[KEY_MODEL] = form.model
+    this[KEY_HOST] = form.host
+    this[KEY_BACKEND_PORT] = form.backendPort
+    this[KEY_WEBAPP_PORT] = form.webappPort
+    this[KEY_LOG_LEVEL] = form.logLevel.ordinal
 }

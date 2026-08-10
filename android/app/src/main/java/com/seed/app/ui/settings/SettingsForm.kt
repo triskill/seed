@@ -27,10 +27,11 @@ package com.seed.app.ui.settings
  *     `EncryptedSharedPreferences` rather than
  *     the regular DataStore so it lives in the
  *     Android keystore.
+ *   - [host] — Android-side host for backend connections. It defaults
+ *     to device loopback for the embedded runtime. Phase 10 will expose
+ *     host switching in the UI and rebuild active clients when it changes.
  *   - [backendPort] / [webappPort] — ports for the
- *     two dev backends. Defaults match the
- *     `BACKEND_DEV_URL` and `WEBAPP_DEV_URL`
- *     build-config values.
+ *     two backends. Defaults match the embedded runtime's fixed ports.
  *   - [logLevel] — minimum level for the in-app
  *     log view (Phase 7+ will surface these
  *     somewhere).
@@ -39,6 +40,7 @@ data class SettingsForm(
     val provider: String = "openai",
     val model: String = "gpt-4o",
     val apiKey: String = "",
+    val host: String = "127.0.0.1",
     val backendPort: Int = 7777,
     val webappPort: Int = 7778,
     val logLevel: LogLevel = LogLevel.INFO,
