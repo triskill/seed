@@ -13,6 +13,12 @@ Embedded endpoints are the defaults:
 `10.0.2.2` remains in the narrow network allowlists for future emulator-host
 development, but changing active clients at runtime is deferred to Phase 10.
 
+> **Prototype security warning:** Android loopback is shared across apps. The
+> embedded HTTP and WebSocket endpoints are not authenticated yet, including
+> `/shell/exec`. Do not install this prototype alongside untrusted apps or treat
+> it as production-ready. Authenticated transport and server identity checks are
+> required before release.
+
 ## Building
 
 The Android SDK and generated runtime binaries are not committed. Configure the

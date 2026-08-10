@@ -300,6 +300,8 @@ locally with `pip install 'uvicorn[standard]'`. A fresh
 
 ## Known v0.1 limitations (carry-forward TODOs)
 
+- **Prototype security: the loopback backend is unauthenticated.** Android localhost ports are reachable by other apps, and the current surface includes `/shell/exec`, `/config`, `/chat`, and the mutable Flask app. Do not ship or install alongside untrusted apps. Before production, add authenticated transport plus server-identity protection so a malicious app cannot occupy ports 7777/7778 and capture credentials.
+- **Runtime startup still has three unrecoverable edge cases.** A proot process that dies immediately can leave health at `Unknown`; an accepted service binding has no callback timeout; and extraction exceptions are not translated into retryable UI. Add explicit `Unhealthy`/extraction-error transitions and regression tests after the prototype milestone.
 - **`os.fork()` from a multi-threaded process emits a `DeprecationWarning` in Python 3.12+.** Safe in practice here (child immediately `execvp`s — no Python state is touched) but the long-term fix is a `subprocess.Popen` + PTY abstraction or a dedicated single-threaded worker process. Phase 2+ is a good time to address.
 - **Stderr is merged into stdout** under PTY (both go to the slave). The response shape keeps `stderr: ""` for back-compat. A richer wire format (separate channels) is a later task if any client needs it.
 - **`ShellSession` cwd tracking is heuristic**, not a true persistent shell: only a leading `cd <path>` is recognised; `cd /tmp && ls` updates `cwd` for the Python side but the `ls` runs in the updated cwd. `cd` inside `$()` or backticks is not tracked. A real persistent shell process is a future task.

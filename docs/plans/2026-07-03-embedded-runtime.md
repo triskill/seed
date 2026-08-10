@@ -396,8 +396,14 @@ These are real concerns but not part of "make it work":
 - **Health status pill in the App bar** (Phase 10) — not v0.1.
 - **Splitting the rootfs into a separate `.obb` to shrink the APK**
   (noted as a future concern in the v0.1 bootstrap plan, line 215).
-- **HTTPS / loopback-only TLS** (mentioned in the `BackendApi`
-  KDoc, deferred to Phase 7+).
+- **Authenticated embedded transport and server identity.** Android loopback
+  is shared across apps, so the prototype's unauthenticated shell/config/chat
+  endpoints are not a production security boundary. A release must prevent
+  unauthorized requests and malicious occupation of ports 7777/7778; plain
+  bearer tokens alone do not establish server identity.
+- **Startup failure recovery.** Immediate proot exit, an accepted binding that
+  never invokes a callback, and extraction exceptions still need explicit
+  timeout/error states and retry tests.
 - **Notification icon design** beyond a placeholder monochrome
   vector.
 - **Multi-process proot supervision / auto-restart on crash** —
