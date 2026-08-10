@@ -1,21 +1,26 @@
 package com.seed.app.runtime
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /**
  * Decides whether the runtime needs (re-)extraction and drives the
  * extraction flow.
  *
- * Constructed once in [com.seed.app.MainActivity] with the asset
- * source and the current `seed_version.json` from the APK. The
- * `states` flow is observed by the UI; the UI calls
- * [runExtraction] once on first composition (via `LaunchedEffect`).
+ * Constructed in [com.seed.app.MainActivity] with the asset source
+ * and the current `seed_version.json` from the APK. The `states`
+ * flow is observed by the UI, which may call [runExtraction] again
+ * when lifecycle collection restarts.
  *
  * The `filesDir/linux/.version` file is written after a successful
  * extraction so the next launch sees an up-to-date install and
@@ -23,17 +28,20 @@ import java.io.File
  * NOT written and the next launch re-tries.
  */
 class BootController(
-    private val targetDir: File,
-    private val source: AssetSource,
+    targetDir: File,
+    source: AssetSource,
     private val assetVersion: RootfsVersion,
-    // Default is test-only. Production must pass a lifecycle-aware
-    // scope (e.g. `ComponentActivity.lifecycleScope`) so the
-    // extraction is cancelled when the activity is destroyed —
-    // otherwise a recreated activity would race with the still-
-    // running previous extraction and two writers could corrupt
-    // the 150 MB rootfs tarball.
+    // Default is test-only. Production passes a lifecycle-aware
+    // scope so activity destruction cancels extraction promptly.
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
+    private val extractionFlow: (File) -> Flow<ExtractionProgress> =
+        RuntimeExtractor(source)::extract,
 ) {
+    private val targetDir = targetDir.canonicalFile
+    private val installationMutex = RuntimeInstallationCoordinator.mutexFor(this.targetDir)
+    private val extractionJobMonitor = Any()
+    private var extractionJob: Job? = null
+
     private val _states = MutableStateFlow<BootState>(initialState())
     val states: StateFlow<BootState> = _states.asStateFlow()
 
@@ -55,15 +63,34 @@ class BootController(
      * [BootState.Ready].
      */
     fun runExtraction() {
-        if (_states.value !is BootState.NeedsExtraction) return
-        scope.launch {
-            RuntimeExtractor(source).extract(targetDir).collect { progress ->
-                _states.value = BootState.Extracting(progress)
-                if (progress is ExtractionProgress.Finished) {
-                    writeVersionFile()
-                    _states.value = BootState.Ready
+        synchronized(extractionJobMonitor) {
+            if (_states.value !is BootState.NeedsExtraction || extractionJob != null) return
+
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                installationMutex.withLock {
+                    // Another controller may have completed while this one waited.
+                    if (isUpToDate()) {
+                        _states.value = BootState.Ready
+                        return@withLock
+                    }
+
+                    extractionFlow(targetDir).collect { progress ->
+                        _states.value = BootState.Extracting(progress)
+                        if (progress is ExtractionProgress.Finished) {
+                            writeVersionFile()
+                            _states.value = BootState.Ready
+                        }
+                    }
                 }
             }
+            extractionJob = job
+            job.invokeOnCompletion {
+                synchronized(extractionJobMonitor) {
+                    if (extractionJob === job) extractionJob = null
+                }
+            }
+            // Register before starting: even an undispatched caller cannot launch a duplicate.
+            job.start()
         }
     }
 
@@ -76,5 +103,20 @@ class BootController(
 
     private companion object {
         const val VERSION_FILE = ".version"
+    }
+}
+
+/**
+ * Serializes installation writers across every controller in this app process.
+ * Activity recreation creates independent controllers and scopes, but aliases of
+ * one canonical target share this mutex. A process-local lock is sufficient:
+ * process death also removes every coroutine that could still write the runtime.
+ */
+private object RuntimeInstallationCoordinator {
+    private val monitor = Any()
+    private val targetMutexes = mutableMapOf<String, Mutex>()
+
+    fun mutexFor(canonicalTargetDir: File): Mutex = synchronized(monitor) {
+        targetMutexes.getOrPut(canonicalTargetDir.canonicalPath) { Mutex() }
     }
 }
