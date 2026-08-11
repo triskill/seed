@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
-# Verify that the packaged proot binary can run on the configured emulator.
-# Usage: ./scripts/check-runtime-arch.sh <expected-arch> [proot-path]
+# Verify that a specific packaged proot binary can run on the configured emulator.
+# Usage: ./scripts/check-runtime-arch.sh <expected-arch> <proot-path>
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_PROOT="$SCRIPT_DIR/../android/app/src/main/assets/linux/proot"
-
 usage() {
-    echo "usage: $0 <x86_64|amd64|arm64|aarch64|arm64-v8a> [proot-path]" >&2
+    echo "usage: $0 <x86_64|amd64|arm64|aarch64|arm64-v8a> <proot-path>" >&2
 }
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+if [[ $# -ne 2 ]]; then
     usage
     exit 2
 fi
@@ -29,7 +26,7 @@ case "${1,,}" in
         ;;
 esac
 
-runtime_path="${2:-$DEFAULT_PROOT}"
+runtime_path="$2"
 explicit_build_command="make runtime RUNTIME_ARCH=$expected_arch"
 
 if [[ ! -f "$runtime_path" ]]; then

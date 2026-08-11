@@ -251,9 +251,9 @@ test_checker_reports_arm64_mismatch_command() {
     write_fake_file_tool "$fake_bin"
 
     if FAKE_FILE_DESCRIPTION='ELF 64-bit LSB executable, x86-64, statically linked' \
-        PATH="$fake_bin:$PATH" "$ARCH_CHECKER" arm64 "$binary" \
+        PATH="$fake_bin:$PATH" "$ARCH_CHECKER" arm64-v8a "$binary" \
         >"$TMP_DIR/arm-mismatch.stdout" 2>"$stderr_file"; then
-        fail "arm64 expectation against x86_64 runtime must fail"
+        fail "arm64-v8a expectation against x86_64 runtime must fail"
     fi
     assert_contains "$stderr_file" "runtime architecture mismatch" "arm64 mismatch"
     assert_contains "$stderr_file" "make runtime RUNTIME_ARCH=arm64" "arm64 mismatch command"
@@ -275,6 +275,24 @@ test_checker_reports_x86_64_mismatch_command() {
     assert_contains "$stderr_file" "make runtime RUNTIME_ARCH=x86_64" "x86_64 mismatch command"
 }
 
+test_checker_requires_explicit_binary_path() {
+    local stderr_file="$TMP_DIR/checker-arity.stderr"
+
+    if "$ARCH_CHECKER" x86_64 >"$TMP_DIR/checker-arity.stdout" 2>"$stderr_file"; then
+        fail "checker without an explicit proot path must fail"
+    fi
+    assert_contains "$stderr_file" \
+        "usage: $ARCH_CHECKER <x86_64|amd64|arm64|aarch64|arm64-v8a> <proot-path>" \
+        "checker missing path usage"
+
+    if "$ARCH_CHECKER" x86_64 one two >"$TMP_DIR/checker-arity.stdout" 2>"$stderr_file"; then
+        fail "checker with more than two arguments must fail"
+    fi
+    assert_contains "$stderr_file" "<proot-path>" "checker extra argument usage"
+    assert_not_contains "$ARCH_CHECKER" "android/app/src/main/assets/linux/proot" \
+        "checker obsolete default path"
+}
+
 test_checker_rejects_missing_binary() {
     local missing="$TMP_DIR/does-not-exist"
     local stderr_file="$TMP_DIR/missing.stderr"
@@ -282,6 +300,9 @@ test_checker_rejects_missing_binary() {
         fail "missing runtime binary must fail"
     fi
     assert_contains "$stderr_file" "runtime binary not found: $missing" "missing runtime"
+    assert_contains "$stderr_file" \
+        "Build compatible assets explicitly: make runtime RUNTIME_ARCH=x86_64" \
+        "missing runtime build command"
 }
 
 test_checker_rejects_non_elf_binary() {
@@ -339,6 +360,7 @@ prepare_make_workflow_fixture() {
         "$(dirname "$apk")" \
         "$(dirname "$source_asset")" \
         "$(dirname "$source_file")" \
+        "$case_dir/scripts" \
         "$android_home/avd/seed_dev.avd" \
         "$android_home/emulator" \
         "$android_home/platform-tools" \
@@ -361,6 +383,13 @@ FAKE_GRADLE
 #!/usr/bin/env bash
 exec /bin/sleep 30
 FAKE_EMULATOR
+
+    cat > "$case_dir/scripts/check-runtime-arch.sh" <<'FAKE_ARCH_CHECKER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s|%s|%s\n' "${SYSTEM_IMAGE:-<unset>}" \
+    "${1:-<missing>}" "${2:-<missing>}" >> "${CHECKER_CALL_LOG:?}"
+FAKE_ARCH_CHECKER
 
     cat > "$android_home/platform-tools/adb" <<'FAKE_ADB'
 #!/usr/bin/env bash
@@ -386,6 +415,7 @@ MAKE_FIXTURE
 
     chmod +x \
         "$case_dir/android/gradlew" \
+        "$case_dir/scripts/check-runtime-arch.sh" \
         "$android_home/emulator/emulator" \
         "$android_home/platform-tools/adb" \
         "$fake_bin/sleep"
@@ -428,7 +458,8 @@ test_successful_make_run_assembles_when_apk_is_newer_than_assets() {
 test_makefile_runtime_arch_wiring() {
     local default_runtime="$TMP_DIR/make-runtime-default.stdout"
     local x86_runtime="$TMP_DIR/make-runtime-x86.stdout"
-    local arch_check="$TMP_DIR/make-check-runtime.stdout"
+    local x86_arch_check="$TMP_DIR/make-check-runtime-x86.stdout"
+    local arm_arch_check="$TMP_DIR/make-check-runtime-arm.stdout"
     local run_dry="$TMP_DIR/make-run.stdout"
 
     make -C "$REPO_ROOT" --no-print-directory -n runtime > "$default_runtime"
@@ -442,10 +473,29 @@ test_makefile_runtime_arch_wiring() {
     assert_not_contains "$MAKEFILE" 'RUNTIME_ARCH=$(RUNTIME_ARCH)' "runtime shell interpolation"
 
     make -C "$REPO_ROOT" --no-print-directory -n check-runtime-arch \
-        'SYSTEM_IMAGE=system-images;android-34;default;amd64' > "$arch_check"
-    assert_contains "$arch_check" \
-        './scripts/check-runtime-arch.sh "amd64" "android/app/src/main/assets/linux/proot"' \
-        "emulator architecture derivation"
+        'SYSTEM_IMAGE=system-images;android-34;default;x86_64' > "$x86_arch_check"
+    assert_contains "$MAKEFILE" \
+        'check-runtime-arch: override export SYSTEM_IMAGE := $(value SYSTEM_IMAGE)' \
+        "SYSTEM_IMAGE target export"
+    assert_contains "$x86_arch_check" 'emulator_abi="${SYSTEM_IMAGE##*;}"' \
+        "x86_64 shell ABI derivation"
+    assert_contains "$x86_arch_check" \
+        './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libproot.so"' \
+        "x86_64 packaged proot derivation"
+    assert_not_contains "$x86_arch_check" "android/app/src/main/assets/linux/proot" \
+        "x86_64 obsolete proot asset"
+
+    make -C "$REPO_ROOT" --no-print-directory -n check-runtime-arch \
+        'SYSTEM_IMAGE=system-images;android-34;default;arm64-v8a' > "$arm_arch_check"
+    assert_contains "$arm_arch_check" 'emulator_abi="${SYSTEM_IMAGE##*;}"' \
+        "arm64-v8a shell ABI derivation"
+    assert_contains "$arm_arch_check" \
+        './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libproot.so"' \
+        "arm64-v8a packaged proot derivation"
+    assert_not_contains "$arm_arch_check" "android/app/src/main/assets/linux/proot" \
+        "arm64-v8a obsolete proot asset"
+    assert_not_contains "$MAKEFILE" 'EMULATOR_ABI' "unsafe Make ABI derivation"
+    assert_not_contains "$MAKEFILE" 'PACKAGED_PROOT' "unsafe Make proot path derivation"
 
     make -C "$REPO_ROOT" --no-print-directory -n run > "$run_dry"
     assert_contains "$MAKEFILE" 'run: check-deps check-runtime-arch' "run preflight prerequisites"
@@ -462,29 +512,121 @@ test_makefile_runtime_arch_wiring() {
     assert_contains "$MAKEFILE" 'sudo apt install file' "file dependency diagnostic"
 }
 
-test_parallel_run_failure_does_not_build_apk() {
-    local fixture="$TMP_DIR/run-order.mk"
-    local output_file="$TMP_DIR/run-order.stdout"
-    local build_marker="$TMP_DIR/apk-build-ran"
-    cat > "$fixture" <<'MAKE_FIXTURE'
-.PHONY: check-deps check-runtime-arch build
+test_parallel_run_failure_does_not_build_or_launch() {
+    local case_dir="$TMP_DIR/parallel-run-failure"
+    local android_home="$case_dir/android-home"
+    local gradle_log="$case_dir/gradle.log"
+    local emulator_log="$case_dir/emulator.log"
+    prepare_make_workflow_fixture "$case_dir"
+
+    cat > "$case_dir/preflight-overrides.mk" <<'MAKE_FIXTURE'
+.PHONY: check-deps check-runtime-arch
 check-deps:
 	@:
 check-runtime-arch:
-	@sleep 0.2; echo "controlled architecture failure"; exit 1
-build:
-	@touch "$(BUILD_MARKER)"
+	@/bin/sleep 0.2; echo "controlled architecture failure"; exit 1
 MAKE_FIXTURE
 
-    if make -C "$REPO_ROOT" --no-print-directory -j4 \
-        -f "$MAKEFILE" -f "$fixture" run BUILD_MARKER="$build_marker" \
-        >"$output_file" 2>&1; then
+    if GRADLE_LOG="$gradle_log" PATH="$case_dir/bin:$PATH" \
+        make -C "$case_dir" --no-print-directory -j4 \
+        -f Makefile -f preflight-overrides.mk run ANDROID_HOME="$android_home" \
+        >"$case_dir/run.stdout" 2>&1; then
         fail "run must fail when architecture preflight fails"
     fi
-    assert_contains "$output_file" "controlled architecture failure" "parallel run failure"
-    if [[ -e "$build_marker" ]]; then
-        fail "parallel run built the APK before architecture preflight succeeded"
+    assert_contains "$case_dir/run.stdout" "controlled architecture failure" \
+        "parallel run failure"
+    if [[ -s "$gradle_log" ]]; then
+        fail "parallel run invoked Gradle before architecture preflight succeeded"
     fi
+    if [[ -e "$emulator_log" ]]; then
+        fail "parallel run launched the emulator before architecture preflight succeeded"
+    fi
+}
+
+test_system_image_wiring_maps_supported_abis() {
+    local case_dir="$TMP_DIR/system-image-wiring"
+    local checker_log="$case_dir/checker.log"
+    local expected image
+    prepare_make_workflow_fixture "$case_dir"
+    : > "$checker_log"
+
+    for expected in x86_64 arm64-v8a; do
+        image="system-images;android-34;default;$expected"
+        CHECKER_CALL_LOG="$checker_log" make -C "$case_dir" --no-print-directory \
+            check-runtime-arch SYSTEM_IMAGE="$image" \
+            > "$case_dir/$expected.stdout" 2> "$case_dir/$expected.stderr"
+    done
+
+    assert_contains "$checker_log" \
+        'system-images;android-34;default;x86_64|x86_64|android/app/src/main/jniLibs/x86_64/libproot.so' \
+        "x86_64 checker wiring"
+    assert_contains "$checker_log" \
+        'system-images;android-34;default;arm64-v8a|arm64-v8a|android/app/src/main/jniLibs/arm64-v8a/libproot.so' \
+        "arm64-v8a checker wiring"
+}
+
+test_system_image_rejects_shell_injection() {
+    local case_dir="$TMP_DIR/system-image-injection"
+    local android_home="$case_dir/android-home"
+    local checker_log="$case_dir/checker.log"
+    local gradle_log="$case_dir/gradle.log"
+    local emulator_log="$case_dir/emulator.log"
+    local emulator_pid_file="$case_dir/emulator.pid"
+    local marker payload label make_succeeded
+    local index=0
+    local -a payloads
+    prepare_make_workflow_fixture "$case_dir"
+
+    cat > "$case_dir/deps-override.mk" <<'MAKE_FIXTURE'
+.PHONY: check-deps
+check-deps:
+	@:
+MAKE_FIXTURE
+
+    payloads=(
+        'system-images;android-34;default;x86_64$(touch${IFS}MARKER)'
+        'system-images;android-34;default;x86_64";touch${IFS}MARKER;#'
+    )
+
+    for payload in "${payloads[@]}"; do
+        index=$((index + 1))
+        label="SYSTEM_IMAGE injection payload $index"
+        marker="$case_dir/injected-$index"
+        payload="${payload/MARKER/$marker}"
+        : > "$checker_log"
+        : > "$gradle_log"
+        rm -f "$marker" "$emulator_log" "$emulator_pid_file"
+
+        if CHECKER_CALL_LOG="$checker_log" GRADLE_LOG="$gradle_log" \
+            PATH="$case_dir/bin:$PATH" make -C "$case_dir" --no-print-directory \
+            -f Makefile -f deps-override.mk run \
+            ANDROID_HOME="$android_home" EMULATOR_PID="$emulator_pid_file" \
+            SYSTEM_IMAGE="$payload" > "$case_dir/injection-$index.stdout" 2>&1; then
+            make_succeeded=true
+        else
+            make_succeeded=false
+        fi
+        [[ ! -f "$emulator_pid_file" ]] \
+            || kill "$(<"$emulator_pid_file")" 2>/dev/null || true
+
+        if [[ "$make_succeeded" == true ]]; then
+            fail "$label must fail make run"
+        fi
+        if [[ -e "$marker" ]]; then
+            fail "$label created a shell marker"
+        fi
+        if [[ -s "$checker_log" ]]; then
+            fail "$label reached the architecture checker"
+        fi
+        if [[ -s "$gradle_log" ]]; then
+            fail "$label bypassed preflight and invoked Gradle"
+        fi
+        if [[ -e "$emulator_log" ]]; then
+            fail "$label bypassed preflight and launched the emulator"
+        fi
+        assert_contains "$case_dir/injection-$index.stdout" \
+            "unsupported emulator ABI:" "$label rejection"
+    done
 }
 
 test_runtime_arch_rejects_shell_injection() {
@@ -810,6 +952,7 @@ run_test "checker accepts x86_64 aliases" test_checker_accepts_x86_64_aliases
 run_test "checker accepts arm64 aliases" test_checker_accepts_arm64_aliases
 run_test "checker reports arm64 mismatch command" test_checker_reports_arm64_mismatch_command
 run_test "checker reports x86_64 mismatch command" test_checker_reports_x86_64_mismatch_command
+run_test "checker requires explicit binary path" test_checker_requires_explicit_binary_path
 run_test "checker rejects missing binary" test_checker_rejects_missing_binary
 run_test "checker rejects non-ELF binary" test_checker_rejects_non_elf_binary
 run_test "checker rejects unrecognized ELF architecture" test_checker_rejects_unrecognized_elf_architecture
@@ -817,7 +960,9 @@ run_test "checker rejects unsupported expected architecture" test_checker_reject
 run_test "make build assembles with a newer existing APK" test_make_build_assembles_when_apk_is_newer_than_assets
 run_test "successful make run assembles with a newer existing APK" test_successful_make_run_assembles_when_apk_is_newer_than_assets
 run_test "Makefile runtime architecture wiring" test_makefile_runtime_arch_wiring
-run_test "parallel run failure does not build APK" test_parallel_run_failure_does_not_build_apk
+run_test "SYSTEM_IMAGE wiring maps supported ABIs" test_system_image_wiring_maps_supported_abis
+run_test "parallel run failure does not build or launch" test_parallel_run_failure_does_not_build_or_launch
+run_test "SYSTEM_IMAGE rejects shell injection" test_system_image_rejects_shell_injection
 run_test "runtime architecture rejects shell injection" test_runtime_arch_rejects_shell_injection
 run_test "failed build preserves runtime publication" test_failed_build_preserves_assets
 run_test "failed build removes newly-created empty JNI libs directory" test_failed_build_removes_new_empty_jni_libs_dir

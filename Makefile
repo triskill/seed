@@ -28,7 +28,6 @@ export ANDROID_HOME
 ANDROID_PLATFORM    := android-34
 ANDROID_BUILD_TOOLS := 34.0.0
 SYSTEM_IMAGE       := system-images;android-34;default;x86_64
-EMULATOR_ARCH       = $(lastword $(subst ;, ,$(SYSTEM_IMAGE)))
 AVD_NAME           := seed_dev
 
 # Runtime generation is always explicit because it builds a large asset.
@@ -111,8 +110,14 @@ runtime:  ## explicitly build arm64 or x86_64 runtime assets (set RUNTIME_ARCH)
 	@./scripts/build-runtime.sh
 
 .PHONY: check-runtime-arch
+check-runtime-arch: override export SYSTEM_IMAGE := $(value SYSTEM_IMAGE)
 check-runtime-arch:
-	@./scripts/check-runtime-arch.sh "$(EMULATOR_ARCH)" "android/app/src/main/assets/linux/proot"
+	@emulator_abi="$${SYSTEM_IMAGE##*;}"; \
+	case "$$emulator_abi" in \
+		x86_64|arm64-v8a) ;; \
+		*) echo "!! unsupported emulator ABI: $$emulator_abi (expected x86_64 or arm64-v8a)" >&2; exit 2 ;; \
+	esac; \
+	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libproot.so"
 
 # `make run` performs lightweight preflights before recursively
 # invoking `make build`, so even parallel make cannot start Gradle for
