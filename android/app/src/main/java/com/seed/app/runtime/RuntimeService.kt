@@ -37,7 +37,7 @@ class RuntimeService : Service() {
                 val runner = ProotRunner(
                     prootExecutable = NativeProot.executable(applicationInfo.nativeLibraryDir),
                     rootfsDir = File(File(filesDir, LINUX_DIRECTORY), ROOTFS_DIRECTORY),
-                    env = RUNTIME_ENVIRONMENT,
+                    env = ProotEnvironment.create(File(cacheDir, PROOT_TEMP_DIRECTORY)),
                 )
                 runner.start(serviceScope).also(::collectRuntimeLogs)
             },
@@ -91,12 +91,6 @@ class RuntimeService : Service() {
         private const val TAG = "SeedRuntime"
         private const val LINUX_DIRECTORY = "linux"
         private const val ROOTFS_DIRECTORY = "rootfs"
-
-        private val RUNTIME_ENVIRONMENT = mapOf(
-            "HOME" to "/root",
-            "LANG" to "C.UTF-8",
-            "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "TERM" to "dumb",
-        )
+        private const val PROOT_TEMP_DIRECTORY = "proot"
     }
 }
