@@ -21,14 +21,14 @@ dependencies = [
     # + `httptools` for production; tests can run without it
     # because the starlette TestClient uses its own transport.
     "uvicorn[standard]>=0.27",
+    # flask_manager imports httpx for production readiness polling.
+    "httpx>=0.27",
     # pydantic, pyyaml are added in later tasks.
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    # Required by fastapi.testclient.TestClient.
-    "httpx>=0.27",
 ]
 
 [tool.hatch.build.targets.wheel]

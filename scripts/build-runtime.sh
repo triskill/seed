@@ -191,7 +191,7 @@ echo "$ALPINE_SHA  $ROOTFS_TAR_IN" | sha256sum -c - || { echo "Alpine sha256 mis
 #       it from `backend/pyproject.toml` via `uv pip compile` (the
 #       source of truth is the pyproject, not a lockfile that we'd
 #       have to keep in sync). The result is a flat, version-pinned
-#       list of prod-only deps (no pytest/httpx dev extras).
+#       list of prod-only deps (no dev-only pytest/test tooling).
 echo "→ preparing build context (backend + webapp + requirements.txt)"
 mkdir -p "$BUILD_DIR/ctx"
 cp -r "$REPO_ROOT/backend" "$BUILD_DIR/ctx/backend"
