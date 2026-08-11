@@ -40,7 +40,7 @@ class RuntimeService : Service() {
                     rootfsDir = File(File(filesDir, LINUX_DIRECTORY), ROOTFS_DIRECTORY),
                     env = ProotEnvironment.create(
                         tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
-                        packagedLoader = nativeProot.loader,
+                        installation = nativeProot,
                     ),
                 )
                 runner.start(serviceScope).also(::collectRuntimeLogs)

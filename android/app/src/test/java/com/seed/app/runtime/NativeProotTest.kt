@@ -14,54 +14,85 @@ class NativeProotTest {
     val tempFolder = TemporaryFolder()
 
     @Test
-    fun resolveReturnsPackagedPairDirectlyUnderNativeLibraryDir() {
+    fun resolveReturnsCompleteBundleDirectlyUnderNativeLibraryDir() {
         val nativeLibraryDir = tempFolder.newFolder("native-libs")
-        val executable = File(nativeLibraryDir, "libproot.so").apply { writeText("proot") }
-        val loader = File(nativeLibraryDir, "libproot-loader.so").apply { writeText("loader") }
+        val expected = createCompleteInstallation(nativeLibraryDir)
 
         val installation = NativeProot.resolve(nativeLibraryDir.absolutePath)
 
-        assertEquals(
-            NativeProotInstallation(executable = executable, loader = loader),
-            installation,
-        )
+        assertEquals(expected, installation)
     }
 
     @Test
     fun resolveRejectsMissingNativeExecutableWithClearPath() {
-        val nativeLibraryDir = tempFolder.newFolder("missing-native-libs")
-        File(nativeLibraryDir, "libproot-loader.so").writeText("loader")
-        val expected = File(nativeLibraryDir, "libproot.so")
-
-        assertRejectedWithPath(nativeLibraryDir, expected)
+        assertMissingRejected("libproot.so")
     }
 
     @Test
     fun resolveRejectsDirectoryAtNativeExecutablePathWithClearPath() {
-        val nativeLibraryDir = tempFolder.newFolder("directory-native-libs")
-        File(nativeLibraryDir, "libproot.so").mkdir()
-        File(nativeLibraryDir, "libproot-loader.so").writeText("loader")
-        val expected = File(nativeLibraryDir, "libproot.so")
-
-        assertRejectedWithPath(nativeLibraryDir, expected)
+        assertDirectoryRejected("libproot.so")
     }
 
     @Test
     fun resolveRejectsMissingPackagedLoaderWithClearPath() {
-        val nativeLibraryDir = tempFolder.newFolder("missing-loader-native-libs")
-        File(nativeLibraryDir, "libproot.so").writeText("proot")
-        val expected = File(nativeLibraryDir, "libproot-loader.so")
-
-        assertRejectedWithPath(nativeLibraryDir, expected)
+        assertMissingRejected("libproot-loader.so")
     }
 
     @Test
     fun resolveRejectsDirectoryAtPackagedLoaderPathWithClearPath() {
-        val nativeLibraryDir = tempFolder.newFolder("directory-loader-native-libs")
-        File(nativeLibraryDir, "libproot.so").writeText("proot")
-        val expected = File(nativeLibraryDir, "libproot-loader.so").apply { mkdir() }
+        assertDirectoryRejected("libproot-loader.so")
+    }
+
+    @Test
+    fun resolveRejectsMissingTallocWithClearPath() {
+        assertMissingRejected("libtalloc.so")
+    }
+
+    @Test
+    fun resolveRejectsDirectoryAtTallocPathWithClearPath() {
+        assertDirectoryRejected("libtalloc.so")
+    }
+
+    @Test
+    fun resolveRejectsMissingAndroidShmemWithClearPath() {
+        assertMissingRejected("libandroid-shmem.so")
+    }
+
+    @Test
+    fun resolveRejectsDirectoryAtAndroidShmemPathWithClearPath() {
+        assertDirectoryRejected("libandroid-shmem.so")
+    }
+
+    private fun assertMissingRejected(filename: String) {
+        val nativeLibraryDir = tempFolder.newFolder("missing-${filename.replace('.', '-')}")
+        createCompleteInstallation(nativeLibraryDir)
+        val expected = File(nativeLibraryDir, filename)
+        assertTrue(expected.delete())
 
         assertRejectedWithPath(nativeLibraryDir, expected)
+    }
+
+    private fun assertDirectoryRejected(filename: String) {
+        val nativeLibraryDir = tempFolder.newFolder("directory-${filename.replace('.', '-')}")
+        createCompleteInstallation(nativeLibraryDir)
+        val expected = File(nativeLibraryDir, filename)
+        assertTrue(expected.delete())
+        assertTrue(expected.mkdir())
+
+        assertRejectedWithPath(nativeLibraryDir, expected)
+    }
+
+    private fun createCompleteInstallation(nativeLibraryDir: File): NativeProotInstallation {
+        val executable = File(nativeLibraryDir, "libproot.so").apply { writeText("proot") }
+        val loader = File(nativeLibraryDir, "libproot-loader.so").apply { writeText("loader") }
+        val talloc = File(nativeLibraryDir, "libtalloc.so").apply { writeText("talloc") }
+        val androidShmem = File(nativeLibraryDir, "libandroid-shmem.so").apply { writeText("shmem") }
+        return NativeProotInstallation(
+            executable = executable,
+            loader = loader,
+            talloc = talloc,
+            androidShmem = androidShmem,
+        )
     }
 
     private fun assertRejectedWithPath(nativeLibraryDir: File, expected: File) {

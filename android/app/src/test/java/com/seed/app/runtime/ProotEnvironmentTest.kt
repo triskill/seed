@@ -16,19 +16,20 @@ class ProotEnvironmentTest {
     @Test
     fun createMakesMissingTemporaryDirectory() {
         val tempDir = File(tempFolder.root, "missing/proot")
-        val loader = tempFolder.newFile("libproot-loader.so")
+        val installation = createInstallation()
 
-        ProotEnvironment.create(tempDir, loader)
+        ProotEnvironment.create(tempDir, installation)
 
         assertTrue(tempDir.isDirectory)
     }
 
     @Test
-    fun createSetsExactRuntimeEnvironmentIncludingAbsoluteTemporaryAndLoaderPaths() {
+    fun createSetsExactRuntimeEnvironmentIncludingNativeLibraryDirectory() {
         val tempDir = File(tempFolder.root, "proot")
-        val loader = tempFolder.newFile("libproot-loader.so")
+        val installation = createInstallation()
+        val nativeLibraryDir = installation.loader.parentFile!!.absolutePath
 
-        val environment = ProotEnvironment.create(tempDir, loader)
+        val environment = ProotEnvironment.create(tempDir, installation)
 
         assertEquals(
             mapOf(
@@ -37,7 +38,8 @@ class ProotEnvironmentTest {
                 "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 "TERM" to "dumb",
                 "PROOT_TMP_DIR" to tempDir.absolutePath,
-                "PROOT_LOADER" to loader.absolutePath,
+                "PROOT_LOADER" to installation.loader.absolutePath,
+                "LD_LIBRARY_PATH" to nativeLibraryDir,
             ),
             environment,
         )
@@ -46,9 +48,9 @@ class ProotEnvironmentTest {
     @Test
     fun createAcceptsExistingTemporaryDirectory() {
         val tempDir = tempFolder.newFolder("existing-proot")
-        val loader = tempFolder.newFile("libproot-loader.so")
+        val installation = createInstallation()
 
-        val environment = ProotEnvironment.create(tempDir, loader)
+        val environment = ProotEnvironment.create(tempDir, installation)
 
         assertEquals(tempDir.absolutePath, environment["PROOT_TMP_DIR"])
     }
@@ -56,10 +58,10 @@ class ProotEnvironmentTest {
     @Test
     fun createRejectsRegularFileAsTemporaryDirectoryWithClearAbsolutePath() {
         val tempDir = tempFolder.newFile("not-a-directory")
-        val loader = tempFolder.newFile("libproot-loader.so")
+        val installation = createInstallation()
 
         val failure = assertThrows(IllegalStateException::class.java) {
-            ProotEnvironment.create(tempDir, loader)
+            ProotEnvironment.create(tempDir, installation)
         }
 
         assertTrue(failure.message.orEmpty().contains("temporary directory"))
@@ -67,28 +69,26 @@ class ProotEnvironmentTest {
     }
 
     @Test
-    fun createRejectsMissingPackagedLoaderWithClearAbsolutePath() {
-        val tempDir = File(tempFolder.root, "proot-missing-loader")
-        val loader = File(tempFolder.root, "missing-libproot-loader.so")
+    fun createRejectsBundleWhoseFilesDoNotShareNativeLibraryDirectory() {
+        val installation = createInstallation()
+        val outsideTalloc = tempFolder.newFile("outside-libtalloc.so")
+        val mismatched = installation.copy(talloc = outsideTalloc)
 
-        assertLoaderRejectedWithPath(tempDir, loader)
-    }
-
-    @Test
-    fun createRejectsDirectoryAsPackagedLoaderWithClearAbsolutePath() {
-        val tempDir = File(tempFolder.root, "proot-directory-loader")
-        val loader = tempFolder.newFolder("directory-libproot-loader.so")
-
-        assertLoaderRejectedWithPath(tempDir, loader)
-    }
-
-    private fun assertLoaderRejectedWithPath(tempDir: File, loader: File) {
         val failure = assertThrows(IllegalStateException::class.java) {
-            ProotEnvironment.create(tempDir, loader)
+            ProotEnvironment.create(File(tempFolder.root, "proot-mismatch"), mismatched)
         }
 
-        assertTrue(failure.message.orEmpty().contains("loader"))
-        assertTrue(failure.message.orEmpty().contains("regular file"))
-        assertTrue(failure.message.orEmpty().contains(loader.absolutePath))
+        assertTrue(failure.message.orEmpty().contains("native library directory"))
+        assertTrue(failure.message.orEmpty().contains(outsideTalloc.absolutePath))
+    }
+
+    private fun createInstallation(): NativeProotInstallation {
+        val nativeLibraryDir = tempFolder.newFolder("native-libs-${System.nanoTime()}")
+        return NativeProotInstallation(
+            executable = File(nativeLibraryDir, "libproot.so").apply { writeText("proot") },
+            loader = File(nativeLibraryDir, "libproot-loader.so").apply { writeText("loader") },
+            talloc = File(nativeLibraryDir, "libtalloc.so").apply { writeText("talloc") },
+            androidShmem = File(nativeLibraryDir, "libandroid-shmem.so").apply { writeText("shmem") },
+        )
     }
 }

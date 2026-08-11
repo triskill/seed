@@ -5,23 +5,35 @@ import java.io.File
 data class NativeProotInstallation(
     val executable: File,
     val loader: File,
+    val talloc: File,
+    val androidShmem: File,
 )
 
 object NativeProot {
     private const val EXECUTABLE_FILENAME = "libproot.so"
     private const val LOADER_FILENAME = "libproot-loader.so"
+    private const val TALLOC_FILENAME = "libtalloc.so"
+    private const val ANDROID_SHMEM_FILENAME = "libandroid-shmem.so"
 
     fun resolve(nativeLibraryDir: String): NativeProotInstallation {
-        val executable = File(nativeLibraryDir, EXECUTABLE_FILENAME)
-        check(executable.isFile) {
-            "Native proot executable is not a regular file: ${executable.absolutePath}"
-        }
+        val directory = File(nativeLibraryDir)
+        return NativeProotInstallation(
+            executable = requireRegularFile(directory, EXECUTABLE_FILENAME, "executable"),
+            loader = requireRegularFile(directory, LOADER_FILENAME, "loader"),
+            talloc = requireRegularFile(directory, TALLOC_FILENAME, "libtalloc dependency"),
+            androidShmem = requireRegularFile(
+                directory,
+                ANDROID_SHMEM_FILENAME,
+                "libandroid-shmem dependency",
+            ),
+        )
+    }
 
-        val loader = File(nativeLibraryDir, LOADER_FILENAME)
-        check(loader.isFile) {
-            "Native proot loader is not a regular file: ${loader.absolutePath}"
+    private fun requireRegularFile(directory: File, filename: String, label: String): File {
+        val file = File(directory, filename)
+        check(file.isFile) {
+            "Native proot $label is not a regular file: ${file.absolutePath}"
         }
-
-        return NativeProotInstallation(executable = executable, loader = loader)
+        return file
     }
 }
