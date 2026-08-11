@@ -541,6 +541,12 @@ test_makefile_runtime_arch_wiring() {
     assert_contains "$x86_arch_check" \
         './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libproot-loader.so"' \
         "x86_64 packaged proot loader derivation"
+    assert_contains "$x86_arch_check" \
+        './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libtalloc.so"' \
+        "x86_64 packaged talloc derivation"
+    assert_contains "$x86_arch_check" \
+        './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libandroid-shmem.so"' \
+        "x86_64 packaged shmem derivation"
     assert_not_contains "$x86_arch_check" "android/app/src/main/assets/linux/proot" \
         "x86_64 obsolete proot asset"
 
@@ -554,6 +560,12 @@ test_makefile_runtime_arch_wiring() {
     assert_contains "$arm_arch_check" \
         './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libproot-loader.so"' \
         "arm64-v8a packaged proot loader derivation"
+    assert_contains "$arm_arch_check" \
+        './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libtalloc.so"' \
+        "arm64-v8a packaged talloc derivation"
+    assert_contains "$arm_arch_check" \
+        './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libandroid-shmem.so"' \
+        "arm64-v8a packaged shmem derivation"
     assert_not_contains "$arm_arch_check" "android/app/src/main/assets/linux/proot" \
         "arm64-v8a obsolete proot asset"
     assert_not_contains "$MAKEFILE" 'EMULATOR_ABI' "unsafe Make ABI derivation"
@@ -619,7 +631,7 @@ test_system_image_wiring_maps_supported_abis() {
             > "$case_dir/$expected.stdout" 2> "$case_dir/$expected.stderr"
     done
 
-    assert_line_count "4" "$checker_log" "packaged native pair checker call count"
+    assert_line_count "8" "$checker_log" "packaged native bundle checker call count"
     assert_contains "$checker_log" \
         'system-images;android-34;default;x86_64|x86_64|android/app/src/main/jniLibs/x86_64/libproot.so' \
         "x86_64 proot checker wiring"
@@ -627,11 +639,23 @@ test_system_image_wiring_maps_supported_abis() {
         'system-images;android-34;default;x86_64|x86_64|android/app/src/main/jniLibs/x86_64/libproot-loader.so' \
         "x86_64 proot loader checker wiring"
     assert_contains "$checker_log" \
+        'system-images;android-34;default;x86_64|x86_64|android/app/src/main/jniLibs/x86_64/libtalloc.so' \
+        "x86_64 talloc checker wiring"
+    assert_contains "$checker_log" \
+        'system-images;android-34;default;x86_64|x86_64|android/app/src/main/jniLibs/x86_64/libandroid-shmem.so' \
+        "x86_64 shmem checker wiring"
+    assert_contains "$checker_log" \
         'system-images;android-34;default;arm64-v8a|arm64-v8a|android/app/src/main/jniLibs/arm64-v8a/libproot.so' \
         "arm64-v8a proot checker wiring"
     assert_contains "$checker_log" \
         'system-images;android-34;default;arm64-v8a|arm64-v8a|android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so' \
         "arm64-v8a proot loader checker wiring"
+    assert_contains "$checker_log" \
+        'system-images;android-34;default;arm64-v8a|arm64-v8a|android/app/src/main/jniLibs/arm64-v8a/libtalloc.so' \
+        "arm64-v8a talloc checker wiring"
+    assert_contains "$checker_log" \
+        'system-images;android-34;default;arm64-v8a|arm64-v8a|android/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so' \
+        "arm64-v8a shmem checker wiring"
 }
 
 assert_loader_preflight_failure_stops_run() {
@@ -704,6 +728,73 @@ test_missing_loader_fails_before_build_or_launch() {
 
 test_mismatched_loader_fails_before_build_or_launch() {
     assert_loader_preflight_failure_stops_run mismatched
+}
+
+assert_dependency_preflight_failure_stops_run() {
+    local artifact="$1"
+    local failure_mode="$2"
+    local case_dir="$TMP_DIR/dependency-preflight-$artifact-$failure_mode"
+    local android_home="$case_dir/android-home"
+    local native_dir="$case_dir/android/app/src/main/jniLibs/x86_64"
+    local gradle_log="$case_dir/gradle.log"
+    local emulator_pid_file="$case_dir/emulator.pid"
+    prepare_make_workflow_fixture "$case_dir"
+    mkdir -p "$native_dir"
+    printf '%s' 'controlled proot' > "$native_dir/libproot.so"
+    printf '%s' 'controlled loader' > "$native_dir/libproot-loader.so"
+    if [[ "$artifact" == "libandroid-shmem.so" ]]; then
+        printf '%s' 'controlled talloc' > "$native_dir/libtalloc.so"
+    fi
+    if [[ "$failure_mode" == "mismatched" ]]; then
+        printf '%s' 'controlled mismatch' > "$native_dir/$artifact"
+    fi
+    cp "$ARCH_CHECKER" "$case_dir/scripts/check-runtime-arch.sh"
+
+    cat > "$case_dir/bin/file" <<'FAKE_FILE'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${!#}" == *"/${MISMATCHED_BASENAME:-<none>}" ]]; then
+    printf '%s\n' 'ELF 64-bit LSB shared object, ARM aarch64, dynamically linked'
+else
+    printf '%s\n' 'ELF 64-bit LSB shared object, x86-64, dynamically linked'
+fi
+FAKE_FILE
+    chmod +x "$case_dir/bin/file"
+
+    cat > "$case_dir/deps-override.mk" <<'MAKE_FIXTURE'
+.PHONY: check-deps
+check-deps:
+	@:
+MAKE_FIXTURE
+
+    if GRADLE_LOG="$gradle_log" MISMATCHED_BASENAME="$artifact" \
+        PATH="$case_dir/bin:$PATH" make -C "$case_dir" --no-print-directory \
+        -f Makefile -f deps-override.mk run ANDROID_HOME="$android_home" \
+        EMULATOR_PID="$emulator_pid_file" \
+        'SYSTEM_IMAGE=system-images;android-34;default;x86_64' \
+        > "$case_dir/run.stdout" 2>&1; then
+        [[ ! -f "$emulator_pid_file" ]] \
+            || kill "$(<"$emulator_pid_file")" 2>/dev/null || true
+        fail "$failure_mode $artifact must fail make run"
+    fi
+
+    assert_contains "$case_dir/run.stdout" \
+        "android/app/src/main/jniLibs/x86_64/$artifact" \
+        "$failure_mode dependency diagnostic path"
+    assert_contains "$case_dir/run.stdout" \
+        "make runtime RUNTIME_ARCH=x86_64" \
+        "$failure_mode dependency repair command"
+    if [[ -s "$gradle_log" ]]; then
+        fail "$failure_mode $artifact invoked Gradle"
+    fi
+}
+
+test_missing_talloc_fails_preflight_before_build_or_launch() {
+    assert_dependency_preflight_failure_stops_run libtalloc.so missing
+}
+
+test_mismatched_shmem_fails_preflight_before_build_or_launch() {
+    assert_dependency_preflight_failure_stops_run libandroid-shmem.so mismatched
 }
 
 test_system_image_rejects_shell_injection() {
@@ -849,6 +940,10 @@ test_generated_native_proot_ignore_rules() {
     local arm64_loader_path="android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so"
     local x86_path="android/app/src/main/jniLibs/x86_64/libproot.so"
     local x86_loader_path="android/app/src/main/jniLibs/x86_64/libproot-loader.so"
+    local arm64_talloc_path="android/app/src/main/jniLibs/arm64-v8a/libtalloc.so"
+    local arm64_shmem_path="android/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so"
+    local x86_talloc_path="android/app/src/main/jniLibs/x86_64/libtalloc.so"
+    local x86_shmem_path="android/app/src/main/jniLibs/x86_64/libandroid-shmem.so"
     local future_source="android/app/src/main/jniLibs/arm64-v8a/proot-loader.c"
     local unrelated_library="android/app/src/main/jniLibs/arm64-v8a/libhelper.so"
 
@@ -856,6 +951,10 @@ test_generated_native_proot_ignore_rules() {
     assert_exact_repo_gitignore_rule "$arm64_loader_path" "generated arm64 native proot loader"
     assert_exact_repo_gitignore_rule "$x86_path" "generated x86_64 native proot"
     assert_exact_repo_gitignore_rule "$x86_loader_path" "generated x86_64 native proot loader"
+    assert_exact_repo_gitignore_rule "$arm64_talloc_path" "generated arm64 native talloc"
+    assert_exact_repo_gitignore_rule "$arm64_shmem_path" "generated arm64 native shmem"
+    assert_exact_repo_gitignore_rule "$x86_talloc_path" "generated x86_64 native talloc"
+    assert_exact_repo_gitignore_rule "$x86_shmem_path" "generated x86_64 native shmem"
     if git -C "$REPO_ROOT" -c core.excludesFile=/dev/null \
         check-ignore -v --no-index "$future_source" >/dev/null; then
         fail "future native source files must not be ignored"
@@ -1371,6 +1470,8 @@ run_test "Makefile runtime architecture wiring" test_makefile_runtime_arch_wirin
 run_test "SYSTEM_IMAGE wiring maps supported ABIs" test_system_image_wiring_maps_supported_abis
 run_test "missing loader fails before build or launch" test_missing_loader_fails_before_build_or_launch
 run_test "mismatched loader fails before build or launch" test_mismatched_loader_fails_before_build_or_launch
+run_test "missing talloc fails preflight before build or launch" test_missing_talloc_fails_preflight_before_build_or_launch
+run_test "mismatched shmem fails preflight before build or launch" test_mismatched_shmem_fails_preflight_before_build_or_launch
 run_test "parallel run failure does not build or launch" test_parallel_run_failure_does_not_build_or_launch
 run_test "SYSTEM_IMAGE rejects shell injection" test_system_image_rejects_shell_injection
 run_test "runtime architecture rejects shell injection" test_runtime_arch_rejects_shell_injection

@@ -118,7 +118,9 @@ check-runtime-arch:
 		*) echo "!! unsupported emulator ABI: $$emulator_abi (expected x86_64 or arm64-v8a)" >&2; exit 2 ;; \
 	esac; \
 	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libproot.so" && \
-	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libproot-loader.so"
+	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libproot-loader.so" && \
+	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libtalloc.so" && \
+	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libandroid-shmem.so"
 
 # `make run` performs lightweight preflights before recursively
 # invoking `make build`, so even parallel make cannot start Gradle for
