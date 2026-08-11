@@ -124,10 +124,13 @@ assert_exact_repo_gitignore_rule() {
 assert_exported() {
     local name
     for name in \
-        RUNTIME_ARCH PROOT_URL PROOT_SHA PROOT_LOADER_OFFSET PROOT_LOADER_SIZE \
-        PROOT_LOADER_SHA ALPINE_URL ALPINE_SHA DOCKER_PLATFORM \
-        DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER ANDROID_ABI \
-        PROOT_JNI_RELATIVE_PATH PROOT_LOADER_JNI_RELATIVE_PATH; do
+        RUNTIME_ARCH PROOT_PACKAGE_URL PROOT_PACKAGE_SHA TALLOC_PACKAGE_URL \
+        TALLOC_PACKAGE_SHA ANDROID_SHMEM_PACKAGE_URL ANDROID_SHMEM_PACKAGE_SHA \
+        PROOT_SHA PROOT_LOADER_SHA TALLOC_SHA ANDROID_SHMEM_SHA ALPINE_URL \
+        ALPINE_SHA DOCKER_PLATFORM DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE \
+        PROOT_FILE_MARKER ANDROID_ABI PROOT_JNI_RELATIVE_PATH \
+        PROOT_LOADER_JNI_RELATIVE_PATH TALLOC_JNI_RELATIVE_PATH \
+        ANDROID_SHMEM_JNI_RELATIVE_PATH; do
         if [[ "$(printenv "$name")" != "${!name}" ]]; then
             fail "$name must be exported"
         fi
@@ -146,24 +149,32 @@ run_test() {
 }
 
 # Source only declares configure_runtime_target; it must not configure a target.
-unset RUNTIME_ARCH PROOT_URL PROOT_SHA PROOT_LOADER_OFFSET PROOT_LOADER_SIZE \
-    PROOT_LOADER_SHA ALPINE_URL ALPINE_SHA DOCKER_PLATFORM DOCKER_IMAGE_ARCH \
-    ALPINE_BASE_IMAGE PROOT_FILE_MARKER ANDROID_ABI PROOT_JNI_RELATIVE_PATH \
-    PROOT_LOADER_JNI_RELATIVE_PATH
+unset RUNTIME_ARCH PROOT_PACKAGE_URL PROOT_PACKAGE_SHA TALLOC_PACKAGE_URL \
+    TALLOC_PACKAGE_SHA ANDROID_SHMEM_PACKAGE_URL ANDROID_SHMEM_PACKAGE_SHA \
+    PROOT_SHA PROOT_LOADER_SHA TALLOC_SHA ANDROID_SHMEM_SHA ALPINE_URL \
+    ALPINE_SHA DOCKER_PLATFORM DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE \
+    PROOT_FILE_MARKER ANDROID_ABI PROOT_JNI_RELATIVE_PATH \
+    PROOT_LOADER_JNI_RELATIVE_PATH TALLOC_JNI_RELATIVE_PATH \
+    ANDROID_SHMEM_JNI_RELATIVE_PATH
 # shellcheck source=../runtime-target.sh
 source "$HELPER"
-if [[ -n "${PROOT_URL+x}" ]]; then
+if [[ -n "${PROOT_PACKAGE_URL+x}" ]]; then
     fail "sourcing runtime-target.sh must not configure a target"
 fi
 
 test_arm64_target() (
     configure_runtime_target arm64
     assert_eq "arm64" "$RUNTIME_ARCH" "arm64 runtime architecture"
-    assert_eq "https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static" "$PROOT_URL" "arm64 proot URL"
-    assert_eq "fa10b1a7818c2f5b1dcb5834450570c368c9ecf66d31521509621b95c4538a45" "${PROOT_SHA:-<unset>}" "arm64 proot SHA"
-    assert_eq "223400" "${PROOT_LOADER_OFFSET:-<unset>}" "arm64 embedded loader offset"
-    assert_eq "66832" "${PROOT_LOADER_SIZE:-<unset>}" "arm64 embedded loader size"
-    assert_eq "51c3427b112edc70d1979b48209c41f332616758138de3be659cc79e50436450" "${PROOT_LOADER_SHA:-<unset>}" "arm64 loader SHA"
+    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.89_aarch64.deb" "$PROOT_PACKAGE_URL" "arm64 proot package URL"
+    assert_eq "ec9fe38c50cfd49dd31fe360ffbcc3124a945dc1ea16293a8a769303dd724f46" "$PROOT_PACKAGE_SHA" "arm64 proot package SHA"
+    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb" "$TALLOC_PACKAGE_URL" "arm64 talloc package URL"
+    assert_eq "ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da" "$TALLOC_PACKAGE_SHA" "arm64 talloc package SHA"
+    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb" "$ANDROID_SHMEM_PACKAGE_URL" "arm64 shmem package URL"
+    assert_eq "0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6" "$ANDROID_SHMEM_PACKAGE_SHA" "arm64 shmem package SHA"
+    assert_eq "7da118895e971ea9fba4bb250b28af0f8db2edcbfdbaa8075cc645a0d7cf16fe" "$PROOT_SHA" "arm64 proot SHA"
+    assert_eq "44ef39c1e1a18c09f6e4c4b5d6f8bba82d30596598bd155ec162d05c5122ff04" "$PROOT_LOADER_SHA" "arm64 loader SHA"
+    assert_eq "3c9b207c0a6ea2896b7523e03f55d9ab0d9e88baa115d4c32b84058ff4246fbb" "$TALLOC_SHA" "arm64 talloc SHA"
+    assert_eq "84475798e07c8174dbbfaec70a827fdb02f19ffa69a589380c13e7507fd0e731" "$ANDROID_SHMEM_SHA" "arm64 shmem SHA"
     assert_eq "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz" "$ALPINE_URL" "arm64 Alpine URL"
     assert_eq "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de" "$ALPINE_SHA" "arm64 Alpine SHA"
     assert_eq "linux/arm64" "$DOCKER_PLATFORM" "arm64 Docker platform"
@@ -172,18 +183,25 @@ test_arm64_target() (
     assert_eq "ARM aarch64" "$PROOT_FILE_MARKER" "arm64 proot file marker"
     assert_eq "arm64-v8a" "$ANDROID_ABI" "arm64 Android ABI"
     assert_eq "arm64-v8a/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "arm64 native proot path"
-    assert_eq "arm64-v8a/libproot-loader.so" "${PROOT_LOADER_JNI_RELATIVE_PATH:-<unset>}" "arm64 native proot loader path"
+    assert_eq "arm64-v8a/libproot-loader.so" "$PROOT_LOADER_JNI_RELATIVE_PATH" "arm64 native proot loader path"
+    assert_eq "arm64-v8a/libtalloc.so" "$TALLOC_JNI_RELATIVE_PATH" "arm64 talloc path"
+    assert_eq "arm64-v8a/libandroid-shmem.so" "$ANDROID_SHMEM_JNI_RELATIVE_PATH" "arm64 shmem path"
     assert_exported
 )
 
 test_x86_64_target() (
     configure_runtime_target x86_64
     assert_eq "x86_64" "$RUNTIME_ARCH" "x86_64 runtime architecture"
-    assert_eq "https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-x86_64-static" "$PROOT_URL" "x86_64 proot URL"
-    assert_eq "d1eb20cb201e6df08d707023efb000623ff7c10d6574839d7bb42d0adba6b4da" "${PROOT_SHA:-<unset>}" "x86_64 proot SHA"
-    assert_eq "1067536" "${PROOT_LOADER_OFFSET:-<unset>}" "x86_64 embedded loader offset"
-    assert_eq "8872" "${PROOT_LOADER_SIZE:-<unset>}" "x86_64 embedded loader size"
-    assert_eq "ca5279447ed4693b5e66e6eb1228da65a7c9c3b2fe23953c143216b55b7b9839" "${PROOT_LOADER_SHA:-<unset>}" "x86_64 loader SHA"
+    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.89_x86_64.deb" "$PROOT_PACKAGE_URL" "x86_64 proot package URL"
+    assert_eq "0d76da0515f38dfb2217f647b0d79fcd61b38f80e25cbf2d39237697b02dd016" "$PROOT_PACKAGE_SHA" "x86_64 proot package SHA"
+    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_x86_64.deb" "$TALLOC_PACKAGE_URL" "x86_64 talloc package URL"
+    assert_eq "7ca2eaae2e53b28228a01301bc410b62845403d6317c25b8e0a7f40681de0628" "$TALLOC_PACKAGE_SHA" "x86_64 talloc package SHA"
+    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_x86_64.deb" "$ANDROID_SHMEM_PACKAGE_URL" "x86_64 shmem package URL"
+    assert_eq "ffa9e4c87467b158b148d0ff92dda796aa038276c2075af3269cdcdb06f25797" "$ANDROID_SHMEM_PACKAGE_SHA" "x86_64 shmem package SHA"
+    assert_eq "d87c0bd62dfbd456826e8c3f968d4e9b264e6a912417e40a883900142d867051" "$PROOT_SHA" "x86_64 proot SHA"
+    assert_eq "914564ea1c66f50b38f18cac857fcf814c6b1ab027789178880fca1d530599b3" "$PROOT_LOADER_SHA" "x86_64 loader SHA"
+    assert_eq "77be445f4ec245fff9c19e9874ebcf99618244cf48737f5fca938316daaa70da" "$TALLOC_SHA" "x86_64 talloc SHA"
+    assert_eq "092926060298acd3778e6239033d7aef1280dcb59aebe021a3719612e6a3465f" "$ANDROID_SHMEM_SHA" "x86_64 shmem SHA"
     assert_eq "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz" "$ALPINE_URL" "x86_64 Alpine URL"
     assert_eq "d4e6fd67dcf75e40c451560ac7265166c2b72a0f38ddc9aae756a7de3d1efa0c" "$ALPINE_SHA" "x86_64 Alpine SHA"
     assert_eq "linux/amd64" "$DOCKER_PLATFORM" "x86_64 Docker platform"
@@ -192,7 +210,9 @@ test_x86_64_target() (
     assert_eq "x86-64" "$PROOT_FILE_MARKER" "x86_64 proot file marker"
     assert_eq "x86_64" "$ANDROID_ABI" "x86_64 Android ABI"
     assert_eq "x86_64/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "x86_64 native proot path"
-    assert_eq "x86_64/libproot-loader.so" "${PROOT_LOADER_JNI_RELATIVE_PATH:-<unset>}" "x86_64 native proot loader path"
+    assert_eq "x86_64/libproot-loader.so" "$PROOT_LOADER_JNI_RELATIVE_PATH" "x86_64 native proot loader path"
+    assert_eq "x86_64/libtalloc.so" "$TALLOC_JNI_RELATIVE_PATH" "x86_64 talloc path"
+    assert_eq "x86_64/libandroid-shmem.so" "$ANDROID_SHMEM_JNI_RELATIVE_PATH" "x86_64 shmem path"
     assert_exported
 )
 
@@ -213,9 +233,11 @@ test_target_can_be_reconfigured() (
     assert_eq "x86-64" "$PROOT_FILE_MARKER" "reconfigured proot file marker"
     assert_eq "x86_64" "$ANDROID_ABI" "reconfigured Android ABI"
     assert_eq "x86_64/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "reconfigured native proot path"
-    assert_eq "x86_64/libproot-loader.so" "${PROOT_LOADER_JNI_RELATIVE_PATH:-<unset>}" "reconfigured native loader path"
-    assert_eq "d1eb20cb201e6df08d707023efb000623ff7c10d6574839d7bb42d0adba6b4da" "${PROOT_SHA:-<unset>}" "reconfigured proot SHA"
-    assert_eq "ca5279447ed4693b5e66e6eb1228da65a7c9c3b2fe23953c143216b55b7b9839" "${PROOT_LOADER_SHA:-<unset>}" "reconfigured loader SHA"
+    assert_eq "x86_64/libproot-loader.so" "$PROOT_LOADER_JNI_RELATIVE_PATH" "reconfigured native loader path"
+    assert_eq "x86_64/libtalloc.so" "$TALLOC_JNI_RELATIVE_PATH" "reconfigured talloc path"
+    assert_eq "x86_64/libandroid-shmem.so" "$ANDROID_SHMEM_JNI_RELATIVE_PATH" "reconfigured shmem path"
+    assert_eq "d87c0bd62dfbd456826e8c3f968d4e9b264e6a912417e40a883900142d867051" "$PROOT_SHA" "reconfigured proot SHA"
+    assert_eq "914564ea1c66f50b38f18cac857fcf814c6b1ab027789178880fca1d530599b3" "$PROOT_LOADER_SHA" "reconfigured loader SHA"
     assert_exported
 )
 
