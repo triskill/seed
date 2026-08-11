@@ -34,10 +34,14 @@ class RuntimeService : Service() {
         supervisor = RuntimeSupervisor(
             scope = serviceScope,
             startProcess = {
+                val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
                 val runner = ProotRunner(
-                    prootExecutable = NativeProot.executable(applicationInfo.nativeLibraryDir),
+                    prootExecutable = nativeProot.executable,
                     rootfsDir = File(File(filesDir, LINUX_DIRECTORY), ROOTFS_DIRECTORY),
-                    env = ProotEnvironment.create(File(cacheDir, PROOT_TEMP_DIRECTORY)),
+                    env = ProotEnvironment.create(
+                        tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
+                        packagedLoader = nativeProot.loader,
+                    ),
                 )
                 runner.start(serviceScope).also(::collectRuntimeLogs)
             },
