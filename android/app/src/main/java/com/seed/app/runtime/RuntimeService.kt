@@ -31,16 +31,16 @@ class RuntimeService : Service() {
         super.onCreate()
         startForeground(NOTIFICATION_ID, runtimeNotification())
 
-        val linuxDir = File(filesDir, LINUX_DIRECTORY)
-        val runner = ProotRunner(
-            prootExecutable = File(linuxDir, PROOT_EXECUTABLE),
-            rootfsDir = File(linuxDir, ROOTFS_DIRECTORY),
-            env = RUNTIME_ENVIRONMENT,
-        )
-
         supervisor = RuntimeSupervisor(
             scope = serviceScope,
-            startProcess = { runner.start(serviceScope).also(::collectRuntimeLogs) },
+            startProcess = {
+                val runner = ProotRunner(
+                    prootExecutable = NativeProot.executable(applicationInfo.nativeLibraryDir),
+                    rootfsDir = File(File(filesDir, LINUX_DIRECTORY), ROOTFS_DIRECTORY),
+                    env = RUNTIME_ENVIRONMENT,
+                )
+                runner.start(serviceScope).also(::collectRuntimeLogs)
+            },
             healthStates = { HealthMonitor(ApiModule.embedded).states() },
             onFailure = { message, failure -> Log.e(TAG, message, failure) },
         )
@@ -90,7 +90,6 @@ class RuntimeService : Service() {
 
         private const val TAG = "SeedRuntime"
         private const val LINUX_DIRECTORY = "linux"
-        private const val PROOT_EXECUTABLE = "proot"
         private const val ROOTFS_DIRECTORY = "rootfs"
 
         private val RUNTIME_ENVIRONMENT = mapOf(
