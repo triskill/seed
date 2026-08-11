@@ -2,12 +2,14 @@
 # scripts/build-runtime.sh — Build the Seed Android runtime.
 #
 # Produces:
-#   android/app/src/main/jniLibs/<abi>/libproot.so    (~2 MB, selected architecture)
+#   android/app/src/main/jniLibs/<abi>/libproot.so
+#   android/app/src/main/jniLibs/<abi>/libproot-loader.so
 #   android/app/src/main/assets/linux/rootfs.tar.gz   (~150 MB, Alpine + python + node + pi + backend + webapp)
 #   android/app/src/main/assets/linux/seed_version.json
 #
 # Set RUNTIME_ARCH=arm64 (default) or RUNTIME_ARCH=x86_64.
-# Requires: docker (with buildx support for the selected target), curl, file, tar.
+# Requires: docker (with buildx support for the selected target), curl, dd,
+# file, sha256sum, tar.
 # Idempotent: re-running rebuilds from scratch in fresh temporary dirs.
 # Native and asset outputs use separate staging directories inside their
 # destination roots, so each publication rename is atomic even when a root is a
@@ -36,11 +38,13 @@ configure_runtime_target "${RUNTIME_ARCH:-arm64}"
 ASSETS_DIR="${ASSETS_DIR:-$REPO_ROOT/android/app/src/main/assets/linux}"
 JNI_LIBS_DIR="${JNI_LIBS_DIR:-$REPO_ROOT/android/app/src/main/jniLibs}"
 SELECTED_PROOT="$JNI_LIBS_DIR/$PROOT_JNI_RELATIVE_PATH"
+SELECTED_PROOT_LOADER="$JNI_LIBS_DIR/$PROOT_LOADER_JNI_RELATIVE_PATH"
 case "$ANDROID_ABI" in
     arm64-v8a) OPPOSITE_ANDROID_ABI="x86_64" ;;
     x86_64) OPPOSITE_ANDROID_ABI="arm64-v8a" ;;
 esac
 OPPOSITE_PROOT="$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI/libproot.so"
+OPPOSITE_PROOT_LOADER="$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI/libproot-loader.so"
 DOCKER_IMAGE_TAG="seed-runtime:$(date +%s)"
 DOCKER_CONTAINER_NAME="seed-runtime-export-$$"
 BUILD_DIR=""
@@ -80,6 +84,7 @@ BUILD_DIR="$(mktemp -d -t seed-runtime-build.XXXXXXXXXX)"
 # ---- Preflight ----
 command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
 command -v curl >/dev/null || { echo "curl required" >&2; exit 1; }
+command -v dd >/dev/null || { echo "dd required" >&2; exit 1; }
 command -v file >/dev/null || { echo "file required" >&2; exit 1; }
 mkdir -p "$ASSETS_DIR"
 # This directory must share a filesystem with ASSETS_DIR so publishing each
@@ -90,32 +95,78 @@ ROOTFS_TAR_OUT="$STAGING_DIR/rootfs.tar.gz"
 # ---- Compute build_id (timestamp + script hash) ----
 BUILD_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(sha256sum "$0" | cut -c1-8)"
 
-# ---- Step A: fetch proot (selected architecture, static) ----
-proot_matches_target() {
+# ---- Step A: stage pinned proot and its embedded loader ----
+native_executable_matches_target() {
     local description
     [[ -f "$1" ]] || return 1
     description="$(LC_ALL=C file -Lb "$1" 2>/dev/null)" || return 1
     [[ "$description" == "ELF 64-bit"* && "$description" == *"$PROOT_FILE_MARKER"* ]]
 }
 
-# Reuse a matching native executable, but stage a replacement when switching
-# targets. Staging inside JNI_LIBS_DIR guarantees the publication rename stays
-# on the destination filesystem when JNI_LIBS_DIR is a mount point or symlink,
-# without requiring its lexical parent to be writable.
+sha256_matches() {
+    local path="$1"
+    local expected="$2"
+    printf '%s  %s\n' "$expected" "$path" | sha256sum -c - >/dev/null 2>&1
+}
+
+proot_matches_target() {
+    native_executable_matches_target "$1" && sha256_matches "$1" "$PROOT_SHA"
+}
+
+proot_loader_matches_target() {
+    native_executable_matches_target "$1" && sha256_matches "$1" "$PROOT_LOADER_SHA"
+}
+
+# Offsets are safe only after the containing release binary has passed its
+# pinned SHA-256 check. Reuse a valid pair; otherwise stage replacements inside
+# JNI_LIBS_DIR so publication renames stay on the destination filesystem even
+# when JNI_LIBS_DIR is a mount point or symlink.
+PROOT_IS_VALID=0
+PROOT_LOADER_IS_VALID=0
 PUBLISH_PROOT=0
-if ! proot_matches_target "$SELECTED_PROOT"; then
-    echo "→ fetching proot for $RUNTIME_ARCH ($PROOT_JNI_RELATIVE_PATH)"
+PUBLISH_PROOT_LOADER=0
+PROOT_DOWNLOAD=""
+PROOT_LOADER_STAGED=""
+if proot_matches_target "$SELECTED_PROOT"; then
+    PROOT_IS_VALID=1
+fi
+if proot_loader_matches_target "$SELECTED_PROOT_LOADER"; then
+    PROOT_LOADER_IS_VALID=1
+fi
+
+if [[ "$PROOT_IS_VALID" -eq 0 || "$PROOT_LOADER_IS_VALID" -eq 0 ]]; then
     if [[ ! -d "$JNI_LIBS_DIR" ]]; then
         mkdir -p "$JNI_LIBS_DIR"
         CREATED_JNI_LIBS_DIR=1
     fi
     PROOT_STAGING_DIR="$(mktemp -d "$JNI_LIBS_DIR/.seed-runtime-proot-stage.XXXXXXXXXX")"
-    PROOT_DOWNLOAD="$PROOT_STAGING_DIR/libproot.so"
-    curl -fsSL -o "$PROOT_DOWNLOAD" "$PROOT_URL"
-    chmod +x "$PROOT_DOWNLOAD"
-    proot_matches_target "$PROOT_DOWNLOAD" \
-        || { echo "downloaded proot is not $RUNTIME_ARCH (expected file marker: $PROOT_FILE_MARKER)" >&2; exit 1; }
-    PUBLISH_PROOT=1
+    PROOT_SOURCE="$SELECTED_PROOT"
+
+    if [[ "$PROOT_IS_VALID" -eq 0 ]]; then
+        echo "→ fetching pinned proot for $RUNTIME_ARCH ($PROOT_JNI_RELATIVE_PATH)"
+        PROOT_DOWNLOAD="$PROOT_STAGING_DIR/libproot.so"
+        curl -fsSL -o "$PROOT_DOWNLOAD" "$PROOT_URL"
+        chmod +x "$PROOT_DOWNLOAD"
+        native_executable_matches_target "$PROOT_DOWNLOAD" \
+            || { echo "downloaded proot is not $RUNTIME_ARCH (expected file marker: $PROOT_FILE_MARKER)" >&2; exit 1; }
+        sha256_matches "$PROOT_DOWNLOAD" "$PROOT_SHA" \
+            || { echo "downloaded proot sha256 mismatch" >&2; exit 1; }
+        PROOT_SOURCE="$PROOT_DOWNLOAD"
+        PUBLISH_PROOT=1
+    fi
+
+    if [[ "$PROOT_IS_VALID" -eq 0 || "$PROOT_LOADER_IS_VALID" -eq 0 ]]; then
+        echo "→ extracting pinned proot loader ($PROOT_LOADER_JNI_RELATIVE_PATH)"
+        PROOT_LOADER_STAGED="$PROOT_STAGING_DIR/libproot-loader.so"
+        dd if="$PROOT_SOURCE" of="$PROOT_LOADER_STAGED" bs=1 \
+            skip="$PROOT_LOADER_OFFSET" count="$PROOT_LOADER_SIZE"
+        chmod +x "$PROOT_LOADER_STAGED"
+        native_executable_matches_target "$PROOT_LOADER_STAGED" \
+            || { echo "extracted proot loader is not $RUNTIME_ARCH (expected file marker: $PROOT_FILE_MARKER)" >&2; exit 1; }
+        sha256_matches "$PROOT_LOADER_STAGED" "$PROOT_LOADER_SHA" \
+            || { echo "proot loader sha256 mismatch" >&2; exit 1; }
+        PUBLISH_PROOT_LOADER=1
+    fi
 fi
 
 # ---- Step B: fetch + verify Alpine minirootfs (selected architecture) ----
@@ -267,7 +318,10 @@ mkdir -p "$JNI_LIBS_DIR/$ANDROID_ABI"
 if [[ "$PUBLISH_PROOT" -eq 1 ]]; then
     mv "$PROOT_DOWNLOAD" "$SELECTED_PROOT"
 fi
-rm -f "$OPPOSITE_PROOT"
+if [[ "$PUBLISH_PROOT_LOADER" -eq 1 ]]; then
+    mv "$PROOT_LOADER_STAGED" "$SELECTED_PROOT_LOADER"
+fi
+rm -f "$OPPOSITE_PROOT" "$OPPOSITE_PROOT_LOADER"
 # Remove only an empty generated ABI directory; preserve any future native files.
 rmdir "$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI" 2>/dev/null || true
 rm -f "$ASSETS_DIR/proot"
@@ -288,6 +342,8 @@ echo ""
 echo "✓ runtime built for $RUNTIME_ARCH"
 echo "  native proot → $SELECTED_PROOT"
 ls -lh "$SELECTED_PROOT"
+echo "  native proot loader → $SELECTED_PROOT_LOADER"
+ls -lh "$SELECTED_PROOT_LOADER"
 echo "  assets → $ASSETS_DIR"
 ls -lh "$ASSETS_DIR"
 echo "  build_id = $BUILD_ID"

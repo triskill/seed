@@ -7,6 +7,7 @@ HELPER="$REPO_ROOT/scripts/runtime-target.sh"
 BUILD_SCRIPT="$REPO_ROOT/scripts/build-runtime.sh"
 ARCH_CHECKER="$REPO_ROOT/scripts/check-runtime-arch.sh"
 MAKEFILE="$REPO_ROOT/Makefile"
+GITIGNORE="$REPO_ROOT/.gitignore"
 TMP_DIR="$(mktemp -d -t seed-runtime-tools-test.XXXXXXXXXX)"
 TESTS_RUN=0
 
@@ -102,12 +103,22 @@ assert_repo_gitignore_rule() {
     fi
 }
 
+assert_exact_repo_gitignore_rule() {
+    local path="$1"
+    local label="$2"
+    local count
+    assert_repo_gitignore_rule "$path" "$label"
+    count="$(grep -Fxc -- "$path" "$GITIGNORE")"
+    assert_eq "1" "$count" "$label exact .gitignore rule count"
+}
+
 assert_exported() {
     local name
     for name in \
-        RUNTIME_ARCH PROOT_URL ALPINE_URL ALPINE_SHA DOCKER_PLATFORM \
+        RUNTIME_ARCH PROOT_URL PROOT_SHA PROOT_LOADER_OFFSET PROOT_LOADER_SIZE \
+        PROOT_LOADER_SHA ALPINE_URL ALPINE_SHA DOCKER_PLATFORM \
         DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER ANDROID_ABI \
-        PROOT_JNI_RELATIVE_PATH; do
+        PROOT_JNI_RELATIVE_PATH PROOT_LOADER_JNI_RELATIVE_PATH; do
         if [[ "$(printenv "$name")" != "${!name}" ]]; then
             fail "$name must be exported"
         fi
@@ -126,9 +137,10 @@ run_test() {
 }
 
 # Source only declares configure_runtime_target; it must not configure a target.
-unset RUNTIME_ARCH PROOT_URL ALPINE_URL ALPINE_SHA DOCKER_PLATFORM \
-    DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER ANDROID_ABI \
-    PROOT_JNI_RELATIVE_PATH
+unset RUNTIME_ARCH PROOT_URL PROOT_SHA PROOT_LOADER_OFFSET PROOT_LOADER_SIZE \
+    PROOT_LOADER_SHA ALPINE_URL ALPINE_SHA DOCKER_PLATFORM DOCKER_IMAGE_ARCH \
+    ALPINE_BASE_IMAGE PROOT_FILE_MARKER ANDROID_ABI PROOT_JNI_RELATIVE_PATH \
+    PROOT_LOADER_JNI_RELATIVE_PATH
 # shellcheck source=../runtime-target.sh
 source "$HELPER"
 if [[ -n "${PROOT_URL+x}" ]]; then
@@ -139,6 +151,10 @@ test_arm64_target() (
     configure_runtime_target arm64
     assert_eq "arm64" "$RUNTIME_ARCH" "arm64 runtime architecture"
     assert_eq "https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static" "$PROOT_URL" "arm64 proot URL"
+    assert_eq "fa10b1a7818c2f5b1dcb5834450570c368c9ecf66d31521509621b95c4538a45" "${PROOT_SHA:-<unset>}" "arm64 proot SHA"
+    assert_eq "223400" "${PROOT_LOADER_OFFSET:-<unset>}" "arm64 embedded loader offset"
+    assert_eq "66832" "${PROOT_LOADER_SIZE:-<unset>}" "arm64 embedded loader size"
+    assert_eq "51c3427b112edc70d1979b48209c41f332616758138de3be659cc79e50436450" "${PROOT_LOADER_SHA:-<unset>}" "arm64 loader SHA"
     assert_eq "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz" "$ALPINE_URL" "arm64 Alpine URL"
     assert_eq "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de" "$ALPINE_SHA" "arm64 Alpine SHA"
     assert_eq "linux/arm64" "$DOCKER_PLATFORM" "arm64 Docker platform"
@@ -147,6 +163,7 @@ test_arm64_target() (
     assert_eq "ARM aarch64" "$PROOT_FILE_MARKER" "arm64 proot file marker"
     assert_eq "arm64-v8a" "$ANDROID_ABI" "arm64 Android ABI"
     assert_eq "arm64-v8a/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "arm64 native proot path"
+    assert_eq "arm64-v8a/libproot-loader.so" "${PROOT_LOADER_JNI_RELATIVE_PATH:-<unset>}" "arm64 native proot loader path"
     assert_exported
 )
 
@@ -154,6 +171,10 @@ test_x86_64_target() (
     configure_runtime_target x86_64
     assert_eq "x86_64" "$RUNTIME_ARCH" "x86_64 runtime architecture"
     assert_eq "https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-x86_64-static" "$PROOT_URL" "x86_64 proot URL"
+    assert_eq "d1eb20cb201e6df08d707023efb000623ff7c10d6574839d7bb42d0adba6b4da" "${PROOT_SHA:-<unset>}" "x86_64 proot SHA"
+    assert_eq "1067536" "${PROOT_LOADER_OFFSET:-<unset>}" "x86_64 embedded loader offset"
+    assert_eq "8872" "${PROOT_LOADER_SIZE:-<unset>}" "x86_64 embedded loader size"
+    assert_eq "ca5279447ed4693b5e66e6eb1228da65a7c9c3b2fe23953c143216b55b7b9839" "${PROOT_LOADER_SHA:-<unset>}" "x86_64 loader SHA"
     assert_eq "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz" "$ALPINE_URL" "x86_64 Alpine URL"
     assert_eq "d4e6fd67dcf75e40c451560ac7265166c2b72a0f38ddc9aae756a7de3d1efa0c" "$ALPINE_SHA" "x86_64 Alpine SHA"
     assert_eq "linux/amd64" "$DOCKER_PLATFORM" "x86_64 Docker platform"
@@ -162,6 +183,7 @@ test_x86_64_target() (
     assert_eq "x86-64" "$PROOT_FILE_MARKER" "x86_64 proot file marker"
     assert_eq "x86_64" "$ANDROID_ABI" "x86_64 Android ABI"
     assert_eq "x86_64/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "x86_64 native proot path"
+    assert_eq "x86_64/libproot-loader.so" "${PROOT_LOADER_JNI_RELATIVE_PATH:-<unset>}" "x86_64 native proot loader path"
     assert_exported
 )
 
@@ -182,6 +204,9 @@ test_target_can_be_reconfigured() (
     assert_eq "x86-64" "$PROOT_FILE_MARKER" "reconfigured proot file marker"
     assert_eq "x86_64" "$ANDROID_ABI" "reconfigured Android ABI"
     assert_eq "x86_64/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "reconfigured native proot path"
+    assert_eq "x86_64/libproot-loader.so" "${PROOT_LOADER_JNI_RELATIVE_PATH:-<unset>}" "reconfigured native loader path"
+    assert_eq "d1eb20cb201e6df08d707023efb000623ff7c10d6574839d7bb42d0adba6b4da" "${PROOT_SHA:-<unset>}" "reconfigured proot SHA"
+    assert_eq "ca5279447ed4693b5e66e6eb1228da65a7c9c3b2fe23953c143216b55b7b9839" "${PROOT_LOADER_SHA:-<unset>}" "reconfigured loader SHA"
     assert_exported
 )
 
@@ -655,14 +680,32 @@ test_runtime_arch_rejects_shell_injection() {
     fi
 }
 
+test_dd_extracts_fixture_bytes() {
+    local fixture="$TMP_DIR/dd-fixture.bin"
+    local extracted="$TMP_DIR/dd-extracted.bin"
+    printf '%s' 'prefix-loader-data-suffix' > "$fixture"
+
+    dd if="$fixture" of="$extracted" bs=1 skip=7 count=11 2>/dev/null
+
+    assert_eq "loader-data" "$(<"$extracted")" "standard dd fixture extraction"
+}
+
+test_builder_declares_dd_prerequisite() {
+    assert_contains "$BUILD_SCRIPT" "command -v dd >/dev/null" "dd prerequisite"
+}
+
 test_generated_native_proot_ignore_rules() {
     local arm64_path="android/app/src/main/jniLibs/arm64-v8a/libproot.so"
+    local arm64_loader_path="android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so"
     local x86_path="android/app/src/main/jniLibs/x86_64/libproot.so"
+    local x86_loader_path="android/app/src/main/jniLibs/x86_64/libproot-loader.so"
     local future_source="android/app/src/main/jniLibs/arm64-v8a/proot-loader.c"
     local unrelated_library="android/app/src/main/jniLibs/arm64-v8a/libhelper.so"
 
-    assert_repo_gitignore_rule "$arm64_path" "generated arm64 native proot"
-    assert_repo_gitignore_rule "$x86_path" "generated x86_64 native proot"
+    assert_exact_repo_gitignore_rule "$arm64_path" "generated arm64 native proot"
+    assert_exact_repo_gitignore_rule "$arm64_loader_path" "generated arm64 native proot loader"
+    assert_exact_repo_gitignore_rule "$x86_path" "generated x86_64 native proot"
+    assert_exact_repo_gitignore_rule "$x86_loader_path" "generated x86_64 native proot loader"
     if git -C "$REPO_ROOT" -c core.excludesFile=/dev/null \
         check-ignore -v --no-index "$future_source" >/dev/null; then
         fail "future native source files must not be ignored"
@@ -695,8 +738,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+if [[ -n "${CURL_CALL_LOG:-}" ]]; then
+    printf '%s|%s\n' "$url" "$output" >> "$CURL_CALL_LOG"
+fi
 case "$url" in
-    *proot*) printf '%s' 'downloaded-x86_64-proot' > "$output" ;;
+    *proot-v5.3.0*) printf '%s' "${FAKE_PROOT_CONTENT:-downloaded-x86_64-proot}" > "$output" ;;
     *alpine-minirootfs*) printf '%s' 'controlled-alpine-archive' > "$output" ;;
     *) exit 1 ;;
 esac
@@ -707,7 +753,7 @@ FAKE_CURL
 set -euo pipefail
 target="${!#}"
 case "$(<"$target")" in
-    downloaded-x86_64-proot)
+    *x86_64*|bad-x86-loader|same-arch-bad-sha)
         printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
         ;;
     *)
@@ -715,6 +761,31 @@ case "$(<"$target")" in
         ;;
 esac
 FAKE_FILE
+
+    cat > "$fake_bin/dd" <<'FAKE_DD'
+#!/usr/bin/env bash
+set -euo pipefail
+input=""
+output=""
+block_size=""
+skip_bytes=""
+count_bytes=""
+for argument in "$@"; do
+    case "$argument" in
+        if=*) input="${argument#if=}" ;;
+        of=*) output="${argument#of=}" ;;
+        bs=*) block_size="${argument#bs=}" ;;
+        skip=*) skip_bytes="${argument#skip=}" ;;
+        count=*) count_bytes="${argument#count=}" ;;
+    esac
+done
+[[ -f "$input" && -n "$output" && "$block_size" == "1" ]]
+if [[ -n "${DD_CALL_LOG:-}" ]]; then
+    printf '%s|%s|%s|%s|%s\n' \
+        "$input" "$output" "$block_size" "$skip_bytes" "$count_bytes" >> "$DD_CALL_LOG"
+fi
+printf '%s' "${FAKE_DD_CONTENT:-downloaded-x86_64-loader}" > "$output"
+FAKE_DD
 
     cat > "$fake_bin/docker" <<'FAKE_DOCKER'
 #!/usr/bin/env bash
@@ -735,11 +806,24 @@ FAKE_UV
     cat > "$fake_bin/sha256sum" <<'FAKE_SHA256SUM'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == "-c" ]]; then
-    cat >/dev/null
-else
+if [[ "${1:-}" != "-c" ]]; then
     printf '%064d  %s\n' 0 "${1:-}"
+    exit 0
 fi
+read -r expected target
+case "$(<"$target")" in
+    downloaded-x86_64-proot|valid-x86_64-proot)
+        actual='d1eb20cb201e6df08d707023efb000623ff7c10d6574839d7bb42d0adba6b4da'
+        ;;
+    downloaded-x86_64-loader|valid-x86_64-loader)
+        actual='ca5279447ed4693b5e66e6eb1228da65a7c9c3b2fe23953c143216b55b7b9839'
+        ;;
+    controlled-alpine-archive)
+        actual='d4e6fd67dcf75e40c451560ac7265166c2b72a0f38ddc9aae756a7de3d1efa0c'
+        ;;
+    *) actual='invalid' ;;
+esac
+[[ "$expected" == "$actual" ]]
 FAKE_SHA256SUM
 
     cat > "$fake_bin/tar" <<'FAKE_TAR'
@@ -757,12 +841,15 @@ FAKE_TAR
     cat > "$fake_bin/mv" <<'FAKE_MV'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s|%s\n' "$1" "$2" >> "$MV_CALL_LOG"
+if [[ -n "${MV_CALL_LOG:-}" ]]; then
+    printf '%s|%s\n' "$1" "$2" >> "$MV_CALL_LOG"
+fi
 exec /bin/mv "$@"
 FAKE_MV
 
-    chmod +x "$fake_bin/curl" "$fake_bin/file" "$fake_bin/docker" \
-        "$fake_bin/uv" "$fake_bin/sha256sum" "$fake_bin/tar" "$fake_bin/mv"
+    chmod +x "$fake_bin/curl" "$fake_bin/file" "$fake_bin/dd" \
+        "$fake_bin/docker" "$fake_bin/uv" "$fake_bin/sha256sum" \
+        "$fake_bin/tar" "$fake_bin/mv"
 }
 
 test_successful_architecture_switch_publication() {
@@ -772,6 +859,7 @@ test_successful_architecture_switch_publication() {
     local jni_libs_target="$case_dir/native-volume/jniLibs"
     local fake_bin="$case_dir/bin"
     local mv_log="$case_dir/mv.log"
+    local dd_log="$case_dir/dd.log"
     mkdir -p "$assets_dir" "$jni_libs_target/arm64-v8a" "$jni_libs_target/x86_64"
     ln -s "$jni_libs_target" "$jni_libs_dir"
 
@@ -779,21 +867,28 @@ test_successful_architecture_switch_publication() {
     printf '%s' 'old-rootfs' > "$assets_dir/rootfs.tar.gz"
     printf '%s' 'old-version' > "$assets_dir/seed_version.json"
     printf '%s' 'opposite-arm64-proot' > "$jni_libs_dir/arm64-v8a/libproot.so"
-    printf '%s' 'wrong-selected-proot' > "$jni_libs_dir/x86_64/libproot.so"
+    printf '%s' 'opposite-arm64-loader' > "$jni_libs_dir/arm64-v8a/libproot-loader.so"
+    printf '%s' 'same-arch-bad-sha' > "$jni_libs_dir/x86_64/libproot.so"
+    printf '%s' 'bad-x86-loader' > "$jni_libs_dir/x86_64/libproot-loader.so"
     : > "$mv_log"
+    : > "$dd_log"
     prepare_successful_runtime_build_tools "$case_dir"
 
     if ! ASSETS_DIR="$assets_dir" JNI_LIBS_DIR="$jni_libs_dir" \
-        RUNTIME_ARCH=x86_64 MV_CALL_LOG="$mv_log" PATH="$fake_bin:$PATH" \
-        "$BUILD_SCRIPT" > "$case_dir/build.stdout" 2> "$case_dir/build.stderr"; then
+        RUNTIME_ARCH=x86_64 MV_CALL_LOG="$mv_log" DD_CALL_LOG="$dd_log" \
+        PATH="$fake_bin:$PATH" "$BUILD_SCRIPT" \
+        > "$case_dir/build.stdout" 2> "$case_dir/build.stderr"; then
         cat "$case_dir/build.stdout" "$case_dir/build.stderr" >&2
         fail "controlled successful runtime build must succeed"
     fi
 
     assert_eq "downloaded-x86_64-proot" \
         "$(<"$jni_libs_dir/x86_64/libproot.so")" "published x86_64 proot"
-    if [[ -e "$jni_libs_dir/arm64-v8a/libproot.so" ]]; then
-        fail "successful architecture switch left the opposite proot"
+    assert_eq "downloaded-x86_64-loader" \
+        "$(<"$jni_libs_dir/x86_64/libproot-loader.so")" "published x86_64 proot loader"
+    if [[ -e "$jni_libs_dir/arm64-v8a/libproot.so" \
+        || -e "$jni_libs_dir/arm64-v8a/libproot-loader.so" ]]; then
+        fail "successful architecture switch left the opposite proot pair"
     fi
     if [[ -d "$jni_libs_dir/arm64-v8a" ]]; then
         fail "successful architecture switch left an empty opposite ABI directory"
@@ -804,17 +899,139 @@ test_successful_architecture_switch_publication() {
     assert_eq "controlled-rootfs-tar-stream" \
         "$(gzip -dc "$assets_dir/rootfs.tar.gz")" "published rootfs"
     assert_contains "$assets_dir/seed_version.json" '"build_id":' "published version marker"
+    assert_contains "$dd_log" "|1|1067536|8872" "x86_64 loader dd extraction range"
     assert_contains "$mv_log" "$jni_libs_dir/.seed-runtime-proot-stage." \
-        "native proot staging inside JNI_LIBS_DIR"
+        "native pair staging inside JNI_LIBS_DIR"
+    assert_contains "$mv_log" "|$jni_libs_dir/x86_64/libproot.so" \
+        "native proot publication"
+    assert_contains "$mv_log" "|$jni_libs_dir/x86_64/libproot-loader.so" \
+        "native proot loader publication"
     assert_not_contains "$mv_log" "$case_dir/.seed-runtime-proot-stage." \
-        "native proot staging beside JNI_LIBS_DIR"
-    assert_before "$mv_log" "$jni_libs_dir/.seed-runtime-proot-stage." \
-        "$assets_dir/rootfs.tar.gz" "native proot before rootfs"
+        "native pair staging beside JNI_LIBS_DIR"
+    assert_before "$mv_log" "|$jni_libs_dir/x86_64/libproot-loader.so" \
+        "$assets_dir/rootfs.tar.gz" "native pair before rootfs"
     assert_before "$mv_log" "$assets_dir/rootfs.tar.gz" \
         "$assets_dir/seed_version.json" "rootfs before completion marker"
     if compgen -G "$assets_dir/.seed-runtime-stage.*" >/dev/null \
         || compgen -G "$jni_libs_dir/.seed-runtime-proot-stage.*" >/dev/null; then
         fail "successful build left a staging directory"
+    fi
+}
+
+test_valid_native_pair_is_reused() {
+    local case_dir="$TMP_DIR/valid-native-pair"
+    local assets_dir="$case_dir/assets"
+    local jni_libs_dir="$case_dir/jniLibs"
+    local fake_bin="$case_dir/bin"
+    local curl_log="$case_dir/curl.log"
+    local dd_log="$case_dir/dd.log"
+    mkdir -p "$assets_dir" "$jni_libs_dir/x86_64"
+    printf '%s' 'valid-x86_64-proot' > "$jni_libs_dir/x86_64/libproot.so"
+    printf '%s' 'valid-x86_64-loader' > "$jni_libs_dir/x86_64/libproot-loader.so"
+    : > "$curl_log"
+    : > "$dd_log"
+    prepare_successful_runtime_build_tools "$case_dir"
+
+    if ! ASSETS_DIR="$assets_dir" JNI_LIBS_DIR="$jni_libs_dir" \
+        RUNTIME_ARCH=x86_64 CURL_CALL_LOG="$curl_log" DD_CALL_LOG="$dd_log" \
+        PATH="$fake_bin:$PATH" "$BUILD_SCRIPT" \
+        > "$case_dir/build.stdout" 2> "$case_dir/build.stderr"; then
+        cat "$case_dir/build.stdout" "$case_dir/build.stderr" >&2
+        fail "build with a valid native pair must succeed"
+    fi
+
+    assert_eq "valid-x86_64-proot" \
+        "$(<"$jni_libs_dir/x86_64/libproot.so")" "reused native proot"
+    assert_eq "valid-x86_64-loader" \
+        "$(<"$jni_libs_dir/x86_64/libproot-loader.so")" "reused native loader"
+    assert_not_contains "$curl_log" "proot-v5.3.0" "valid native pair proot download"
+    if [[ -s "$dd_log" ]]; then
+        fail "valid native pair must not be re-extracted"
+    fi
+}
+
+test_valid_proot_repairs_loader_without_download() {
+    local case_dir="$TMP_DIR/repair-native-loader"
+    local assets_dir="$case_dir/assets"
+    local jni_libs_dir="$case_dir/jniLibs"
+    local fake_bin="$case_dir/bin"
+    local curl_log="$case_dir/curl.log"
+    local dd_log="$case_dir/dd.log"
+    mkdir -p "$assets_dir" "$jni_libs_dir/x86_64"
+    printf '%s' 'valid-x86_64-proot' > "$jni_libs_dir/x86_64/libproot.so"
+    printf '%s' 'bad-x86-loader' > "$jni_libs_dir/x86_64/libproot-loader.so"
+    : > "$curl_log"
+    : > "$dd_log"
+    prepare_successful_runtime_build_tools "$case_dir"
+
+    if ! ASSETS_DIR="$assets_dir" JNI_LIBS_DIR="$jni_libs_dir" \
+        RUNTIME_ARCH=x86_64 CURL_CALL_LOG="$curl_log" DD_CALL_LOG="$dd_log" \
+        PATH="$fake_bin:$PATH" "$BUILD_SCRIPT" \
+        > "$case_dir/build.stdout" 2> "$case_dir/build.stderr"; then
+        cat "$case_dir/build.stdout" "$case_dir/build.stderr" >&2
+        fail "build that repairs only the loader must succeed"
+    fi
+
+    assert_eq "valid-x86_64-proot" \
+        "$(<"$jni_libs_dir/x86_64/libproot.so")" "preserved valid native proot"
+    assert_eq "downloaded-x86_64-loader" \
+        "$(<"$jni_libs_dir/x86_64/libproot-loader.so")" "repaired native loader"
+    assert_not_contains "$curl_log" "proot-v5.3.0" "loader-only repair proot download"
+    assert_contains "$dd_log" "|1|1067536|8872" "loader-only dd extraction range"
+}
+
+test_invalid_extracted_loader_preserves_native_pair() {
+    local case_dir="$TMP_DIR/invalid-extracted-loader"
+    local assets_dir="$case_dir/assets"
+    local jni_libs_dir="$case_dir/jniLibs"
+    local originals_dir="$case_dir/originals"
+    local fake_bin="$case_dir/bin"
+    mkdir -p "$assets_dir" "$jni_libs_dir/x86_64" "$originals_dir"
+    printf '%s' 'valid-x86_64-proot' > "$jni_libs_dir/x86_64/libproot.so"
+    printf '%s' 'bad-x86-loader' > "$jni_libs_dir/x86_64/libproot-loader.so"
+    cp -a "$jni_libs_dir/." "$originals_dir/"
+    prepare_successful_runtime_build_tools "$case_dir"
+
+    if ASSETS_DIR="$assets_dir" JNI_LIBS_DIR="$jni_libs_dir" \
+        RUNTIME_ARCH=x86_64 FAKE_DD_CONTENT=bad-x86-loader \
+        PATH="$fake_bin:$PATH" "$BUILD_SCRIPT" \
+        > "$case_dir/build.stdout" 2> "$case_dir/build.stderr"; then
+        fail "build with an invalid extracted loader must fail"
+    fi
+
+    assert_contains "$case_dir/build.stderr" "proot loader sha256 mismatch" \
+        "invalid extracted loader"
+    if ! diff -r "$originals_dir" "$jni_libs_dir" >/dev/null; then
+        fail "invalid extracted loader changed the selected native pair"
+    fi
+}
+
+test_invalid_downloaded_proot_preserves_native_pairs() {
+    local case_dir="$TMP_DIR/invalid-downloaded-proot"
+    local assets_dir="$case_dir/assets"
+    local jni_libs_dir="$case_dir/jniLibs"
+    local originals_dir="$case_dir/originals"
+    local fake_bin="$case_dir/bin"
+    mkdir -p "$assets_dir" "$jni_libs_dir/arm64-v8a" \
+        "$jni_libs_dir/x86_64" "$originals_dir"
+    printf '%s' 'old-arm64-proot' > "$jni_libs_dir/arm64-v8a/libproot.so"
+    printf '%s' 'old-arm64-loader' > "$jni_libs_dir/arm64-v8a/libproot-loader.so"
+    printf '%s' 'same-arch-bad-sha' > "$jni_libs_dir/x86_64/libproot.so"
+    printf '%s' 'bad-x86-loader' > "$jni_libs_dir/x86_64/libproot-loader.so"
+    cp -a "$jni_libs_dir/." "$originals_dir/"
+    prepare_successful_runtime_build_tools "$case_dir"
+
+    if ASSETS_DIR="$assets_dir" JNI_LIBS_DIR="$jni_libs_dir" \
+        RUNTIME_ARCH=x86_64 FAKE_PROOT_CONTENT=same-arch-bad-sha \
+        PATH="$fake_bin:$PATH" "$BUILD_SCRIPT" \
+        > "$case_dir/build.stdout" 2> "$case_dir/build.stderr"; then
+        fail "build with an invalid downloaded proot checksum must fail"
+    fi
+
+    assert_contains "$case_dir/build.stderr" "downloaded proot sha256 mismatch" \
+        "invalid downloaded proot"
+    if ! diff -r "$originals_dir" "$jni_libs_dir" >/dev/null; then
+        fail "invalid downloaded proot changed native pairs"
     fi
 }
 
@@ -854,18 +1071,55 @@ if [[ -n "${FILE_LC_LOG:-}" ]]; then
     printf '%s\n' "${LC_ALL:-<unset>}" >> "$FILE_LC_LOG"
 fi
 target="${!#}"
-if [[ "$(<"$target")" == "downloaded-arm64-proot" ]]; then
-    printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64'
-else
-    printf '%s\n' 'ELF 64-bit LSB executable, x86-64'
-fi
+case "$(<"$target")" in
+    downloaded-arm64-proot|downloaded-arm64-loader)
+        printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64'
+        ;;
+    *)
+        printf '%s\n' 'ELF 64-bit LSB executable, x86-64'
+        ;;
+esac
 FAKE_FILE
+
+    cat > "$fake_bin/dd" <<'FAKE_DD'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+for argument in "$@"; do
+    case "$argument" in
+        of=*) output="${argument#of=}" ;;
+    esac
+done
+[[ -n "$output" ]]
+printf '%s' 'downloaded-arm64-loader' > "$output"
+FAKE_DD
+
+    cat > "$fake_bin/sha256sum" <<'FAKE_SHA256SUM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" != "-c" ]]; then
+    printf '%064d  %s\n' 0 "${1:-}"
+    exit 0
+fi
+read -r expected target
+case "$(<"$target")" in
+    downloaded-arm64-proot)
+        actual='fa10b1a7818c2f5b1dcb5834450570c368c9ecf66d31521509621b95c4538a45'
+        ;;
+    downloaded-arm64-loader)
+        actual='51c3427b112edc70d1979b48209c41f332616758138de3be659cc79e50436450'
+        ;;
+    *) actual='invalid' ;;
+esac
+[[ "$expected" == "$actual" ]]
+FAKE_SHA256SUM
 
     cat > "$fake_bin/docker" <<'FAKE_DOCKER'
 #!/usr/bin/env bash
 exit 0
 FAKE_DOCKER
-    chmod +x "$fake_bin/curl" "$fake_bin/file" "$fake_bin/docker"
+    chmod +x "$fake_bin/curl" "$fake_bin/file" "$fake_bin/dd" \
+        "$fake_bin/sha256sum" "$fake_bin/docker"
 }
 
 test_failed_build_preserves_assets() {
@@ -887,7 +1141,9 @@ test_failed_build_preserves_assets() {
     cp "$assets_dir/rootfs.tar.gz" "$originals_dir/rootfs.tar.gz"
     cp "$assets_dir/seed_version.json" "$originals_dir/seed_version.json"
     printf '%s' 'existing-wrong-selected-proot' > "$jni_libs_dir/arm64-v8a/libproot.so"
+    printf '%s' 'existing-wrong-selected-loader' > "$jni_libs_dir/arm64-v8a/libproot-loader.so"
     printf '%s' 'existing-opposite-proot' > "$jni_libs_dir/x86_64/libproot.so"
+    printf '%s' 'existing-opposite-loader' > "$jni_libs_dir/x86_64/libproot-loader.so"
     cp -a "$jni_libs_dir" "$original_jni_libs_dir"
 
     prepare_checksum_failure_runtime_build_tools "$case_dir"
@@ -904,7 +1160,7 @@ test_failed_build_preserves_assets() {
     assert_same_file "$originals_dir/seed_version.json" "$assets_dir/seed_version.json" "existing version marker"
     if ! diff -r "$original_jni_libs_dir" "$jni_libs_dir" >/dev/null; then
         diff -r "$original_jni_libs_dir" "$jni_libs_dir" >&2 || true
-        fail "failed build changed native proot files"
+        fail "failed build changed native proot or loader files"
     fi
     if compgen -G "$assets_dir/.seed-runtime-stage.*" >/dev/null \
         || compgen -G "$jni_libs_dir/.seed-runtime-proot-stage.*" >/dev/null; then
@@ -946,8 +1202,14 @@ run_test "x86_64 target configuration" test_x86_64_target
 run_test "arm64 default target" test_default_target
 run_test "target configuration can be repeated and changed" test_target_can_be_reconfigured
 run_test "Dockerfile has valid multi-platform Alpine default" test_dockerfile_base_image_default
+run_test "standard dd extracts fixture bytes" test_dd_extracts_fixture_bytes
+run_test "runtime builder declares dd prerequisite" test_builder_declares_dd_prerequisite
 run_test "generated native proot ignore rules are exact" test_generated_native_proot_ignore_rules
 run_test "successful architecture switch publication" test_successful_architecture_switch_publication
+run_test "valid native pair is reused" test_valid_native_pair_is_reused
+run_test "valid proot repairs loader without download" test_valid_proot_repairs_loader_without_download
+run_test "invalid extracted loader preserves native pair" test_invalid_extracted_loader_preserves_native_pair
+run_test "invalid downloaded proot preserves native pairs" test_invalid_downloaded_proot_preserves_native_pairs
 run_test "checker accepts x86_64 aliases" test_checker_accepts_x86_64_aliases
 run_test "checker accepts arm64 aliases" test_checker_accepts_arm64_aliases
 run_test "checker reports arm64 mismatch command" test_checker_reports_arm64_mismatch_command
