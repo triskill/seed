@@ -2,15 +2,17 @@
 # scripts/build-runtime.sh — Build the Seed Android runtime.
 #
 # Produces:
-#   android/app/src/main/assets/linux/proot         (~2 MB, selected architecture)
-#   android/app/src/main/assets/linux/rootfs.tar.gz  (~150 MB, Alpine + python + node + pi + backend + webapp)
+#   android/app/src/main/jniLibs/<abi>/libproot.so    (~2 MB, selected architecture)
+#   android/app/src/main/assets/linux/rootfs.tar.gz   (~150 MB, Alpine + python + node + pi + backend + webapp)
 #   android/app/src/main/assets/linux/seed_version.json
 #
 # Set RUNTIME_ARCH=arm64 (default) or RUNTIME_ARCH=x86_64.
 # Requires: docker (with buildx support for the selected target), curl, file, tar.
 # Idempotent: re-running rebuilds from scratch in fresh temporary dirs.
-# Changed assets are staged beside the assets directory and published only
-# after every download, build, export, and validation succeeds.
+# Native and asset outputs use separate staging directories inside their
+# destination roots, so each publication rename is atomic even when a root is a
+# mount point or symlink. The multi-file publication is not globally atomic;
+# seed_version.json is published last as its completion marker.
 #
 # Run from repo root: ./scripts/build-runtime.sh
 #
@@ -32,10 +34,19 @@ source "$REPO_ROOT/scripts/runtime-target.sh"
 configure_runtime_target "${RUNTIME_ARCH:-arm64}"
 
 ASSETS_DIR="${ASSETS_DIR:-$REPO_ROOT/android/app/src/main/assets/linux}"
+JNI_LIBS_DIR="${JNI_LIBS_DIR:-$REPO_ROOT/android/app/src/main/jniLibs}"
+SELECTED_PROOT="$JNI_LIBS_DIR/$PROOT_JNI_RELATIVE_PATH"
+case "$ANDROID_ABI" in
+    arm64-v8a) OPPOSITE_ANDROID_ABI="x86_64" ;;
+    x86_64) OPPOSITE_ANDROID_ABI="arm64-v8a" ;;
+esac
+OPPOSITE_PROOT="$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI/libproot.so"
 DOCKER_IMAGE_TAG="seed-runtime:$(date +%s)"
 DOCKER_CONTAINER_NAME="seed-runtime-export-$$"
 BUILD_DIR=""
 STAGING_DIR=""
+PROOT_STAGING_DIR=""
+CREATED_JNI_LIBS_DIR=0
 
 # Always clean up — even on error or signal. Variables and commands are
 # guarded so validation and preflight failures are safe before Docker or
@@ -50,6 +61,14 @@ cleanup() {
     fi
     if [[ -n "$STAGING_DIR" ]]; then
         rm -rf "$STAGING_DIR"
+    fi
+    if [[ -n "$PROOT_STAGING_DIR" ]]; then
+        rm -rf "$PROOT_STAGING_DIR"
+    fi
+    # If this run created the destination root, remove it only when it is still
+    # empty. rmdir never removes unrelated or concurrently-created content.
+    if [[ "$CREATED_JNI_LIBS_DIR" -eq 1 ]]; then
+        rmdir "$JNI_LIBS_DIR" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
@@ -79,11 +98,19 @@ proot_matches_target() {
     [[ "$description" == "ELF 64-bit"* && "$description" == *"$PROOT_FILE_MARKER"* ]]
 }
 
-# Reuse a matching binary, but stage a replacement when switching targets.
+# Reuse a matching native executable, but stage a replacement when switching
+# targets. Staging inside JNI_LIBS_DIR guarantees the publication rename stays
+# on the destination filesystem when JNI_LIBS_DIR is a mount point or symlink,
+# without requiring its lexical parent to be writable.
 PUBLISH_PROOT=0
-if ! proot_matches_target "$ASSETS_DIR/proot"; then
-    echo "→ fetching proot for $RUNTIME_ARCH"
-    PROOT_DOWNLOAD="$STAGING_DIR/proot"
+if ! proot_matches_target "$SELECTED_PROOT"; then
+    echo "→ fetching proot for $RUNTIME_ARCH ($PROOT_JNI_RELATIVE_PATH)"
+    if [[ ! -d "$JNI_LIBS_DIR" ]]; then
+        mkdir -p "$JNI_LIBS_DIR"
+        CREATED_JNI_LIBS_DIR=1
+    fi
+    PROOT_STAGING_DIR="$(mktemp -d "$JNI_LIBS_DIR/.seed-runtime-proot-stage.XXXXXXXXXX")"
+    PROOT_DOWNLOAD="$PROOT_STAGING_DIR/libproot.so"
     curl -fsSL -o "$PROOT_DOWNLOAD" "$PROOT_URL"
     chmod +x "$PROOT_DOWNLOAD"
     proot_matches_target "$PROOT_DOWNLOAD" \
@@ -232,20 +259,35 @@ cat > "$STAGING_DIR/seed_version.json" <<JSON
 }
 JSON
 
-# ---- Step F: publish completed assets with same-filesystem renames ----
-# seed_version.json is the completion marker and must always be published last.
+# ---- Step F: publish completed runtime files ----
+# All downloads, builds, exports, and validations have succeeded before this
+# point. Each mv is atomic on its destination filesystem, but this multi-file
+# group is not globally atomic. seed_version.json is therefore published last.
+mkdir -p "$JNI_LIBS_DIR/$ANDROID_ABI"
 if [[ "$PUBLISH_PROOT" -eq 1 ]]; then
-    mv "$STAGING_DIR/proot" "$ASSETS_DIR/proot"
+    mv "$PROOT_DOWNLOAD" "$SELECTED_PROOT"
 fi
+rm -f "$OPPOSITE_PROOT"
+# Remove only an empty generated ABI directory; preserve any future native files.
+rmdir "$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI" 2>/dev/null || true
+rm -f "$ASSETS_DIR/proot"
 mv "$ROOTFS_TAR_OUT" "$ASSETS_DIR/rootfs.tar.gz"
 mv "$STAGING_DIR/seed_version.json" "$ASSETS_DIR/seed_version.json"
 
 # ---- Step G: clean up ----
 rm -rf "$BUILD_DIR" "$STAGING_DIR"
+if [[ -n "$PROOT_STAGING_DIR" ]]; then
+    rm -rf "$PROOT_STAGING_DIR"
+fi
 BUILD_DIR=""
 STAGING_DIR=""
+PROOT_STAGING_DIR=""
+CREATED_JNI_LIBS_DIR=0
 
 echo ""
-echo "✓ runtime built → $ASSETS_DIR"
+echo "✓ runtime built for $RUNTIME_ARCH"
+echo "  native proot → $SELECTED_PROOT"
+ls -lh "$SELECTED_PROOT"
+echo "  assets → $ASSETS_DIR"
 ls -lh "$ASSETS_DIR"
 echo "  build_id = $BUILD_ID"

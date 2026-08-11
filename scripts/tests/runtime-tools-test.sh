@@ -89,11 +89,25 @@ assert_same_file() {
     fi
 }
 
+assert_repo_gitignore_rule() {
+    local path="$1"
+    local label="$2"
+    local match
+    if ! match="$(git -C "$REPO_ROOT" -c core.excludesFile=/dev/null \
+        check-ignore -v --no-index "$path")"; then
+        fail "$label must be ignored"
+    fi
+    if [[ "${match%%:*}" != ".gitignore" ]]; then
+        fail "$label matched a non-repository ignore rule: $match"
+    fi
+}
+
 assert_exported() {
     local name
     for name in \
         RUNTIME_ARCH PROOT_URL ALPINE_URL ALPINE_SHA DOCKER_PLATFORM \
-        DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER; do
+        DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER ANDROID_ABI \
+        PROOT_JNI_RELATIVE_PATH; do
         if [[ "$(printenv "$name")" != "${!name}" ]]; then
             fail "$name must be exported"
         fi
@@ -103,6 +117,9 @@ assert_exported() {
 run_test() {
     local name="$1"
     shift
+    if [[ -n "${RUNTIME_TOOLS_TEST_FILTER:-}" && "$name" != *"$RUNTIME_TOOLS_TEST_FILTER"* ]]; then
+        return
+    fi
     "$@"
     TESTS_RUN=$((TESTS_RUN + 1))
     echo "PASS: $name"
@@ -110,7 +127,8 @@ run_test() {
 
 # Source only declares configure_runtime_target; it must not configure a target.
 unset RUNTIME_ARCH PROOT_URL ALPINE_URL ALPINE_SHA DOCKER_PLATFORM \
-    DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER
+    DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER ANDROID_ABI \
+    PROOT_JNI_RELATIVE_PATH
 # shellcheck source=../runtime-target.sh
 source "$HELPER"
 if [[ -n "${PROOT_URL+x}" ]]; then
@@ -127,6 +145,8 @@ test_arm64_target() (
     assert_eq "arm64" "$DOCKER_IMAGE_ARCH" "arm64 Docker image architecture"
     assert_eq "alpine:3.20.3" "$ALPINE_BASE_IMAGE" "arm64 multi-platform Alpine base image"
     assert_eq "ARM aarch64" "$PROOT_FILE_MARKER" "arm64 proot file marker"
+    assert_eq "arm64-v8a" "$ANDROID_ABI" "arm64 Android ABI"
+    assert_eq "arm64-v8a/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "arm64 native proot path"
     assert_exported
 )
 
@@ -140,6 +160,8 @@ test_x86_64_target() (
     assert_eq "amd64" "$DOCKER_IMAGE_ARCH" "x86_64 Docker image architecture"
     assert_eq "alpine:3.20.3" "$ALPINE_BASE_IMAGE" "x86_64 multi-platform Alpine base image"
     assert_eq "x86-64" "$PROOT_FILE_MARKER" "x86_64 proot file marker"
+    assert_eq "x86_64" "$ANDROID_ABI" "x86_64 Android ABI"
+    assert_eq "x86_64/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "x86_64 native proot path"
     assert_exported
 )
 
@@ -158,6 +180,8 @@ test_target_can_be_reconfigured() (
     assert_eq "linux/amd64" "$DOCKER_PLATFORM" "reconfigured Docker platform"
     assert_eq "amd64" "$DOCKER_IMAGE_ARCH" "reconfigured Docker image architecture"
     assert_eq "x86-64" "$PROOT_FILE_MARKER" "reconfigured proot file marker"
+    assert_eq "x86_64" "$ANDROID_ABI" "reconfigured Android ABI"
+    assert_eq "x86_64/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "reconfigured native proot path"
     assert_exported
 )
 
@@ -489,21 +513,173 @@ test_runtime_arch_rejects_shell_injection() {
     fi
 }
 
-test_failed_build_preserves_assets() {
-    local case_dir="$TMP_DIR/failed-build"
-    local assets_dir="$case_dir/assets"
-    local originals_dir="$case_dir/originals"
-    local fake_bin="$case_dir/bin"
-    local stderr_file="$case_dir/build.stderr"
-    local file_lc_log="$case_dir/file-lc.log"
-    mkdir -p "$assets_dir" "$originals_dir" "$fake_bin"
+test_generated_native_proot_ignore_rules() {
+    local arm64_path="android/app/src/main/jniLibs/arm64-v8a/libproot.so"
+    local x86_path="android/app/src/main/jniLibs/x86_64/libproot.so"
+    local future_source="android/app/src/main/jniLibs/arm64-v8a/proot-loader.c"
+    local unrelated_library="android/app/src/main/jniLibs/arm64-v8a/libhelper.so"
 
-    printf '%s' 'existing-wrong-arch-proot' > "$assets_dir/proot"
-    printf '%s' 'existing-rootfs' > "$assets_dir/rootfs.tar.gz"
-    printf '%s' 'existing-version' > "$assets_dir/seed_version.json"
-    cp "$assets_dir/proot" "$originals_dir/proot"
-    cp "$assets_dir/rootfs.tar.gz" "$originals_dir/rootfs.tar.gz"
-    cp "$assets_dir/seed_version.json" "$originals_dir/seed_version.json"
+    assert_repo_gitignore_rule "$arm64_path" "generated arm64 native proot"
+    assert_repo_gitignore_rule "$x86_path" "generated x86_64 native proot"
+    if git -C "$REPO_ROOT" -c core.excludesFile=/dev/null \
+        check-ignore -v --no-index "$future_source" >/dev/null; then
+        fail "future native source files must not be ignored"
+    fi
+    if git -C "$REPO_ROOT" -c core.excludesFile=/dev/null \
+        check-ignore -v --no-index "$unrelated_library" >/dev/null; then
+        fail "unrelated native libraries must not be ignored"
+    fi
+}
+
+prepare_successful_runtime_build_tools() {
+    local case_dir="$1"
+    local fake_bin="$case_dir/bin"
+    mkdir -p "$fake_bin"
+
+    cat > "$fake_bin/curl" <<'FAKE_CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+url=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o)
+            output="$2"
+            shift 2
+            ;;
+        *)
+            url="$1"
+            shift
+            ;;
+    esac
+done
+case "$url" in
+    *proot*) printf '%s' 'downloaded-x86_64-proot' > "$output" ;;
+    *alpine-minirootfs*) printf '%s' 'controlled-alpine-archive' > "$output" ;;
+    *) exit 1 ;;
+esac
+FAKE_CURL
+
+    cat > "$fake_bin/file" <<'FAKE_FILE'
+#!/usr/bin/env bash
+set -euo pipefail
+target="${!#}"
+case "$(<"$target")" in
+    downloaded-x86_64-proot)
+        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
+        ;;
+    *)
+        printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64, statically linked'
+        ;;
+esac
+FAKE_FILE
+
+    cat > "$fake_bin/docker" <<'FAKE_DOCKER'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-} ${2:-}" == "image inspect" ]]; then
+    printf '%s\n' 'amd64'
+elif [[ "${1:-}" == "export" ]]; then
+    printf '%s' 'controlled-rootfs-tar-stream'
+fi
+FAKE_DOCKER
+
+    cat > "$fake_bin/uv" <<'FAKE_UV'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' 'fastapi==0.0.0'
+FAKE_UV
+
+    cat > "$fake_bin/sha256sum" <<'FAKE_SHA256SUM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-c" ]]; then
+    cat >/dev/null
+else
+    printf '%064d  %s\n' 0 "${1:-}"
+fi
+FAKE_SHA256SUM
+
+    cat > "$fake_bin/tar" <<'FAKE_TAR'
+#!/usr/bin/env bash
+set -euo pipefail
+cat <<'LISTING'
+usr/bin/python3
+usr/bin/node
+usr/local/bin/pi
+home/seed/backend/seed_backend/__init__.py
+home/seed/app/seed_app/__init__.py
+LISTING
+FAKE_TAR
+
+    cat > "$fake_bin/mv" <<'FAKE_MV'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s|%s\n' "$1" "$2" >> "$MV_CALL_LOG"
+exec /bin/mv "$@"
+FAKE_MV
+
+    chmod +x "$fake_bin/curl" "$fake_bin/file" "$fake_bin/docker" \
+        "$fake_bin/uv" "$fake_bin/sha256sum" "$fake_bin/tar" "$fake_bin/mv"
+}
+
+test_successful_architecture_switch_publication() {
+    local case_dir="$TMP_DIR/successful-architecture-switch"
+    local assets_dir="$case_dir/assets"
+    local jni_libs_dir="$case_dir/jniLibs"
+    local jni_libs_target="$case_dir/native-volume/jniLibs"
+    local fake_bin="$case_dir/bin"
+    local mv_log="$case_dir/mv.log"
+    mkdir -p "$assets_dir" "$jni_libs_target/arm64-v8a" "$jni_libs_target/x86_64"
+    ln -s "$jni_libs_target" "$jni_libs_dir"
+
+    printf '%s' 'legacy-proot' > "$assets_dir/proot"
+    printf '%s' 'old-rootfs' > "$assets_dir/rootfs.tar.gz"
+    printf '%s' 'old-version' > "$assets_dir/seed_version.json"
+    printf '%s' 'opposite-arm64-proot' > "$jni_libs_dir/arm64-v8a/libproot.so"
+    printf '%s' 'wrong-selected-proot' > "$jni_libs_dir/x86_64/libproot.so"
+    : > "$mv_log"
+    prepare_successful_runtime_build_tools "$case_dir"
+
+    if ! ASSETS_DIR="$assets_dir" JNI_LIBS_DIR="$jni_libs_dir" \
+        RUNTIME_ARCH=x86_64 MV_CALL_LOG="$mv_log" PATH="$fake_bin:$PATH" \
+        "$BUILD_SCRIPT" > "$case_dir/build.stdout" 2> "$case_dir/build.stderr"; then
+        cat "$case_dir/build.stdout" "$case_dir/build.stderr" >&2
+        fail "controlled successful runtime build must succeed"
+    fi
+
+    assert_eq "downloaded-x86_64-proot" \
+        "$(<"$jni_libs_dir/x86_64/libproot.so")" "published x86_64 proot"
+    if [[ -e "$jni_libs_dir/arm64-v8a/libproot.so" ]]; then
+        fail "successful architecture switch left the opposite proot"
+    fi
+    if [[ -d "$jni_libs_dir/arm64-v8a" ]]; then
+        fail "successful architecture switch left an empty opposite ABI directory"
+    fi
+    if [[ -e "$assets_dir/proot" ]]; then
+        fail "successful publication left the legacy proot asset"
+    fi
+    assert_eq "controlled-rootfs-tar-stream" \
+        "$(gzip -dc "$assets_dir/rootfs.tar.gz")" "published rootfs"
+    assert_contains "$assets_dir/seed_version.json" '"build_id":' "published version marker"
+    assert_contains "$mv_log" "$jni_libs_dir/.seed-runtime-proot-stage." \
+        "native proot staging inside JNI_LIBS_DIR"
+    assert_not_contains "$mv_log" "$case_dir/.seed-runtime-proot-stage." \
+        "native proot staging beside JNI_LIBS_DIR"
+    assert_before "$mv_log" "$jni_libs_dir/.seed-runtime-proot-stage." \
+        "$assets_dir/rootfs.tar.gz" "native proot before rootfs"
+    assert_before "$mv_log" "$assets_dir/rootfs.tar.gz" \
+        "$assets_dir/seed_version.json" "rootfs before completion marker"
+    if compgen -G "$assets_dir/.seed-runtime-stage.*" >/dev/null \
+        || compgen -G "$jni_libs_dir/.seed-runtime-proot-stage.*" >/dev/null; then
+        fail "successful build left a staging directory"
+    fi
+}
+
+prepare_checksum_failure_runtime_build_tools() {
+    local case_dir="$1"
+    local fake_bin="$case_dir/bin"
+    mkdir -p "$fake_bin"
 
     cat > "$fake_bin/curl" <<'FAKE_CURL'
 #!/usr/bin/env bash
@@ -532,7 +708,9 @@ FAKE_CURL
     cat > "$fake_bin/file" <<'FAKE_FILE'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "${LC_ALL:-<unset>}" >> "$FILE_LC_LOG"
+if [[ -n "${FILE_LC_LOG:-}" ]]; then
+    printf '%s\n' "${LC_ALL:-<unset>}" >> "$FILE_LC_LOG"
+fi
 target="${!#}"
 if [[ "$(<"$target")" == "downloaded-arm64-proot" ]]; then
     printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64'
@@ -546,9 +724,34 @@ FAKE_FILE
 exit 0
 FAKE_DOCKER
     chmod +x "$fake_bin/curl" "$fake_bin/file" "$fake_bin/docker"
+}
 
-    if ASSETS_DIR="$assets_dir" FILE_LC_LOG="$file_lc_log" \
-        PATH="$fake_bin:$PATH" "$BUILD_SCRIPT" \
+test_failed_build_preserves_assets() {
+    local case_dir="$TMP_DIR/failed-build"
+    local assets_dir="$case_dir/assets"
+    local originals_dir="$case_dir/originals"
+    local jni_libs_dir="$case_dir/jniLibs"
+    local original_jni_libs_dir="$case_dir/original-jniLibs"
+    local fake_bin="$case_dir/bin"
+    local stderr_file="$case_dir/build.stderr"
+    local file_lc_log="$case_dir/file-lc.log"
+    mkdir -p "$assets_dir" "$originals_dir" "$jni_libs_dir/arm64-v8a" \
+        "$jni_libs_dir/x86_64" "$fake_bin"
+
+    printf '%s' 'existing-legacy-proot' > "$assets_dir/proot"
+    printf '%s' 'existing-rootfs' > "$assets_dir/rootfs.tar.gz"
+    printf '%s' 'existing-version' > "$assets_dir/seed_version.json"
+    cp "$assets_dir/proot" "$originals_dir/proot"
+    cp "$assets_dir/rootfs.tar.gz" "$originals_dir/rootfs.tar.gz"
+    cp "$assets_dir/seed_version.json" "$originals_dir/seed_version.json"
+    printf '%s' 'existing-wrong-selected-proot' > "$jni_libs_dir/arm64-v8a/libproot.so"
+    printf '%s' 'existing-opposite-proot' > "$jni_libs_dir/x86_64/libproot.so"
+    cp -a "$jni_libs_dir" "$original_jni_libs_dir"
+
+    prepare_checksum_failure_runtime_build_tools "$case_dir"
+
+    if ASSETS_DIR="$assets_dir" JNI_LIBS_DIR="$jni_libs_dir" \
+        FILE_LC_LOG="$file_lc_log" PATH="$fake_bin:$PATH" "$BUILD_SCRIPT" \
         > "$case_dir/build.stdout" 2> "$stderr_file"; then
         fail "build with invalid Alpine checksum must fail"
     fi
@@ -557,12 +760,43 @@ FAKE_DOCKER
     assert_same_file "$originals_dir/proot" "$assets_dir/proot" "existing proot"
     assert_same_file "$originals_dir/rootfs.tar.gz" "$assets_dir/rootfs.tar.gz" "existing rootfs"
     assert_same_file "$originals_dir/seed_version.json" "$assets_dir/seed_version.json" "existing version marker"
-    if compgen -G "$assets_dir/.seed-runtime-stage.*" >/dev/null; then
-        fail "failed build left a staging directory in the assets directory"
+    if ! diff -r "$original_jni_libs_dir" "$jni_libs_dir" >/dev/null; then
+        diff -r "$original_jni_libs_dir" "$jni_libs_dir" >&2 || true
+        fail "failed build changed native proot files"
+    fi
+    if compgen -G "$assets_dir/.seed-runtime-stage.*" >/dev/null \
+        || compgen -G "$jni_libs_dir/.seed-runtime-proot-stage.*" >/dev/null; then
+        fail "failed build left a staging directory"
     fi
     if grep -Fvxq 'C' "$file_lc_log"; then
         fail "file parsing must run with LC_ALL=C"
     fi
+}
+
+test_failed_build_removes_new_empty_jni_libs_dir() {
+    local case_dir="$TMP_DIR/failed-build-new-jni-libs"
+    local assets_dir="$case_dir/assets"
+    local native_parent="$case_dir/native-parent"
+    local jni_libs_dir="$native_parent/jniLibs"
+    local unrelated_file="$native_parent/unrelated.txt"
+    local fake_bin="$case_dir/bin"
+    mkdir -p "$assets_dir" "$native_parent"
+    printf '%s' 'preserve me' > "$unrelated_file"
+    prepare_checksum_failure_runtime_build_tools "$case_dir"
+
+    if ASSETS_DIR="$assets_dir" JNI_LIBS_DIR="$jni_libs_dir" \
+        PATH="$fake_bin:$PATH" "$BUILD_SCRIPT" \
+        > "$case_dir/build.stdout" 2> "$case_dir/build.stderr"; then
+        fail "build with invalid Alpine checksum must fail"
+    fi
+
+    assert_contains "$case_dir/build.stderr" "Alpine sha256 mismatch" \
+        "failed build with new JNI_LIBS_DIR"
+    if [[ -e "$jni_libs_dir" ]]; then
+        fail "failed build left a newly-created empty JNI_LIBS_DIR"
+    fi
+    assert_eq "preserve me" "$(<"$unrelated_file")" \
+        "unrelated native-parent content"
 }
 
 run_test "arm64 target configuration" test_arm64_target
@@ -570,6 +804,8 @@ run_test "x86_64 target configuration" test_x86_64_target
 run_test "arm64 default target" test_default_target
 run_test "target configuration can be repeated and changed" test_target_can_be_reconfigured
 run_test "Dockerfile has valid multi-platform Alpine default" test_dockerfile_base_image_default
+run_test "generated native proot ignore rules are exact" test_generated_native_proot_ignore_rules
+run_test "successful architecture switch publication" test_successful_architecture_switch_publication
 run_test "checker accepts x86_64 aliases" test_checker_accepts_x86_64_aliases
 run_test "checker accepts arm64 aliases" test_checker_accepts_arm64_aliases
 run_test "checker reports arm64 mismatch command" test_checker_reports_arm64_mismatch_command
@@ -583,7 +819,11 @@ run_test "successful make run assembles with a newer existing APK" test_successf
 run_test "Makefile runtime architecture wiring" test_makefile_runtime_arch_wiring
 run_test "parallel run failure does not build APK" test_parallel_run_failure_does_not_build_apk
 run_test "runtime architecture rejects shell injection" test_runtime_arch_rejects_shell_injection
-run_test "failed build preserves existing assets" test_failed_build_preserves_assets
+run_test "failed build preserves runtime publication" test_failed_build_preserves_assets
+run_test "failed build removes newly-created empty JNI libs directory" test_failed_build_removes_new_empty_jni_libs_dir
 run_test "unsupported target rejection" test_unsupported_target
 
+if [[ "$TESTS_RUN" -eq 0 ]]; then
+    fail "no runtime tool tests matched filter '${RUNTIME_TOOLS_TEST_FILTER:-}'"
+fi
 echo "All $TESTS_RUN runtime tool tests passed."

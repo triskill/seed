@@ -15,6 +15,8 @@ configure_runtime_target() {
             DOCKER_IMAGE_ARCH="arm64"
             ALPINE_BASE_IMAGE="alpine:3.20.3"
             PROOT_FILE_MARKER="ARM aarch64"
+            ANDROID_ABI="arm64-v8a"
+            PROOT_JNI_RELATIVE_PATH="$ANDROID_ABI/libproot.so"
             ;;
         x86_64)
             RUNTIME_ARCH="x86_64"
@@ -25,6 +27,8 @@ configure_runtime_target() {
             DOCKER_IMAGE_ARCH="amd64"
             ALPINE_BASE_IMAGE="alpine:3.20.3"
             PROOT_FILE_MARKER="x86-64"
+            ANDROID_ABI="x86_64"
+            PROOT_JNI_RELATIVE_PATH="$ANDROID_ABI/libproot.so"
             ;;
         *)
             echo "unsupported runtime architecture: ${target:-<empty>} (supported: arm64, x86_64)" >&2
@@ -33,5 +37,6 @@ configure_runtime_target() {
     esac
 
     export RUNTIME_ARCH PROOT_URL ALPINE_URL ALPINE_SHA DOCKER_PLATFORM
-    export DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER
+    export DOCKER_IMAGE_ARCH ALPINE_BASE_IMAGE PROOT_FILE_MARKER ANDROID_ABI
+    export PROOT_JNI_RELATIVE_PATH
 }
