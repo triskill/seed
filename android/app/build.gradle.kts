@@ -81,7 +81,7 @@ android {
         }
     }
 
-    // The runtime assets (proot binary, rootfs tarball,
+    // The runtime data assets (rootfs tarball and
     // seed_version.json) are read by AssetManager.openFd
     // — see AndroidAssetSource.entries(). openFd throws
     // FileNotFoundException on compressed entries, so we
@@ -107,7 +107,6 @@ android {
     androidResources {
         noCompress += listOf(
             "linux/seed_version.json",
-            "linux/proot",
             "linux/rootfs.tar",
         )
     }

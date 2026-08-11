@@ -50,7 +50,7 @@ class RuntimeExtractor(
                 if (entry.name == ROOTFS_ARCHIVE_NAME) {
                     extractRootfs(input, File(targetDir, ROOTFS_DIRECTORY_NAME))
                 } else {
-                    copyAsset(input, File(targetDir, entry.name), entry.executable)
+                    copyAsset(input, File(targetDir, entry.name))
                 }
             }
             bytesDone += entry.size
@@ -59,7 +59,7 @@ class RuntimeExtractor(
         emit(ExtractionProgress.Finished)
     }.flowOn(Dispatchers.IO)
 
-    private suspend fun copyAsset(input: InputStream, output: File, executable: Boolean) {
+    private suspend fun copyAsset(input: InputStream, output: File) {
         output.parentFile?.let { parent ->
             if (!parent.exists() && !parent.mkdirs()) {
                 throw IOException("Could not create asset directory: $parent")
@@ -68,9 +68,6 @@ class RuntimeExtractor(
         output.outputStream().use { sink ->
             copyCancellable(input, sink)
             sink.fd.sync()
-        }
-        if (executable && !output.setExecutable(true, false)) {
-            throw IOException("Could not mark asset executable: $output")
         }
     }
 

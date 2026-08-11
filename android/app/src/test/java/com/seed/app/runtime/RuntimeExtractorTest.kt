@@ -62,22 +62,16 @@ class RuntimeExtractorTest {
         assertEquals("yz", target.resolve("b").readText())
     }
 
-    /**
-     * Files listed in [AssetSource.entries] with `executable = true`
-     * land on disk with the executable bit set. This is how proot
-     * becomes runnable inside the extracted runtime.
-     */
     @Test
-    fun executableFlagIsAppliedOnDisk() = runTest {
+    fun ordinaryAssetsAreCopiedWithoutExecutableMetadata() = runTest {
         val target = tempFolder.newFolder("linux")
-        val source = MapAssetSource(
-            "proot" to ByteArray(8) { 0x7f },  // ELF magic-like bytes
-            executable = setOf("proot"),
-        )
+        val source = MapAssetSource("seed_version.json" to "{}".toByteArray())
+
         RuntimeExtractor(source).extract(target).toList()
 
-        val proot = target.resolve("proot")
-        assertTrue("proot should be executable", proot.canExecute())
+        val version = target.resolve("seed_version.json")
+        assertEquals("{}", version.readText())
+        assertFalse("ordinary asset should not be executable", version.canExecute())
     }
 
     /**
@@ -296,19 +290,18 @@ private class SingleStreamAssetSource(
     private val name: String,
     private val stream: java.io.InputStream,
 ) : AssetSource {
-    override fun entries(): List<AssetEntry> = listOf(AssetEntry(name, 1, false))
+    override fun entries(): List<AssetEntry> = listOf(AssetEntry(name, 1))
     override fun open(name: String): java.io.InputStream = stream
 }
 
 private class MapAssetSource(
     vararg pairs: Pair<String, ByteArray>,
-    private val executable: Set<String> = emptySet(),
 ) : AssetSource {
     private val files: Map<String, ByteArray> = pairs.toMap()
 
     override fun entries(): List<AssetEntry> =
         files.map { (name, bytes) ->
-            AssetEntry(name, bytes.size.toLong(), executable.contains(name))
+            AssetEntry(name, bytes.size.toLong())
         }
 
     override fun open(name: String): java.io.InputStream =

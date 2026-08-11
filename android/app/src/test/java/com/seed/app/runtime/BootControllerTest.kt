@@ -279,6 +279,6 @@ private class MapAssetSource2(
     vararg pairs: Pair<String, ByteArray>,
 ) : AssetSource {
     private val files = pairs.toMap()
-    override fun entries() = files.map { AssetEntry(it.key, it.value.size.toLong(), false) }
+    override fun entries() = files.map { AssetEntry(it.key, it.value.size.toLong()) }
     override fun open(name: String) = ByteArrayInputStream(files.getValue(name))
 }

@@ -5,19 +5,14 @@ import java.io.InputStream
 /**
  * One file inside the runtime assets bundle.
  *
- * @param name Path relative to the assets root (e.g. "proot" or
- *   "rootfs.tar.gz"). The extractor writes it to the same path under
- *   the target directory.
- * @param size Exact byte size; used to compute total progress and
- *   to pre-size the output buffer.
- * @param executable If true, the file is chmod +x on disk after
- *   writing. Used for the proot binary (the only executable asset
- *   in v0.1).
+ * @param name Path relative to the assets root (for example,
+ *   "rootfs.tar" or "seed_version.json"). The extractor expands the
+ *   rootfs archive and copies other entries under the target directory.
+ * @param size Exact byte size; used to compute total progress.
  */
 data class AssetEntry(
     val name: String,
     val size: Long,
-    val executable: Boolean,
 )
 
 /**
