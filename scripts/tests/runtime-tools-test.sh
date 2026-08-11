@@ -52,6 +52,15 @@ assert_not_contains() {
     fi
 }
 
+assert_line_count() {
+    local expected="$1"
+    local file="$2"
+    local label="$3"
+    local actual
+    actual="$(wc -l < "$file")"
+    assert_eq "$expected" "$actual" "$label"
+}
+
 assert_before() {
     local file="$1"
     local first="$2"
@@ -507,6 +516,9 @@ test_makefile_runtime_arch_wiring() {
     assert_contains "$x86_arch_check" \
         './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libproot.so"' \
         "x86_64 packaged proot derivation"
+    assert_contains "$x86_arch_check" \
+        './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libproot-loader.so"' \
+        "x86_64 packaged proot loader derivation"
     assert_not_contains "$x86_arch_check" "android/app/src/main/assets/linux/proot" \
         "x86_64 obsolete proot asset"
 
@@ -517,6 +529,9 @@ test_makefile_runtime_arch_wiring() {
     assert_contains "$arm_arch_check" \
         './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libproot.so"' \
         "arm64-v8a packaged proot derivation"
+    assert_contains "$arm_arch_check" \
+        './scripts/check-runtime-arch.sh "$emulator_abi" "android/app/src/main/jniLibs/$emulator_abi/libproot-loader.so"' \
+        "arm64-v8a packaged proot loader derivation"
     assert_not_contains "$arm_arch_check" "android/app/src/main/assets/linux/proot" \
         "arm64-v8a obsolete proot asset"
     assert_not_contains "$MAKEFILE" 'EMULATOR_ABI' "unsafe Make ABI derivation"
@@ -582,12 +597,91 @@ test_system_image_wiring_maps_supported_abis() {
             > "$case_dir/$expected.stdout" 2> "$case_dir/$expected.stderr"
     done
 
+    assert_line_count "4" "$checker_log" "packaged native pair checker call count"
     assert_contains "$checker_log" \
         'system-images;android-34;default;x86_64|x86_64|android/app/src/main/jniLibs/x86_64/libproot.so' \
-        "x86_64 checker wiring"
+        "x86_64 proot checker wiring"
+    assert_contains "$checker_log" \
+        'system-images;android-34;default;x86_64|x86_64|android/app/src/main/jniLibs/x86_64/libproot-loader.so' \
+        "x86_64 proot loader checker wiring"
     assert_contains "$checker_log" \
         'system-images;android-34;default;arm64-v8a|arm64-v8a|android/app/src/main/jniLibs/arm64-v8a/libproot.so' \
-        "arm64-v8a checker wiring"
+        "arm64-v8a proot checker wiring"
+    assert_contains "$checker_log" \
+        'system-images;android-34;default;arm64-v8a|arm64-v8a|android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so' \
+        "arm64-v8a proot loader checker wiring"
+}
+
+assert_loader_preflight_failure_stops_run() {
+    local failure_mode="$1"
+    local case_dir="$TMP_DIR/loader-preflight-$failure_mode"
+    local android_home="$case_dir/android-home"
+    local native_dir="$case_dir/android/app/src/main/jniLibs/x86_64"
+    local gradle_log="$case_dir/gradle.log"
+    local emulator_log="$case_dir/emulator.log"
+    local emulator_pid_file="$case_dir/emulator.pid"
+    prepare_make_workflow_fixture "$case_dir"
+    mkdir -p "$native_dir"
+    printf '%s' 'controlled proot' > "$native_dir/libproot.so"
+    cp "$ARCH_CHECKER" "$case_dir/scripts/check-runtime-arch.sh"
+
+    cat > "$case_dir/bin/file" <<'FAKE_FILE'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${!#}" in
+    *libproot-loader.so)
+        printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64, statically linked'
+        ;;
+    *)
+        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
+        ;;
+esac
+FAKE_FILE
+    chmod +x "$case_dir/bin/file"
+
+    if [[ "$failure_mode" == "mismatched" ]]; then
+        printf '%s' 'controlled mismatched loader' > "$native_dir/libproot-loader.so"
+    fi
+
+    cat > "$case_dir/deps-override.mk" <<'MAKE_FIXTURE'
+.PHONY: check-deps
+check-deps:
+	@:
+MAKE_FIXTURE
+
+    if GRADLE_LOG="$gradle_log" PATH="$case_dir/bin:$PATH" \
+        make -C "$case_dir" --no-print-directory \
+        -f Makefile -f deps-override.mk run \
+        ANDROID_HOME="$android_home" EMULATOR_PID="$emulator_pid_file" \
+        'SYSTEM_IMAGE=system-images;android-34;default;x86_64' \
+        > "$case_dir/run.stdout" 2>&1; then
+        [[ ! -f "$emulator_pid_file" ]] \
+            || kill "$(<"$emulator_pid_file")" 2>/dev/null || true
+        fail "$failure_mode loader must fail make run"
+    fi
+    [[ ! -f "$emulator_pid_file" ]] \
+        || kill "$(<"$emulator_pid_file")" 2>/dev/null || true
+
+    assert_contains "$case_dir/run.stdout" \
+        "android/app/src/main/jniLibs/x86_64/libproot-loader.so" \
+        "$failure_mode loader diagnostic path"
+    assert_contains "$case_dir/run.stdout" \
+        "Build compatible assets explicitly: make runtime RUNTIME_ARCH=x86_64" \
+        "$failure_mode loader repair command"
+    if [[ -s "$gradle_log" ]]; then
+        fail "$failure_mode loader invoked Gradle before preflight succeeded"
+    fi
+    if [[ -e "$emulator_log" ]]; then
+        fail "$failure_mode loader launched the emulator before preflight succeeded"
+    fi
+}
+
+test_missing_loader_fails_before_build_or_launch() {
+    assert_loader_preflight_failure_stops_run missing
+}
+
+test_mismatched_loader_fails_before_build_or_launch() {
+    assert_loader_preflight_failure_stops_run mismatched
 }
 
 test_system_image_rejects_shell_injection() {
@@ -1223,6 +1317,8 @@ run_test "make build assembles with a newer existing APK" test_make_build_assemb
 run_test "successful make run assembles with a newer existing APK" test_successful_make_run_assembles_when_apk_is_newer_than_assets
 run_test "Makefile runtime architecture wiring" test_makefile_runtime_arch_wiring
 run_test "SYSTEM_IMAGE wiring maps supported ABIs" test_system_image_wiring_maps_supported_abis
+run_test "missing loader fails before build or launch" test_missing_loader_fails_before_build_or_launch
+run_test "mismatched loader fails before build or launch" test_mismatched_loader_fails_before_build_or_launch
 run_test "parallel run failure does not build or launch" test_parallel_run_failure_does_not_build_or_launch
 run_test "SYSTEM_IMAGE rejects shell injection" test_system_image_rejects_shell_injection
 run_test "runtime architecture rejects shell injection" test_runtime_arch_rejects_shell_injection
