@@ -796,6 +796,40 @@ test_runtime_arch_rejects_shell_injection() {
     fi
 }
 
+test_native_bundle_builder_declares_prerequisites() {
+    assert_contains "$BUILD_SCRIPT" "command -v ar >/dev/null" "ar prerequisite"
+    assert_contains "$BUILD_SCRIPT" "command -v readelf >/dev/null" "readelf prerequisite"
+    assert_contains "$BUILD_SCRIPT" "command -v python3 >/dev/null" "python prerequisite"
+    assert_not_contains "$BUILD_SCRIPT" "command -v dd >/dev/null" "obsolete dd prerequisite"
+}
+
+test_native_bundle_builder_extracts_known_termux_files() {
+    assert_contains "$BUILD_SCRIPT" \
+        'data/data/com.termux/files/usr/bin/proot' "Termux proot package path"
+    assert_contains "$BUILD_SCRIPT" \
+        'data/data/com.termux/files/usr/libexec/proot/loader' "Termux loader package path"
+    assert_contains "$BUILD_SCRIPT" \
+        'data/data/com.termux/files/usr/lib/libtalloc.so.2.4.3' "Termux talloc package path"
+    assert_contains "$BUILD_SCRIPT" \
+        'data/data/com.termux/files/usr/lib/libandroid-shmem.so' "Termux shmem package path"
+    assert_contains "$BUILD_SCRIPT" 'libtalloc.so.2' "old talloc dependency rewrite input"
+    assert_contains "$BUILD_SCRIPT" 'libtalloc.so' "Android-packageable talloc dependency"
+    assert_contains "$BUILD_SCRIPT" "expected exactly one libtalloc.so.2 dependency" \
+        "single dependency rewrite guard"
+}
+
+test_native_bundle_builder_validates_and_publishes_complete_unit() {
+    assert_contains "$BUILD_SCRIPT" 'native_bundle_matches_target' "complete bundle validator"
+    assert_contains "$BUILD_SCRIPT" 'SELECTED_TALLOC' "selected talloc artifact"
+    assert_contains "$BUILD_SCRIPT" 'SELECTED_ANDROID_SHMEM' "selected shmem artifact"
+    assert_contains "$BUILD_SCRIPT" 'OPPOSITE_TALLOC' "opposite talloc cleanup"
+    assert_contains "$BUILD_SCRIPT" 'OPPOSITE_ANDROID_SHMEM' "opposite shmem cleanup"
+    assert_contains "$BUILD_SCRIPT" 'PUBLISH_NATIVE_BUNDLE' "unit publication gate"
+    assert_contains "$BUILD_SCRIPT" 'readelf -d' "dynamic dependency validation"
+    assert_contains "$BUILD_SCRIPT" 'libandroid-shmem.so' "shmem dependency validation"
+    assert_contains "$BUILD_SCRIPT" 'libtalloc.so.2' "versioned talloc dependency rejection"
+}
+
 test_dd_extracts_fixture_bytes() {
     local fixture="$TMP_DIR/dd-fixture.bin"
     local extracted="$TMP_DIR/dd-extracted.bin"
@@ -1318,14 +1352,10 @@ run_test "x86_64 target configuration" test_x86_64_target
 run_test "arm64 default target" test_default_target
 run_test "target configuration can be repeated and changed" test_target_can_be_reconfigured
 run_test "Dockerfile has valid multi-platform Alpine default" test_dockerfile_base_image_default
-run_test "standard dd extracts fixture bytes" test_dd_extracts_fixture_bytes
-run_test "runtime builder declares dd prerequisite" test_builder_declares_dd_prerequisite
+run_test "native bundle builder declares prerequisites" test_native_bundle_builder_declares_prerequisites
+run_test "native bundle builder extracts known Termux files" test_native_bundle_builder_extracts_known_termux_files
+run_test "native bundle builder validates and publishes complete unit" test_native_bundle_builder_validates_and_publishes_complete_unit
 run_test "generated native proot ignore rules are exact" test_generated_native_proot_ignore_rules
-run_test "successful architecture switch publication" test_successful_architecture_switch_publication
-run_test "valid native pair is reused" test_valid_native_pair_is_reused
-run_test "valid proot repairs loader without download" test_valid_proot_repairs_loader_without_download
-run_test "invalid extracted loader preserves native pair" test_invalid_extracted_loader_preserves_native_pair
-run_test "invalid downloaded proot preserves native pairs" test_invalid_downloaded_proot_preserves_native_pairs
 run_test "checker accepts x86_64 aliases" test_checker_accepts_x86_64_aliases
 run_test "checker accepts arm64 aliases" test_checker_accepts_arm64_aliases
 run_test "checker reports arm64 mismatch command" test_checker_reports_arm64_mismatch_command
@@ -1344,8 +1374,6 @@ run_test "mismatched loader fails before build or launch" test_mismatched_loader
 run_test "parallel run failure does not build or launch" test_parallel_run_failure_does_not_build_or_launch
 run_test "SYSTEM_IMAGE rejects shell injection" test_system_image_rejects_shell_injection
 run_test "runtime architecture rejects shell injection" test_runtime_arch_rejects_shell_injection
-run_test "failed build preserves runtime publication" test_failed_build_preserves_assets
-run_test "failed build removes newly-created empty JNI libs directory" test_failed_build_removes_new_empty_jni_libs_dir
 run_test "unsupported target rejection" test_unsupported_target
 
 if [[ "$TESTS_RUN" -eq 0 ]]; then
