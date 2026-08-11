@@ -33,7 +33,7 @@ tools listed in [`../docs/build-runtime.md`](../docs/build-runtime.md).
 # Installs the Android command-line tools, emulator, system image, and seed_dev AVD.
 make install
 
-# Generates the x86_64 proot and matching rootfs bundle.
+# Generates the x86_64 Android-native PRoot bundle and matching rootfs.
 make runtime RUNTIME_ARCH=x86_64
 
 # Preflights the runtime, builds the APK, starts the AVD, installs, and launches.
@@ -70,11 +70,11 @@ cd android
 ```
 
 A fresh checkout contains the tracked
-`app/src/main/assets/linux/seed_version.json`, but no generated rootfs or proot.
-The generated, Git-ignored proot is placed at
-`app/src/main/jniLibs/arm64-v8a/libproot.so` or
-`app/src/main/jniLibs/x86_64/libproot.so`; only the selected ABI remains after
-a successful architecture switch. The generated matching source asset is
+`app/src/main/assets/linux/seed_version.json`, but no generated rootfs or native
+bundle. The generated, Git-ignored ABI directory contains `libproot.so`,
+`libproot-loader.so`, `libtalloc.so`, and `libandroid-shmem.so`; only the
+selected ABI's complete bundle remains after a successful architecture switch.
+The generated matching source asset is
 `app/src/main/assets/linux/rootfs.tar.gz`. During the Android build, AGP expands
 that gzip to merged `assets/linux/rootfs.tar`, which is stored with `noCompress`
 so `AssetManager.openFd` can stream it; the packaged runtime rootfs is not gzip
@@ -82,14 +82,17 @@ compressed.
 
 Android 10+ applies W^X to apps targeting API 29+: a file copied into writable
 app home cannot be executed, regardless of `chmod` mode. The app therefore
-uses AGP legacy JNI packaging. PackageManager extracts `libproot.so` into the
-installed app's read-only/executable native-library directory, and
-`RuntimeService` resolves `applicationInfo.nativeLibraryDir/libproot.so`.
-Writable first-launch
+uses AGP legacy JNI packaging. PackageManager extracts all four native files
+into the installed app's executable native-library directory. `RuntimeService`
+resolves the complete installation, sets `PROOT_LOADER` to its packaged loader,
+and sets `LD_LIBRARY_PATH` to the same directory. The Termux Android-native
+PRoot build is required because generic Linux x86_64 PRoot receives `SIGSYS`
+under the Zygote application seccomp policy even though it works under an
+interactive `run-as` process. Writable first-launch
 extraction handles only rootfs data and the version marker under `filesDir`.
 
-Before Gradle or emulator startup, `make run` checks the exact selected path
-`app/src/main/jniLibs/<emulator-abi>/libproot.so`; a missing, invalid, or
+Before Gradle or emulator startup, `make run` checks all four selected paths
+under `app/src/main/jniLibs/<emulator-abi>`; a missing, invalid, or
 architecture-mismatched file fails immediately and prints the matching explicit
 `make runtime RUNTIME_ARCH=...` command. JVM tests, APK assembly, lint, and
 Compose-test compilation do not require a device. See
@@ -118,9 +121,9 @@ service and runtime.
 |---|---|---|
 | 5 | Four-screen Compose shell | ✅ complete |
 | 6 | Android ↔ backend clients | ✅ complete |
-| 7 | Native proot packaging and rootfs extraction | ✅ implementation complete; emulator acceptance pending |
-| 8 | Foreground runtime service | ✅ implementation complete; emulator acceptance pending |
-| 9 | Startup, health gate, retry, loopback defaults | ✅ implementation complete; instrumentation not run |
+| 7 | Native proot packaging and rootfs extraction | ✅ complete; x86_64 emulator accepted |
+| 8 | Foreground runtime service | ✅ complete; managed PRoot/Uvicorn health verified |
+| 9 | Startup, health gate, retry, loopback defaults | ✅ complete; app-domain instrumentation passed |
 | 10 | End-to-end polish and runtime controls | ⬜ next |
 
 ## Versioning

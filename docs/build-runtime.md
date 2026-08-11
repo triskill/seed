@@ -5,13 +5,15 @@ publishes a native proot separately from the writable runtime data assets:
 
 | Generated or tracked path | What |
 |---|---|
-| `android/app/src/main/jniLibs/x86_64/libproot.so` | Generated x86_64 static proot; Git-ignored |
-| `android/app/src/main/jniLibs/arm64-v8a/libproot.so` | Generated arm64 static proot; Git-ignored |
+| `android/app/src/main/jniLibs/<abi>/libproot.so` | Generated Android-native PRoot executable; Git-ignored |
+| `android/app/src/main/jniLibs/<abi>/libproot-loader.so` | Generated external PRoot loader; Git-ignored |
+| `android/app/src/main/jniLibs/<abi>/libtalloc.so` | Generated PRoot allocation dependency; Git-ignored |
+| `android/app/src/main/jniLibs/<abi>/libandroid-shmem.so` | Generated Android shared-memory dependency; Git-ignored |
 | `android/app/src/main/assets/linux/rootfs.tar.gz` | Generated matching Alpine rootfs; Git-ignored |
 | `android/app/src/main/assets/linux/seed_version.json` | Tracked extraction marker containing `seed_version` and generated `build_id` |
 
-Only one of the two `jniLibs` proot files is retained at a time. A fresh
-checkout therefore contains the marker, but neither generated proot nor
+Only one ABI's complete four-file native bundle is retained at a time. A fresh
+checkout therefore contains the marker, but neither generated native files nor
 `rootfs.tar.gz`.
 
 ## Why proot is a native library
@@ -21,16 +23,19 @@ files in its writable app home. A proot copied to `filesDir`, even with mode
 `0755`, is still blocked by this W^X policy; `chmod` cannot change the file's
 execution domain.
 
-Seed packages proot through Android's native-library mechanism instead. AGP
-legacy JNI packaging and PackageManager extract `libproot.so` as a
-read-only/executable installed native library. At runtime the app resolves the
-file at:
+Seed packages PRoot and its native dependencies through Android's
+native-library mechanism instead. AGP legacy JNI packaging and PackageManager
+extract the complete bundle into the installed app's executable native-library
+directory. At runtime the app resolves all four files under
+`applicationInfo.nativeLibraryDir`, sets `PROOT_LOADER` to the packaged loader,
+and sets `LD_LIBRARY_PATH` to that directory.
 
-```text
-applicationInfo.nativeLibraryDir/libproot.so
-```
+The Android-native PRoot build is also required for Android application seccomp
+compatibility. Generic Linux x86_64 PRoot runs from `adb shell run-as`, but exits
+with `SIGSYS` when launched by a Zygote-spawned `untrusted_app` process. The
+Termux build targets Bionic and includes Android-specific compatibility work.
 
-The app never copies or modifies proot during first-launch extraction.
+The app never copies or modifies native code during first-launch extraction.
 `rootfs.tar.gz` and `seed_version.json` stay as source assets. AGP exposes the
 gzipped rootfs as `rootfs.tar` in the merged APK; the extractor expands it and
 copies the marker under `filesDir/linux`. That writable area contains runtime
@@ -38,8 +43,9 @@ data and interpreted scripts, not the proot executable.
 
 ## Prerequisites and commands
 
-Runtime generation requires Docker with buildx, `curl`, `file`, `grep`, `gzip`,
-`tar`, `uv`, and GNU coreutils including `sha256sum`. Building the Android APK
+Runtime generation requires Docker with buildx, `curl`, `ar`, `file`, `readelf`,
+Python 3, `grep`, `gzip`, `tar` with xz support, `uv`, and GNU coreutils
+including `sha256sum`. Building the Android APK
 also requires JDK 17 and the Android SDK described in
 [`../android/README.md`](../android/README.md).
 
@@ -68,6 +74,23 @@ With the direct entry point, use
 `RUNTIME_ARCH=arm64 ./scripts/build-runtime.sh` or
 `RUNTIME_ARCH=x86_64 ./scripts/build-runtime.sh`.
 
+## Native bundle provenance
+
+`scripts/runtime-target.sh` pins Termux packages for PRoot 5.1.107.89,
+libtalloc 2.4.3, and libandroid-shmem 0.7 separately for each architecture.
+Generation verifies package checksums before extraction and final artifact
+checksums afterward. It rewrites PRoot's `libtalloc.so.2` dependency to the
+Android-packageable name `libtalloc.so`, then verifies the resulting ELF dynamic
+dependencies with `readelf`.
+
+PRoot is GPL-2.0 software. Corresponding upstream source for the packaged
+version is the Termux PRoot tag
+[`v5.1.107.89`](https://github.com/termux/proot/tree/v5.1.107.89); the Termux
+package recipe is in
+[`termux-packages/packages/proot`](https://github.com/termux/termux-packages/tree/master/packages/proot).
+Distributors of an APK containing these generated binaries must satisfy the
+applicable source and license obligations for PRoot and its dependencies.
+
 ## Docker platforms
 
 The script uses `docker buildx build` with `linux/arm64` for arm64 or
@@ -90,12 +113,12 @@ publication, the script validates the selected proot ELF, Alpine checksum,
 Docker image architecture, and required rootfs contents.
 
 After all validation succeeds, publication uses individual same-filesystem
-renames. It publishes a staged selected proot when needed, removes the opposite
-generated `jniLibs/<abi>/libproot.so` and obsolete legacy
+renames. It publishes the staged four-file native bundle when needed, removes
+all four generated files for the opposite ABI plus obsolete legacy
 `assets/linux/proot`, and then publishes the rootfs. It renames
 `seed_version.json` into place last as the completion marker.
 
-Each rename is atomic, but the native proot, rootfs, cleanup, and marker are not
+Each rename is atomic, but the native bundle, rootfs, cleanup, and marker are not
 a globally atomic group. The marker-last order prevents a new marker from
 advertising a build before the preceding publication steps complete; it does
 not make the whole switch transactional.
@@ -107,8 +130,10 @@ Android ABI from `SYSTEM_IMAGE` and checks the exact selected source path before
 Gradle or emulator startup:
 
 ```text
-android/app/src/main/jniLibs/x86_64/libproot.so
-android/app/src/main/jniLibs/arm64-v8a/libproot.so
+android/app/src/main/jniLibs/<abi>/libproot.so
+android/app/src/main/jniLibs/<abi>/libproot-loader.so
+android/app/src/main/jniLibs/<abi>/libtalloc.so
+android/app/src/main/jniLibs/<abi>/libandroid-shmem.so
 ```
 
 A missing, non-ELF, unsupported, or mismatched file fails immediately and prints
@@ -123,7 +148,7 @@ Generate the matching bundle, then rerun `make build` or `make run`.
 
 ## Gitignore and versioning
 
-Generated `jniLibs/*/libproot.so` files and
+Generated `jniLibs` PRoot, loader, talloc, and Android-shmem files and
 `android/app/src/main/assets/linux/rootfs.tar.gz` are local build artifacts and
 must not be committed. The tracked
 `android/app/src/main/assets/linux/seed_version.json` is the extraction
@@ -132,8 +157,9 @@ marker appears in `git status` even though the large generated files do not.
 
 Commit the marker only when intentionally publishing a runtime update. During a
 local architecture switch, keep the generated marker together with the matching
-local proot/rootfs bundle. Rebuild whenever Alpine, proot, `pi`, backend/webapp
-sources, or required system packages change. On launch, `BootController`
+local native/rootfs bundle. Rebuild whenever Alpine, PRoot, its Termux package
+dependencies, `pi`, backend/webapp sources, or required system packages change.
+On launch, `BootController`
 compares the bundled marker with `filesDir/linux/.version`; a difference causes
 the rootfs data to be re-extracted. Proot remains in the installed native
 library directory and is not part of writable extraction.
