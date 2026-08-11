@@ -1,5 +1,21 @@
 # Emulator Runtime Compatibility Implementation Plan
 
+> **2026-08-11 compatibility update:** Tasks 1–4 below record the original
+> extraction-hard-link and architecture-preflight work. That work moved the
+> emulator failure from rootfs extraction/ABI mismatch to Android's writable
+> executable restriction. Android 10+ forbids apps targeting API 29+ from
+> executing files copied into writable app home, and `chmod` cannot bypass that
+> W^X policy. The follow-up
+> [`2026-08-11-native-proot-packaging.md`](2026-08-11-native-proot-packaging.md)
+> packages one generated proot at a time as
+> `jniLibs/x86_64/libproot.so` or `jniLibs/arm64-v8a/libproot.so`; the app uses
+> PackageManager/AGP legacy JNI extraction and resolves
+> `applicationInfo.nativeLibraryDir/libproot.so`. Only `rootfs.tar.gz` and
+> `seed_version.json` remain writable-extraction assets. `make run` now
+> preflights the exact selected `jniLibs` path and still never auto-builds the
+> runtime. Native packaging implementation is present, but emulator/backend
+> health acceptance is not recorded as complete here.
+
 > **REQUIRED SUB-SKILL:** Use the executing-plans skill to implement this plan task-by-task.
 
 **Goal:** Prevent Android rootfs extraction from crashing and make `make run` fail before installation when the bundled runtime does not match the x86_64 development emulator.

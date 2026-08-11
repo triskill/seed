@@ -14,7 +14,8 @@ end of day 1, the user has the web app they asked for.
 - `backend/` — Python package (`seed_backend`) for the FastAPI orchestrator,
   pi runner, and Flask subprocess manager.
 - `webapp/` — Flask app (`seed_app`) that the worker mutates.
-- `android/` — Compose shell that extracts and starts the embedded runtime.
+- `android/` — Compose shell that extracts the rootfs and starts the embedded
+  runtime through a natively packaged proot.
 - `scripts/` — architecture-aware runtime build and validation tooling.
 - `docs/plans/` — full design and phased implementation plans.
 
@@ -64,31 +65,45 @@ overrides, why no `auth.json` in the repo).
 
 ## Android runtime workflow
 
-An APK bundles one runtime architecture at a time. Runtime generation defaults
-to arm64, whether invoked directly with `./scripts/build-runtime.sh` or through
-`make runtime`.
+An APK bundles one runtime architecture at a time. Runtime generation writes
+proot as a generated native library at exactly one of these Git-ignored paths:
 
-For the repository's x86_64 Android emulator, build matching assets explicitly
-before building or running the APK:
+- `android/app/src/main/jniLibs/x86_64/libproot.so`
+- `android/app/src/main/jniLibs/arm64-v8a/libproot.so`
+
+The matching source `rootfs.tar.gz` and tracked `seed_version.json` remain
+under `android/app/src/main/assets/linux/`. AGP expands the gzip source to
+merged `assets/linux/rootfs.tar` and stores it with `noCompress`; the app
+extracts that rootfs data and the marker to `filesDir`, but never copies proot
+there. Android 10+ forbids apps that target API 29+ from executing files in
+writable app home; changing mode
+bits with `chmod` does not bypass this W^X policy. AGP legacy JNI packaging
+instead lets PackageManager extract `libproot.so` read-only/executable, and the
+app resolves it as `applicationInfo.nativeLibraryDir/libproot.so`.
+
+A fresh checkout has the marker but neither generated binary. Install the
+Android and Docker/tooling prerequisites described in
+[`android/README.md`](android/README.md) and
+[`docs/build-runtime.md`](docs/build-runtime.md), then build explicitly:
 
 ```bash
+# repository's x86_64 Android emulator (fresh setup)
+make install
 make runtime RUNTIME_ARCH=x86_64
-make build
 make run
-```
 
-For an arm64 physical-device build:
-
-```bash
+# arm64 physical device
 make runtime RUNTIME_ARCH=arm64
 make build
 ```
 
-`make run` never starts the large runtime build automatically. It validates the
-packaged proot first and fails on a missing, invalid, or mismatched binary with
-the explicit matching `make runtime RUNTIME_ARCH=...` command. See
-[`docs/build-runtime.md`](docs/build-runtime.md) for Docker prerequisites,
-architecture switching, and generated-asset versioning.
+`make runtime` defaults to arm64 when no architecture is supplied. `make run`
+never starts the large runtime build automatically: before Gradle or emulator
+startup it checks the exact `jniLibs` path selected by `SYSTEM_IMAGE` and, on a
+missing, invalid, or mismatched binary, prints the matching explicit x86_64 or
+arm64 `make runtime RUNTIME_ARCH=...` repair command. See
+[`docs/build-runtime.md`](docs/build-runtime.md) for architecture switching,
+prerequisites, and generated-artifact versioning.
 
 ## Layout
 
@@ -116,4 +131,4 @@ docs/
 
 ## License
 
-TBD. Note: proot (used in later phases) is GPL — see design doc §12.
+TBD. Note: the Android runtime uses proot, which is GPL — see design doc §12.

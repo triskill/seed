@@ -367,22 +367,27 @@ When done, output: <task:done summary="..."/>
 1. **User installs the APK** (sideload for v0.1). No Termux install needed.
 2. **First launch**: app shows a `SetupScreen` with a progress bar.
 3. **Extraction** (`RuntimeExtractor.kt`):
-   - Unpacks proot binary to `filesDir/linux/bin/proot`, chmod 755
-   - Unpacks Alpine rootfs tarball to `filesDir/linux/rootfs/`
+   - Unpacks the Alpine rootfs tarball to `filesDir/linux/rootfs/`
    - Unpacks our backend to `filesDir/linux/rootfs/home/seed/backend/`
    - Unpacks the web app skeleton to `filesDir/linux/rootfs/home/seed/app/`
+   - Records the bundled `seed_version.json` marker
    - Writes default `config.json` (empty API key — user fills in Settings)
+   - Does not copy proot into writable app storage: Android 10+ W^X forbids
+     apps targeting API 29+ from executing it there, regardless of `chmod`
    - **Total time:** 30–60s on a mid-range phone, ~150 MB extracted
 4. **Start foreground service** (`RuntimeService`):
-   - Spawns `proot -r filesDir/linux/rootfs /bin/sh -c "cd /home/seed/backend && python service.py"`
+   - Resolves PackageManager's extracted native executable at
+     `applicationInfo.nativeLibraryDir/libproot.so`
+   - Spawns that proot with `-r filesDir/linux/rootfs /bin/sh -c
+     "cd /home/seed/backend && python service.py"`
    - Service shows a persistent notification ("Seed runtime — tap to open app")
 5. **Health check**: app polls `http://127.0.0.1:7777/health` every 2s
 6. **Ready**: green checkmark, navigates to Chat screen
 7. **First message**: user types a request, the loop starts
 
 **Update path (later):**
-- APK updates ship new proot binary + rootfs + backend
-- On update, the extractor checks `seed_version.json` and re-extracts only what changed
+- APK updates ship a native-library proot plus rootfs and backend assets
+- On update, the extractor checks `seed_version.json` and re-extracts rootfs data when the marker changes
 - User data in `/home/seed/app/` is preserved across updates
 
 ---

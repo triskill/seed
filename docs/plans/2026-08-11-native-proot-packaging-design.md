@@ -2,7 +2,7 @@
 
 ## Problem
 
-Android 10 and later deny `execve(2)` for files in an app's writable home directory when the app targets API 29 or later. Seed currently copies `proot` from APK assets to `filesDir/linux/proot`, sets its executable bit, and starts it with `ProcessBuilder`. On the API 34 x86_64 emulator this reaches SELinux as `app_data_file` and fails with `execute_no_trans`, even though the mode is executable. This is Android's W^X policy, not a Unix permission-bit or architecture failure.
+Android 10 and later deny `execve(2)` for files in an app's writable home directory when the app targets API 29 or later. Seed previously copied `proot` from APK assets to `filesDir/linux/proot`, set its executable bit, and started it with `ProcessBuilder`. On the API 34 x86_64 emulator this reached SELinux as `app_data_file` and failed with `execute_no_trans`, even though the mode was executable. This is Android's W^X policy, not a Unix permission-bit or architecture failure; `chmod` cannot bypass it.
 
 ## Architecture
 
@@ -12,4 +12,4 @@ The architecture-specific rootfs remains `assets/linux/rootfs.tar.gz`, and `seed
 
 ## Failure Handling and Verification
 
-Missing or mismatched native proot files fail during Make preflight. A missing installed native executable produces a clear runtime failure instead of falling back to writable app storage. JVM tests cover path resolution and asset extraction boundaries; shell tests cover ABI mapping, publication, and Make wiring. APK inspection confirms `lib/<abi>/libproot.so`; an API 34 emulator run confirms the installed path has an executable native-library label, proot starts, and the backend reaches its health endpoint. Lowering `targetSdk` or bypassing policy with a writable executable is explicitly out of scope.
+Missing or mismatched native proot files fail during Make preflight. A missing installed native executable produces a clear runtime failure instead of falling back to writable app storage. JVM tests cover path resolution and asset extraction boundaries; shell tests cover ABI mapping, publication, and Make wiring. Remaining acceptance must inspect the APK for `lib/<abi>/libproot.so`, then use an API 34 emulator to check the installed native-library path/label, proot startup, and backend health. Those emulator/backend checks are not recorded as complete yet. Lowering `targetSdk` or bypassing policy with a writable executable is explicitly out of scope.

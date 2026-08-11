@@ -1,7 +1,7 @@
 # Embedded runtime: run Alpine inside the Android app
 
 **Date:** 2026-07-03
-**Status:** implemented through Phase 9 on 2026-07-30; arm64 device acceptance remains manual
+**Status:** implemented through Phase 9 on 2026-07-30; x86_64 native-packaging/emulator acceptance and arm64 device acceptance remain manual
 **Owner:** seed-dev
 **Goal:** the existing Phase 7/8/9 plan finally lands end-to-end — the Seed
 APK boots an `Alpine + Python + pi` runtime inside the device and the
@@ -19,10 +19,10 @@ runtime (proot + Alpine) → webapp. The runtime layer was scoped across
 
 | Component | Status |
 |---|---|
-| `scripts/build-runtime.sh` (Docker arm64 build) | ✅ implemented and exercised; generated binaries remain gitignored |
-| `assets/linux/proot` + `rootfs.tar.gz` | ✅ generated locally when needed; absent from fresh clones/worktrees until the build script runs |
+| `scripts/build-runtime.sh` (Docker arm64/x86_64 build) | ✅ implemented; generated binaries remain gitignored |
+| `jniLibs/<selected-abi>/libproot.so` + `assets/linux/rootfs.tar.gz` | ✅ generated locally when needed; absent from fresh clones/worktrees until the build script runs |
 | `assets/linux/seed_version.json` | ✅ tracked |
-| Runtime extraction and versioning | ✅ implemented, traversal-hardened, and JVM-tested |
+| Rootfs extraction and versioning | ✅ implemented, traversal-hardened, and JVM-tested; proot is installed through legacy JNI packaging, not writable extraction |
 | `ProotRunner` / `HealthMonitor` / `RuntimeService` | ✅ implemented and JVM-tested at the process/health seams |
 | Foreground-service manifest, notification channel, and icon | ✅ implemented |
 | Runtime start ownership | ✅ `MainActivity` starts/binds only after extraction; `SeedApp` creates the channel only |
@@ -35,7 +35,7 @@ The implementation deliberately keeps extraction `BootState` and runtime
 `HealthState` as separate owners. A pure `RuntimeStartup` resolver combines
 them for UI gating instead of adding duplicate `BootState.Starting` and
 `BootState.RuntimeError` variants proposed earlier in this document. The
-arm64 runtime acceptance checklist in §6 remains a manual device step.
+§6 x86_64 native-packaging/emulator acceptance checklist and arm64 device acceptance remain manual steps.
 
 ---
 
