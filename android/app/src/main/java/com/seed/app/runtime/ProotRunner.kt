@@ -57,12 +57,28 @@ class ProotRunner(
 ) {
 
     fun start(scope: CoroutineScope): ProotHandle {
-        val command = listOf(
-            prootExecutable.absolutePath,
-            "-r", rootfsDir.absolutePath,
-            "/bin/sh", "-c",
-            LAUNCH_COMMAND,
-        )
+        val command = buildList {
+            add(prootExecutable.absolutePath)
+            add("-r")
+            add(rootfsDir.absolutePath)
+            // Bind /dev and /proc so PTY-backed /shell/exec works
+            // (proot needs /dev/pts to allocate ptys; the Android
+            // app process can only see its own mount namespace,
+            // so we bind the host's /dev in). Without this, any
+            // /shell/exec that needs a pty returns
+            // `OSError: out of pty devices`.
+            add("-b")
+            add("/dev")
+            add("-b")
+            add("/proc")
+            // Kill child + descendants when proot exits. Without
+            // this, killing the proot process leaves uvicorn (and
+            // the Flask subprocess it spawned) orphaned.
+            add("--kill-on-exit")
+            add("/bin/sh")
+            add("-c")
+            add(LAUNCH_COMMAND)
+        }
         val process = factory.start(command, workDir, env)
         return ProcessHandleImpl(process, scope, terminationGracePeriodMs)
     }

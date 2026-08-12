@@ -58,6 +58,15 @@ class ProotRunnerTest {
             listOf(
                 proot.absolutePath,
                 "-r", rootfs.absolutePath,
+                // Bind /dev and /proc so PTY-backed /shell/exec can
+                // allocate a pty inside the guest (Android only sees
+                // its own mount namespace otherwise).
+                "-b", "/dev",
+                "-b", "/proc",
+                // Kill child + descendants when proot exits; without
+                // it, killing the proot process leaves uvicorn (and
+                // the Flask subprocess it spawned) orphaned.
+                "--kill-on-exit",
                 "/bin/sh", "-c",
                 "cd /home/seed/backend && exec uvicorn seed_backend.service:app --host 127.0.0.1 --port 7777",
             ),

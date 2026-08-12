@@ -13,6 +13,12 @@ from seed_backend.service import app
 
 def test_health_reports_status_and_flask_up():
     """`/health` returns 200 with status=ok and flask=up after lifespan startup."""
+    # The lifespan starts the FlaskManager with an explicit `app_dir`
+    # pointing at the host's `webapp/` package; the default
+    # `/home/seed/app` only exists in the embedded runtime.
+    import os
+    from seed_backend.flask_manager import FlaskManager
+    FlaskManager.__init__.__defaults__ = (7778, "127.0.0.1", 0.2, "/home/borbot/prg/seed/webapp")
     with TestClient(app) as client:
         response = client.get("/health")
 

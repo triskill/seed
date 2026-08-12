@@ -27,6 +27,7 @@ import os
 import pty
 import re
 import signal
+import subprocess
 import tty
 from dataclasses import dataclass
 from pathlib import Path
@@ -263,69 +264,44 @@ async def _exec_command_impl(
     state: dict = {"pid": None, "master_fd": None}
 
     def _run_pty() -> tuple[bytes, int, bool]:
-        master_fd, slave_fd = pty.openpty()
-        # Raw mode on the PTY: OPOST off means no \n → \r\n
-        # translation, ICANON off means no input line buffering.
-        # Without this, `echo hi` arrives as `hi\r\n` and the
-        # existing tests break.
-        tty.setraw(master_fd)
-        state["master_fd"] = master_fd
-
-        pid = os.fork()
-        if pid == 0:
-            # Child branch. From here on, any `raise` would leave
-            # the child in a half-set-up state, so we use
-            # `os._exit` on errors instead of propagating.
-            os.close(master_fd)
-            # New session: child is its own session leader, so
-            # the parent can `killpg` the whole group on timeout
-            # (helpers like `sleep` under `sh -c "sleep 5"` would
-            # otherwise survive a leader-only kill).
-            os.setsid()
-            try:
-                os.dup2(slave_fd, 0)
-                os.dup2(slave_fd, 1)
-                os.dup2(slave_fd, 2)
-            finally:
-                os.close(slave_fd)
-            if cwd is not None:
-                try:
-                    os.chdir(cwd)
-                except OSError:
-                    os._exit(127)
-            try:
-                os.execvp("sh", ["sh", "-c", cmd])
-            except OSError:
-                os._exit(127)
-
-        # Parent branch.
-        state["pid"] = pid
-        os.close(slave_fd)
-
+        # Fall back to subprocess.Popen (no PTY) because the
+        # embedded Linux runtime runs inside proot, which does
+        # not implement the `fork(2)` syscall (returns ENOSYS =
+        # errno 38). `subprocess.Popen` on Linux uses
+        # `posix_spawn` / `clone` and works inside proot. We
+        # lose ANSI color support (no TTY for the child to
+        # auto-detect), but the wire shape (`stdout`, `exit_code`,
+        # `truncated`) is identical and the v0.1 route layer +
+        # Android Shell tab don't care about color codes from the
+        # embedded runtime — they're rendered as monospaced text
+        # regardless.
+        proc = subprocess.Popen(
+            ["sh", "-c", cmd],
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # merge stderr into stdout, same as PTY
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,  # so we can killpg on cancel/timeout
+        )
+        state["pid"] = proc.pid
+        # Drain stdout in a read loop, applying the same
+        # truncation policy as the PTY impl above. Note: no
+        # master fd to close — we use proc.stdout.read instead
+        # of os.read. This means there's no fd to "close to
+        # unblock" on cancel; cancel/timeout must kill the
+        # process (start_new_session ensures we can killpg).
         chunks: list[bytes] = []
         total_bytes = 0
         total_lines = 0
         truncated = False
         try:
-            while True:
-                try:
-                    data = os.read(master_fd, 4096)
-                except OSError:
-                    # Master fd was closed (e.g. by the timeout
-                    # handler), so the child is gone — bail.
-                    break
+            for data in iter(proc.stdout.readline, b""):
                 if not data:
                     break
                 if not truncated:
                     new_bytes = total_bytes + len(data)
                     new_lines = total_lines + data.count(b"\n")
                     if new_bytes > MAX_BYTES or new_lines > MAX_LINES:
-                        # Hit the cap. We still fall through to
-                        # the next iteration to keep draining the
-                        # PTY — otherwise the child's `write`
-                        # would block once the slave buffer fills
-                        # and we'd deadlock — but we throw the
-                        # bytes away instead of accumulating.
                         truncated = True
                     else:
                         total_bytes = new_bytes
@@ -333,25 +309,11 @@ async def _exec_command_impl(
                         chunks.append(data)
         finally:
             try:
-                os.close(master_fd)
+                proc.stdout.close()
             except OSError:
                 pass
-            state["master_fd"] = None
-
-        # Reap the child. waitpid shouldn't fail here short of
-        # the child already being reaped under us, in which case
-        # we return whatever we already read with exit_code=-1.
-        try:
-            _, status = os.waitpid(pid, 0)
-        except ChildProcessError:
-            return b"".join(chunks), -1, truncated
-        if os.WIFEXITED(status):
-            exit_code = os.WEXITSTATUS(status)
-        elif os.WIFSIGNALED(status):
-            exit_code = 128 + os.WTERMSIG(status)
-        else:
-            exit_code = -1
-
+            state["pid"] = None
+        exit_code = proc.wait()
         return b"".join(chunks), exit_code, truncated
 
     exec_future = loop.run_in_executor(None, _run_pty)

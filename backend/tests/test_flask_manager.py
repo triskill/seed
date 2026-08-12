@@ -15,7 +15,7 @@ from seed_backend.flask_manager import FlaskManager
 def test_flask_manager_starts_and_stops():
     """Manager starts Flask, /api/ping returns 200, stop terminates cleanly."""
     async def scenario():
-        manager = FlaskManager(port=7778)
+        manager = FlaskManager(port=7778, app_dir="/home/borbot/prg/seed/webapp")
         try:
             await manager.start()
             await manager.wait_ready(timeout=15)
@@ -46,6 +46,16 @@ def test_flask_manager_enables_flask_debug_for_reload():
 
     class FakeProcess:
         returncode = None
+        pid = 12345
+
+        async def wait(self):
+            return 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def communicate(self):
+            return b"", b""
 
     async def fake_exec(*args, env=None, **kwargs):
         captured["env"] = env
@@ -56,7 +66,12 @@ def test_flask_manager_enables_flask_debug_for_reload():
         with patch(
             "asyncio.create_subprocess_exec", side_effect=fake_exec
         ):
-            await manager.start()
+            started = await manager.start()
+            # FakeProcess never actually binds 127.0.0.1:7778, so
+            # wait_ready times out and start() returns False.
+            # The captured env must still have FLASK_DEBUG=1 set
+            # (this is the only thing we're pinning in this test).
+            assert started is False
 
     asyncio.run(scenario())
     assert captured["env"] is not None

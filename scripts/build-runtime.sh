@@ -328,6 +328,11 @@ RUN cd /home/seed/app && git init -q
 # Python by default (PEP 668); the container IS the system, so
 # it's safe to override. `--no-cache-dir` keeps the layer small.
 RUN pip install --no-cache-dir --break-system-packages -r /home/seed/backend/requirements.txt
+# Install the webapp package (pulls in Flask as a dependency so the
+# orchestrator's FlaskManager can spawn the webapp subprocess on
+# /home/seed/app:7778). Pip install in non-editable mode (no .git
+# metadata copied into the layer; the runtime doesn't need it).
+RUN cd /home/seed/app && pip install --no-cache-dir --break-system-packages .
 RUN printf '%s' '{"model":"deepseek-v4-flash","provider":"opencode-go","ports":{"backend":7777,"flask":7778},"logLevel":"info"}' > /home/seed/backend/config.json
 DOCKERFILE
 

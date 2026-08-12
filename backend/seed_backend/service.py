@@ -88,11 +88,24 @@ async def lifespan(app: FastAPI):
     in `app.state.orchestrator` for the chat route (Task 3.2+)
     to consume.
 
-    If Flask fails to start (port in use, webapp not importable,
-    etc.) the orchestrator still comes up — `/health` will
-    report `flask: "down"` so the caller can diagnose.
-    Crashing the whole orchestrator because the webapp failed
-    to bind would be worse.
+    Flask starts in one of two modes:
+
+      * **subprocess** (dev): FlaskManager spawns `flask --app
+        seed_app.app run` as a child process. FLASK_DEBUG=1
+        enables the Werkzeug reloader so the worker agent's
+        edits to app.py are picked up on the next request.
+      * **wsgi_mount** (embedded runtime fallback): the
+        embedded Linux runtime launches the orchestrator
+        inside proot, which does not implement `fork(2)` on
+        Android. The lifespan catches the spawn failure and
+        mounts the Flask app's `wsgi_app` inside the
+        FastAPI process via a2wsgi — same routes, no
+        subprocess, no reloader.
+
+    The orchestrator still comes up regardless of Flask mode
+    — `/health` reports `flask: "up"` in either mode, or
+    `flask: "down"` if both fail (e.g. `seed_app` not
+    installed).
 
     If the `pi` cmd is unrunnable (e.g. `pi` not installed yet,
     pre-Phase 4) the orchestrator still comes up. The lifespan
@@ -112,13 +125,45 @@ async def lifespan(app: FastAPI):
     manager = FlaskManager(port=7778)
     app.state.flask_manager = manager
     app.state.shell_session = ShellSession()
+
+    # Try subprocess first (dev path); fall back to WSGI mount
+    # (embedded-runtime path). Either way, /health will report
+    # `flask: "up"` once the routes are reachable.
+    subprocess_ok = False
     try:
-        await manager.start()
-        await manager.wait_ready(timeout=15)
+        subprocess_ok = await manager.start()
     except Exception:
-        # Flask didn't come up; manager.is_up() returns False so
-        # /health will surface the failure. Move on.
-        pass
+        subprocess_ok = False
+
+    if not subprocess_ok:
+        # Mount the Flask WSGI app inside the FastAPI process
+        # via a2wsgi. No subprocess, no reloader, but the same
+        # routes serve on `/`. Imports happen here (not at
+        # module top) so a missing webapp package (e.g. partial
+        # extraction) doesn't prevent the orchestrator from
+        # starting at all.
+        try:
+            from a2wsgi import WSGIMiddleware  # type: ignore[import-not-found]
+            from seed_app.app import app as flask_app  # type: ignore[import-not-found]
+
+            # Flask is itself a WSGI callable — pass it directly,
+            # not `flask_app.wsgi_app` (the WSGI middleware Flask
+            # provides for nested WSGI apps).
+            #
+            # NB: `from seed_app import app` would import the
+            # *module* `seed_app.app` (because Python prefers the
+            # submodule over a top-level attribute named `app`),
+            # and a module isn't callable as a WSGI app. The
+            # explicit `from seed_app.app import app` reaches the
+            # Flask instance defined in app.py.
+            app.mount("/", WSGIMiddleware(flask_app))
+            manager.mount_wsgi()
+            print("[lifespan] Flask mounted via WSGI in-process (subprocess mode unavailable)", flush=True)
+        except Exception as exc:
+            # Both modes failed; /health will surface `flask: "down"`.
+            print(f"[lifespan] Flask WSGI mount failed: {exc!r}", flush=True)
+            with open("/tmp/seed-flask-wsgi-error.log", "w") as fh:
+                fh.write(f"WSGI mount failed: {exc!r}\n")
 
     # Phase 3: bring up both `pi` runners. (Task 3.1)
     # The env passed to each runner overrides

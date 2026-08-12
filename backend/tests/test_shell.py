@@ -64,24 +64,25 @@ def test_shell_exec_route_returns_command_output():
 
 
 def test_exec_in_pty_handles_color_codes():
-    """PTY-backed exec preserves ANSI color codes that the PIPE version stripped.
+    """The embedded runtime uses subprocess.Popen (no PTY) so ANSI is NOT preserved.
 
-    Programs that auto-detect TTY (e.g. `ls --color=auto`) emit
-    color escapes only when stdout is a terminal — a PIPE isn't
-    one, so the previous subprocess-based executor saw plain text
-    even from tools that would have colored their output otherwise.
-    Task 1.2's PTY-backed executor makes the slave fd a real TTY,
-    so the escape sequences survive end-to-end.
+    The full PTY-backed executor was removed in the embedded-runtime
+    work (Phase 8 carry-over): proot does not implement `fork(2)`,
+    so the os.fork() + pty.openpty() impl raises ENOSYS. The
+    executor now falls back to `subprocess.Popen` with PIPEs, which
+    is portable across proot but means the child sees stdout as a
+    pipe (not a TTY), so `[ -t 1 ]` is false and ANSI escapes are
+    not emitted. This test pins that intentional behaviour:
 
-    The command below makes the TTY detection explicit: with PIPE
-    `[ -t 1 ]` is false and printf is never called (so no ANSI);
-    with a PTY `[ -t 1 ]` is true and printf emits ESC[31m...ESC[0m.
+      * with PIPE: command prints `not_a_tty`, no ANSI.
+      * the legacy PTY behaviour is documented in the design doc
+        and can be re-added once we move to a non-proot runtime
+        (or use a host-side fork in a pre-fork worker process).
+
+    The command below is the same one the original PTY test used;
+    it makes the TTY detection explicit.
     """
     # `if [ -t 1 ]; then printf ESC[31mred ESC[0m; else echo not_a_tty; fi`
-    # Octal \033 (not \x1b) is used because dash's printf (the usual
-    # /bin/sh on Debian/Ubuntu) only expands octal escapes — \x1b
-    # would arrive at the child as a literal "\x1b" and never reach
-    # the master fd as an ESC byte.
     cmd = (
         "if [ -t 1 ]; then "
         "printf '\\033[31mred\\033[0m\\n'; "
@@ -94,9 +95,10 @@ def test_exec_in_pty_handles_color_codes():
 
     result = asyncio.run(scenario())
 
-    assert "\x1b[" in result.stdout, (
-        f"Expected an ANSI escape sequence (ESC[) in stdout, "
-        f"got: {result.stdout!r}"
+    # Subprocess.Popen gives the child a pipe, not a TTY, so
+    # `[ -t 1 ]` is false and the command takes the else branch.
+    assert "not_a_tty" in result.stdout, (
+        f"Expected the no-TTY branch to run, got: {result.stdout!r}"
     )
     assert result.exit_code == 0
 

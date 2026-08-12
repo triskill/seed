@@ -23,6 +23,11 @@ dependencies = [
     "uvicorn[standard]>=0.27",
     # flask_manager imports httpx for production readiness polling.
     "httpx>=0.27",
+    # Embedded runtime fallback: when the Flask subprocess can't
+    # spawn (proot does not implement fork(2) on Android — see
+    # Phase 8 carry-over), the manager mounts the Flask WSGI
+    # app inside the FastAPI process via a2wsgi.
+    "a2wsgi>=1.10",
     # pydantic, pyyaml are added in later tasks.
 ]
 

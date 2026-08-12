@@ -28,11 +28,15 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // The embedded backend and webapp run on the
-        // device and bind to these fixed loopback ports.
-        // 10.0.2.2 remains in the URL/network allowlists
-        // for development against services on the host.
-        buildConfigField("String", "WEBAPP_DEV_URL", "\"http://127.0.0.1:7778/\"")
+        // The embedded backend (FastAPI) runs on port 7777.
+        // The webapp (Flask) is mounted inside the same
+        // FastAPI process via a2wsgi (Phase 8 carry-over:
+        // proot on Android does not implement fork(2), so the
+        // Flask subprocess can't be spawned), so the webapp
+        // is reachable on the SAME port as the backend.
+        // 10.0.2.2 remains in the URL/network allowlists for
+        // development against services on the host.
+        buildConfigField("String", "WEBAPP_DEV_URL", "\"http://127.0.0.1:7777/\"")
         buildConfigField("String", "BACKEND_DEV_URL", "\"http://127.0.0.1:7777/\"")
     }
 
