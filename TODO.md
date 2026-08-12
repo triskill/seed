@@ -14,21 +14,51 @@ app inside the runtime; the App screen shows the result.
 
 ## Status at a glance
 
+_Status re-verified 2026-08-12 after the prototype bring-up on `seed_dev`
+x86_64 (commit `cdf8b1f`)._
+
 | Phase | What | Status |
 |---|---|---|
 | 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
-| 1 | Shell endpoint (PTY-backed) | ✅ done (5/5) |
-| 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ✅ done (6/6) |
-| 3 | Middle-man + worker orchestration | ✅ done (7/7) |
+| 1 | Shell endpoint (PTY-backed) | ✅ done (5/5); shell.py now uses subprocess.Popen (no PTY) so it works inside proot |
+| 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ✅ done (6/6); PiRunner still PTY+fork, see Phase 10 |
+| 3 | Middle-man + worker orchestration | ✅ done (7/7); orchestrator fork-based, see Phase 10 |
 | 4 | System prompts + first real agent loop | ✅ done (4/4) |
-| 5 | Android shell (4 screens, nav, WebView) | ✅ done (9/9) |
+| 5 | Android shell (4 screens, nav, WebView) | ✅ done (9/9); verified on emulator 2026-08-12 |
 | 6 | Android ↔ backend wiring | ✅ done (5/5) |
-| 7 | Native proot packaging + rootfs extraction | ✅ implementation complete; emulator acceptance pending |
-| 8 | Foreground service | ✅ implementation complete; emulator acceptance pending |
-| 9 | First-run runtime startup gate | ✅ implementation complete; instrumentation not run |
-| 10 | End-to-end polish | ⬜ not started |
+| 7 | Native proot packaging + rootfs extraction | ✅ done (5/5); verified on emulator |
+| 8 | Foreground service | ✅ done (4/4); verified on emulator |
+| 9 | First-run runtime startup gate | ✅ done (4/4); verified on emulator |
+| 10 | End-to-end polish | ⬜ partial (App auto-reload, error banners, cancel button still pending; see below) |
 
-Backend/webapp and Android JVM suites pass. Compose instrumentation tests compile; they have not been run in this worktree.
+**Prototype verified end-to-end on `seed_dev` x86_64 (2026-08-12):**
+
+* APK installs and launches without a host backend.
+* `BootController` extracts the Termux-Android-native proot bundle and
+  Alpine rootfs to `filesDir/linux/`.
+* `RuntimeService` runs proot, which launches uvicorn on
+  `127.0.0.1:7777` inside the embedded Linux runtime.
+* The Flask app is mounted **inside the FastAPI process** via
+  `a2wsgi.WSGIMiddleware` (the Flask subprocess path returns `OSError
+  38 (ENOSYS)` because `proot` on Android does not implement
+  `fork(2)`; the WSGI mount is the v0.1 workaround).
+* `/health` returns `{"status":"ok","flask":"up"}`; `/api/ping` returns
+  `{"pong": true}`; `/` returns the Seed placeholder card.
+* The App tab WebView loads the placeholder card.
+* The Chat tab opens a WebSocket to `/chat` and forwards user
+  messages; the orchestrator reports `"orchestrator not running"` for
+  the agent stream because the pi subprocess spawn hits the same
+  fork problem (next phase).
+* The Shell tab runs Alpine commands; `echo hello` shows
+  `$ echo hello` / `hello` / `[exit 0]`.
+
+Tests: **108/108 backend + webapp**, **173/173 Android unit tests**.
+The 4 Compose instrumentation tests (`StartRuntimeScreenTest`,
+`ProotExecutableTest`, `NormalLaunchTest`, `NativeProotSmokeTest`)
+compile; running them still requires an emulator. The
+`NativeProotSmokeTest` and `NormalLaunchTest` are new in this
+prototype — see `android/app/src/androidTest/` and
+`android/app/src/androidTestNormal/` respectively.
 
 ---
 
