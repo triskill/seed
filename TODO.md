@@ -1,41 +1,47 @@
 # Seed — TODO
 
 A self-improving Android app: the APK is an immutable shell with four screens
-(App, Chat, Shell, Settings); an embedded Linux runtime (proot + Alpine) hosts
-a Python orchestrator that drives two `pi` agent instances (a "middle-man" for
-intent and a "worker" for building); the worker mutates a Flask + SQLite web
-app inside the runtime; the App screen shows the result.
+(App, Chat, Shell, Settings); an embedded Linux runtime (proot + Alpine) is
+intended to host a Python orchestrator that drives two `pi` agent instances (a
+"middle-man" for intent and a "worker" for building). The current webapp is a
+minimal Flask mutation seed; SQLite-backed features are planned but not yet
+implemented. Host development can run FastAPI on 7777 and Flask on 7778; the
+Android prototype instead WSGI-mounts Flask into FastAPI on 7777. The App
+screen shows the webapp, but the on-device two-agent loop remains blocked as
+described below.
 
-**Full design:** [`docs/plans/2026-06-30-seed-app-design.md`](docs/plans/2026-06-30-seed-app-design.md) (494 lines, vision + architecture + risks).
-**Detailed phase tasks:** [`docs/plans/2026-06-30-seed-v0.1-bootstrap.md`](docs/plans/2026-06-30-seed-v0.1-bootstrap.md) (Phase 0 + Phase 1 task-by-task spec).
+**Original design:** [`docs/plans/2026-06-30-seed-app-design.md`](docs/plans/2026-06-30-seed-app-design.md) (vision, architecture, and risks; some runtime details are superseded here).
+**Original phased plan:** [`docs/plans/2026-06-30-seed-v0.1-bootstrap.md`](docs/plans/2026-06-30-seed-v0.1-bootstrap.md) (historical task-by-task specification; current status lives in this TODO).
 **Pi config:** [`docs/pi-config.md`](docs/pi-config.md) — project-local `.pi/agent/`, default model (`deepseek-v4-flash` on `opencode-go`), `OPENCODE_API_KEY` env var, `SEED_PI_*` overrides.
 
 ---
 
 ## Status at a glance
 
-_Status re-verified 2026-08-12 after the prototype bring-up on `seed_dev`
-x86_64 (commit `cdf8b1f`)._
+_Status re-verified 2026-08-13 at `main` commit `23982fc`. The embedded
+runtime bring-up itself was performed on `seed_dev` x86_64 on 2026-08-12._
 
 | Phase | What | Status |
 |---|---|---|
 | 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
-| 1 | Shell endpoint (PTY-backed) | ✅ done (5/5); shell.py now uses subprocess.Popen (no PTY) so it works inside proot |
-| 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ✅ done (6/6); PiRunner still PTY+fork, see Phase 10 |
-| 3 | Middle-man + worker orchestration | ✅ done (7/7); orchestrator fork-based, see Phase 10 |
-| 4 | System prompts + first real agent loop | ✅ done (4/4) |
+| 1 | Shell endpoint | ✅ done (5/5); `shell.py` uses `subprocess.Popen` with merged pipes so it works inside proot |
+| 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ⚠️ host-complete (6/6); `PiRunner` still uses PTY + `fork`, so it cannot start inside Android proot |
+| 3 | Middle-man + worker orchestration | ⚠️ host-complete (7/7); fake/real host flows work, but the embedded agent processes do not start |
+| 4 | System prompts + first real agent loop | ⚠️ host demo done (4/4); not reproduced inside the standalone APK |
 | 5 | Android shell (4 screens, nav, WebView) | ✅ done (9/9); verified on emulator 2026-08-12 |
 | 6 | Android ↔ backend wiring | ✅ done (5/5) |
 | 7 | Native proot packaging + rootfs extraction | ✅ done (5/5); verified on emulator |
 | 8 | Foreground service | ✅ done (4/4); verified on emulator |
 | 9 | First-run runtime startup gate | ✅ done (4/4); verified on emulator |
-| 10 | End-to-end polish | ⬜ partial (App auto-reload, error banners, cancel button still pending; see below) |
+| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; Android-compatible agent launch is the release blocker, followed by reload, security, cancellation, recovery, and UX work |
 
-**Prototype verified end-to-end on `seed_dev` x86_64 (2026-08-12):**
+**Embedded runtime shell verified on `seed_dev` x86_64 (2026-08-12; the agent loop is not end-to-end):**
 
 * APK installs and launches without a host backend.
-* `BootController` extracts the Termux-Android-native proot bundle and
-  Alpine rootfs to `filesDir/linux/`.
+* `BootController` extracts the Alpine rootfs and version data to
+  `filesDir/linux/`; PackageManager installs the selected
+  Termux-Android-native PRoot executable, loader, and shared libraries under
+  `applicationInfo.nativeLibraryDir`.
 * `RuntimeService` runs proot, which launches uvicorn on
   `127.0.0.1:7777` inside the embedded Linux runtime.
 * The Flask app is mounted **inside the FastAPI process** via
@@ -52,13 +58,21 @@ x86_64 (commit `cdf8b1f`)._
 * The Shell tab runs Alpine commands; `echo hello` shows
   `$ echo hello` / `hello` / `[exit 0]`.
 
-Tests: **108/108 backend + webapp**, **173/173 Android unit tests**.
-The 4 Compose instrumentation tests (`StartRuntimeScreenTest`,
-`ProotExecutableTest`, `NormalLaunchTest`, `NativeProotSmokeTest`)
-compile; running them still requires an emulator. The
-`NativeProotSmokeTest` and `NormalLaunchTest` are new in this
-prototype — see `android/app/src/androidTest/` and
-`android/app/src/androidTestNormal/` respectively.
+Verification on 2026-08-13: **106/106 backend tests** and **2/2 webapp
+tests** pass in clean isolated runs; **173/173 Android JVM tests** pass. The
+combined 108-test Python command has a known fixed-port/reloader cleanup race
+and can intermittently report 107 passed / 1 failed (it also passed 108/108 on
+a later clean run). The runtime tooling shell suite passes **30/30**. Android
+`lintDebug` and
+`assembleDebug` pass (0 lint errors, 27 warnings), and the instrumentation APK
+compiles. The current instrumentation source contains **2 classes / 6 test
+methods** (`StartRuntimeScreenTest` and `NativeProotSmokeTest`); these were not
+run on a device during this verification.
+
+> The phase tables below are an implementation history. Their per-task APK
+> sizes, test counts, URLs, and "new/modified" annotations describe the state at
+> that milestone; use **Status at a glance**, Phase 10, and **Known v0.1
+> limitations** for the current state.
 
 ---
 
@@ -68,7 +82,7 @@ prototype — see `android/app/src/androidTest/` and
 |---|---|---|---|
 | 0.1 | Init repo structure | `backend/`, `webapp/` | Both packages use hatchling; minimal `pyproject.toml`. |
 | 0.2 | FastAPI service with `/health` | `backend/seed_backend/service.py` | Skeleton FastAPI app. |
-| 0.3 | Config loading from `config.json` | `backend/seed_backend/config.py` | Small `Config` dataclass; load/save JSON; default ports `{backend: 7777, flask: 7778}`. |
+| 0.3 | Config loading from `config.json` | `backend/seed_backend/config.py` | Small `Config` dataclass; load/save JSON; default persisted/dev schema `{backend: 7777, flask: 7778}`. The embedded runtime currently serves both FastAPI and WSGI-mounted Flask on 7777, and startup does not consume this saved config. |
 | 0.4 | Web app `/api/ping` endpoint | `webapp/seed_app/app.py` | Flask app with `/` (placeholder card) and `/api/ping` (readiness signal). |
 | 0.5 | Wire Flask into backend | `backend/seed_backend/flask_manager.py` | `FlaskManager` spawns Flask via `asyncio.create_subprocess_exec`, polls `/api/ping` for readiness, terminates cleanly. FastAPI lifespan owns it. `/health` reports `{"status":"ok","flask":"up|down"}`. |
 | 0.6 | Dev startup script | `backend/scripts/dev.sh` | One command (`./backend/scripts/dev.sh`) brings up the full dev stack. |
@@ -77,17 +91,19 @@ prototype — see `android/app/src/androidTest/` and
 
 ---
 
-## ✅ Phase 1 — Shell endpoint (PTY-backed)
+## ✅ Phase 1 — Shell endpoint (pipe-backed subprocess)
 
 Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
-`{"stdout", "stderr", "exit_code", "captured_ansi", "truncated"}`.
+`{"stdout", "stderr", "exit_code", "truncated"}`. The library-level
+`ExecResult` also tracks `captured_ansi`, but the HTTP response does not expose
+that field.
 
 | # | Task | Files | Notes |
 |---|---|---|---|
 | 1.1 | Basic `/shell/exec` (subprocess) | `backend/seed_backend/shell.py`, `service.py` | Initial `asyncio.create_subprocess_exec` version (later rewritten by 1.2). Pydantic request/response models in `service.py`. Server-side 60s timeout (`SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS`). `min_length=1` on the command field. |
-| 1.2 | PTY-based execution | `backend/seed_backend/shell.py` | Rewrote to use `pty.openpty()` + `os.fork()` in a thread-pool executor. Child does `setsid()` + `dup2(slave, 0/1/2)` + `execvp("sh", ["sh", "-c", cmd])`. PTY put in raw mode so `echo hi\n` round-trips. ANSI codes preserved. `capture_ansi` option on `ExecResult`. |
-| 1.3 | Output truncation | `backend/seed_backend/shell.py` | `MAX_LINES = 5000`, `MAX_BYTES = 1 MiB`. Read loop stops accumulating once either cap is exceeded; PTY is still drained so the child never blocks. `truncated: bool` field added to `ExecResult` + `ShellExecResponse`. |
-| 1.4 | Cancellation | `backend/seed_backend/shell.py` | New `ExecCancelled` exception. `exec_command(..., cancel: asyncio.Event)` parameter. Watcher coroutine races the read via `asyncio.wait`; on signal, sends SIGTERM to the process group (`os.killpg`), closes the master fd to unblock the in-flight read, then SIGKILL after a 1s grace period. |
+| 1.2 | Process execution | `backend/seed_backend/shell.py` | Originally PTY + `fork`; the current implementation uses `subprocess.Popen(["sh", "-c", cmd])`, merged stdout/stderr pipes, and a new process session. This loses automatic TTY colour but works inside Android proot, where `fork(2)` returns ENOSYS. `capture_ansi` remains on the library result for compatibility. |
+| 1.3 | Output truncation | `backend/seed_backend/shell.py` | `MAX_LINES = 5000`, `MAX_BYTES = 1 MiB`. The pipe is drained after either cap is exceeded so the child cannot block. `truncated: bool` is exposed by `ExecResult` and `ShellExecResponse`. |
+| 1.4 | Cancellation | `backend/seed_backend/shell.py` | `ExecCancelled` and `exec_command(..., cancel: asyncio.Event)` provide library-level cancellation. The watcher sends SIGTERM to the subprocess process group and escalates to SIGKILL after a 1s grace period. The HTTP endpoint and Android client do not yet expose real cancellation. |
 | 1.5 | Working directory persistence | `backend/seed_backend/shell.py` | `ShellSession` class with `cwd: Path` attribute. Heuristic `^\s*cd\s+(\S+)(?:\s+(.*))?$` resolves, validates, and updates `cwd`; the rest of the command runs in the new cwd. Lifespan creates a single `app.state.shell_session`; the route uses it. Module-level `exec_command` kept as a stateless shortcut. |
 
 **Module shape after Phase 1:**
@@ -101,11 +117,11 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 | # | Task | Files | Notes |
 |---|---|---|---|
 | 2.1 | Fake pi for testing | `backend/tests/fixtures/fake_pi.py` | Python script that reads stdin, writes 3 JSONL progress events + "done", exits 0. |
-| 2.2 | PTY spawn + read loop | `backend/seed_backend/pi_runner.py` | `PiRunner.__init__(cmd, role, ...)`, `start()`, `send()`, `read_lines()` async generator. Uses `pty.openpty()` + `os.fork()` + `os.execvp` like `shell.py`. Per-runner `ThreadPoolExecutor` (avoids default-executor fragility under multi-threaded pytest). Child reports its post-setsid pgid through a pipe; stop() uses that for killpg (with a fallback to `os.kill(pid, ...)` if setsid failed). Only one `os.waitpid` call site, in `stop()`. |
+| 2.2 | PTY spawn + read loop | `backend/seed_backend/pi_runner.py` | `PiRunner.__init__(cmd, role, ...)`, `start()`, `send()`, `read_lines()` async generator. Uses `pty.openpty()` + `os.fork()` + `os.execvp`; unlike the Shell executor, this has not yet been converted to an Android-compatible process launcher. Per-runner `ThreadPoolExecutor` (avoids default-executor fragility under multi-threaded pytest). Child reports its post-setsid pgid through a pipe; stop() uses that for killpg (with a fallback to `os.kill(pid, ...)` if setsid failed). Only one `os.waitpid` call site, in `stop()`. |
 | 2.3 | Output ANSI strip | `backend/seed_backend/pi_runner.py`, `backend/tests/test_ansi_strip.py` | `PiRunner(strip_ansi=True)` (default on). Two module-level regexes — CSI (`ESC [`) and OSC (`ESC ]`) — applied on every line in the read loop. |
-| 2.4 | Tool-call filter (middle-man read-only) | `backend/seed_backend/pi_runner.py`, `backend/tests/test_tool_filter.py` | `PiRunner(read_only_tools={read,grep,find,ls})`. Read loop parses each line as JSON, looks for `type == "tool_execution_start"`, aborts child (SIGTERM) and raises `ToolCallBlocked(tool_name, event)` from `read_lines()` if the tool isn't allowed. Also: fixed a real PTY-EOF bug exposed by the tests (master fd returns `OSError(errno=EIO)` on EOF, not 0 bytes — see `seed_backend/pi_runner.py` `_read_loop`); the reader now signals EOF via a `None` sentinel. |
+| 2.4 | Tool-call filter capability | `backend/seed_backend/pi_runner.py`, `backend/tests/test_tool_filter.py` | `PiRunner(read_only_tools={read,grep,find,ls})` can block disallowed `tool_execution_start` events, abort the child, and raise `ToolCallBlocked`. PTY EOF handling treats `EIO` as EOF. **Current production wiring does not pass `read_only_tools`, so the middle-man prompt's read-only policy is not yet enforced by this filter.** |
 | 2.5 | System prompt preload | `backend/seed_backend/pi_runner.py`, `backend/tests/test_system_prompt.py` | `PiRunner(system_prompt=...)`. After fork but before `start()` returns, the runner writes the prompt + blank line to the child's stdin. Extracted into `_do_preload()` so auto-restart reuses it. |
-| 2.6 | Auto-restart on crash | `backend/seed_backend/pi_runner.py`, `backend/tests/test_auto_restart.py` | `PiRunner(auto_restart=False, max_restarts=5)`. The reader's EOF path calls `_restart()` (which calls `_do_fork()` + `_do_preload()`) up to `max_restarts` times; after that the stream ends. Default off to avoid surprising loops; production turns it on. |
+| 2.6 | Auto-restart on crash | `backend/seed_backend/pi_runner.py`, `backend/tests/test_auto_restart.py` | `PiRunner(auto_restart=False, max_restarts=5)` can restart from the reader's EOF path up to the configured limit. The default is off, and current production wiring also leaves it off; crash supervision remains Phase 10 work. |
 
 **Module shape after Phase 2:**
 - `pi_runner.py` — `PiRunner`, `PiRunnerNotRunning`, `ToolCallBlocked`, `_strip_ansi`, `_check_tool_call`, `_ANSI_CSI_RE`, `_ANSI_OSC_RE`.
@@ -154,6 +170,11 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 | 4.3 | Orchestrator speaks pi's RPC protocol | `backend/seed_backend/events.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi*.py`, `backend/tests/test_events.py`, `backend/tests/test_prompts.py` | The orchestrator was built assuming pi outputs plain text. Real `pi --mode rpc` expects JSON commands on stdin (`{"type":"prompt","message":"..."}`) and emits JSONL events on stdout (`message_update`, `tool_execution_start`, `turn_end`, etc.). Added `translate_pi_line` (in `events.py`) that unwraps pi's events back to plain text deltas / tool-call JSON / turn-boundary signals. `send_to_middleman` and the worker send now wrap messages in `{"type":"prompt",...}`. The fake pi fixtures were updated to parse the JSON wrapper and use the `message` field as the prompt, so the existing suite still passes without changes. New `scripts/demo_phase4_smoke.py` exercises the full stack with real `pi` (sends a question, gets a streamed text response). 13 new unit tests for the translator + 6 sanity tests for the prompt files. |
 | 4.4 | Real end-to-end build with live iteration | `backend/prompts/middleman.md`, `backend/prompts/worker.md`, `backend/seed_backend/flask_manager.py`, `backend/seed_backend/events.py` | Drove a real build (`Add a tiny /hello route`) with the local `opencode-go` / `deepseek-v4-flash` config. Observed the full chain: middle-man inspects state, emits a dispatch, worker edits `app.py` via the `edit` tool, verifies with `curl`, emits `<task:done summary="..."/>`, orchestrator broadcasts `complete` + `app_reload`. Three concrete issues found and fixed: (a) prompts hardcoded `/home/seed/app/` — replaced with `$SEED_APP_PATH` and threaded it through `pi_env_for_role` (env var, not argv); (b) the translator didn't handle `message_end` events, so the cheap deepseek model (which doesn't stream `text_delta` chunks) emitted the done marker only in `message_end` and the orchestrator's scan never saw it — added a `message_end` case that extracts the final text from `message.content` text blocks; (c) Flask wasn't in debug mode, so worker edits to `app.py` weren't picked up by the reloader and the worker had to manually `kill` + restart Flask (forbidden in production) — added `FLASK_DEBUG=1` to the subprocess env in `FlaskManager.start()`. After fixes, the worker verified the new route on the first `curl` attempt. The chat UI got `complete` + `app_reload` and the script exited cleanly. |
 
+> **Current embedded mismatch:** the Phase 4 host demo used Flask on port
+> 7778. Both role prompts still tell agents to verify routes on 7778, but the
+> Android WSGI fallback serves the webapp on FastAPI port 7777. Phase 10 must
+> make this endpoint mode-aware before an embedded worker can verify its edits.
+
 **Module shape after Phase 4 (so far):**
 - `backend/prompts/middleman.md` (new) — role prompt for the intent agent.
 - `backend/prompts/worker.md` (new) — role prompt for the builder agent.
@@ -169,9 +190,9 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 
 | # | Task | Files | Notes |
 |---|---|---|---|
-| 5.1 | Gradle init + blank MainActivity | `android/settings.gradle.kts`, `android/build.gradle.kts`, `android/gradle.properties`, `android/gradlew` + `gradle/wrapper/`, `android/app/build.gradle.kts`, `android/app/proguard-rules.pro`, `android/app/src/main/AndroidManifest.xml`, `android/app/src/main/java/com/seed/app/MainActivity.kt`, `android/app/src/main/java/com/seed/app/SeedApp.kt`, `android/app/src/main/res/values/{strings,colors,themes}.xml`, `android/app/src/main/res/mipmap-anydpi-v26/ic_launcher{,_round}.xml`, `android/app/src/main/res/drawable/ic_launcher_foreground.xml`, `android/README.md` | Modern AGP 8.5.0 + Kotlin 1.9.24 + Compose BOM 2024.06.00 (Material 3); minSdk 26, targetSdk 34. Pinned versions in the top-level `build.gradle.kts` with `apply false` so a fresh clone is deterministic. No `local.properties` in the repo — `ANDROID_HOME` env var (or auto-generated by Android Studio) is the source of truth, per the project `.gitignore`. `buildConfigField` exposes `WEBAPP_DEV_URL=http://10.0.2.2:7778/` and `BACKEND_DEV_URL=http://10.0.2.2:7777/` for the WebView (5.3) and WebSocket client (Phase 6) to read at compile time. Verified: `./gradlew assembleDebug` produces a 15 MB `app-debug.apk`; AAPT confirms `package: com.seed.app`, `minSdkVersion: 26`, `targetSdkVersion: 34`, label "Seed". **Buildable without a device** — but 5.2+ need an emulator to verify the UI. |
+| 5.1 | Gradle init + blank MainActivity | `android/settings.gradle.kts`, `android/build.gradle.kts`, `android/gradle.properties`, `android/gradlew` + `gradle/wrapper/`, `android/app/build.gradle.kts`, `android/app/proguard-rules.pro`, `android/app/src/main/AndroidManifest.xml`, `android/app/src/main/java/com/seed/app/MainActivity.kt`, `android/app/src/main/java/com/seed/app/SeedApp.kt`, `android/app/src/main/res/values/{strings,colors,themes}.xml`, `android/app/src/main/res/mipmap-anydpi-v26/ic_launcher{,_round}.xml`, `android/app/src/main/res/drawable/ic_launcher_foreground.xml`, `android/README.md` | Modern AGP 8.5.0 + Kotlin 1.9.24 + Compose BOM 2024.06.00 (Material 3); minSdk 26, targetSdk 34. Pinned versions in the top-level `build.gradle.kts` with `apply false` so a fresh clone is deterministic. No `local.properties` in the repo — `ANDROID_HOME` env var (or auto-generated by Android Studio) is the source of truth, per the project `.gitignore`. At this milestone, `buildConfigField` exposed host-dev URLs `WEBAPP_DEV_URL=http://10.0.2.2:7778/` and `BACKEND_DEV_URL=http://10.0.2.2:7777/`. Phase 9 superseded these defaults: current active WebView/HTTP/WS clients use embedded loopback `http://127.0.0.1:7777/`, where Flask and FastAPI share one port. Verified: `./gradlew assembleDebug` produces a 15 MB `app-debug.apk`; AAPT confirms `package: com.seed.app`, `minSdkVersion: 26`, `targetSdkVersion: 34`, label "Seed". **Buildable without a device** — but 5.2+ need an emulator to verify the UI. |
 | 5.2 | 4-section navigation skeleton | `android/app/src/main/java/com/seed/app/ui/nav/SeedNav.kt` (new), `android/app/src/main/java/com/seed/app/ui/{app,chat,shell,settings}/*Screen.kt` (new), `android/app/src/main/java/com/seed/app/MainActivity.kt` (modified), `android/app/src/main/res/values/strings.xml` (modified) | `SeedNav` is a `Scaffold` that owns a Material 3 `NavigationBar` (4 items: App / Chat / Shell / Settings) and a `NavHost` with matching routes. Standard bottom-nav tap idiom: `popUpTo` start + `saveState`/`restoreState` + `launchSingleTop`. The 4 `*Screen.kt` files are placeholders (centered title + subtitle string) — their real composables land in 5.3 (App/WebView), 5.4 (Chat), 5.5 (Shell), 5.6 (Settings). `MainActivity` now calls `SeedNav()`; the `SeedPlaceholderScreen` from 5.1 is gone. `R.string.tab_*` + `R.string.*_screen_title/subtitle` added. Auto-mirrored Chat icon (no deprecation warning; mirrors correctly in RTL). Verified: `assembleDebug` produces 16 MB `app-debug.apk`; lint clean on the new files; the backend suite still passes. **Visual verification was completed later in Phase 5.9.** |
-| 5.3 | WebView in App screen | `android/app/src/main/java/com/seed/app/ui/app/AppScreen.kt` (modified), `android/app/src/main/java/com/seed/app/ui/app/WebViewConfig.kt` (new), `android/app/src/main/res/xml/network_security_config.xml` (new), `android/app/src/test/java/com/seed/app/ui/app/WebViewConfigTest.kt` (new), `android/app/src/main/AndroidManifest.xml` (modified), `android/app/build.gradle.kts` (modified) | Replaces the 5.2 placeholder with `AndroidView` wrapping a `SwipeRefreshLayout` → `WebView` that loads `BuildConfig.WEBAPP_DEV_URL` (http://10.0.2.2:7778/ on emulator, http://127.0.0.1:7778/ on a physical device that uses `adb reverse`). **Security model is two narrow allowlists, defence in depth:** (1) `res/xml/network_security_config.xml` permits cleartext HTTP only to 10.0.2.2 + 127.0.0.1 (everything else stays HTTPS-only at the platform level); (2) `WebViewConfig.isAllowedUrl` (in a new module, pure function over `java.net.URI`) is the second filter — `WebViewClient.shouldOverrideUrlLoading` returns `true` (= block) for any URL whose host isn't in `{10.0.2.2, 127.0.0.1}` or whose scheme isn't http(s). Uses the modern 3-arg `shouldOverrideUrlLoading(view, request)` overload (avoids the deprecation warning on the 2-arg one). Pull-to-refresh: `SwipeRefreshLayout` (from `androidx.swiperefreshlayout:1.1.0`) wraps the WebView and calls `webView.reload()` on swipe. Picked over Compose's `PullToRefreshBox` because that's only in material3 1.3+ and our Compose BOM (2024.06.00) ships material3 1.2.1. Lifecycle: `WebView` is `remember`-ed so it survives recomposition; `DisposableEffect(Unit)` calls `webView.destroy()` on dispose so the renderer thread doesn't leak. **Unit tested (JVM):** `WebViewConfigTest` — 13 tests covering scheme / host / userinfo / host-suffix / case / malformed-URL edge cases. Verified: `./gradlew assembleDebug` → BUILD SUCCESSFUL (16 MB APK); `./gradlew testDebugUnitTest` and the backend suite pass; `./gradlew lintDebug` → clean; `aapt dump` confirms `INTERNET` permission + `networkSecurityConfig` resource ref in the packaged APK. **Visual verification was completed later in Phase 5.9.** |
+| 5.3 | WebView in App screen | `android/app/src/main/java/com/seed/app/ui/app/AppScreen.kt` (modified), `android/app/src/main/java/com/seed/app/ui/app/WebViewConfig.kt` (new), `android/app/src/main/res/xml/network_security_config.xml` (new), `android/app/src/test/java/com/seed/app/ui/app/WebViewConfigTest.kt` (new), `android/app/src/main/AndroidManifest.xml` (modified), `android/app/build.gradle.kts` (modified) | Replaces the 5.2 placeholder with `AndroidView` wrapping a `SwipeRefreshLayout` → `WebView` that loaded the milestone's host-dev `BuildConfig.WEBAPP_DEV_URL`; Phase 9 later changed it to `http://127.0.0.1:7777/`, where FastAPI mounts the Flask WSGI app. **Security model is two narrow allowlists, defence in depth:** (1) `res/xml/network_security_config.xml` permits cleartext HTTP only to 10.0.2.2 + 127.0.0.1 (everything else stays HTTPS-only at the platform level); (2) `WebViewConfig.isAllowedUrl` (in a new module, pure function over `java.net.URI`) is the second filter — `WebViewClient.shouldOverrideUrlLoading` returns `true` (= block) for any URL whose host isn't in `{10.0.2.2, 127.0.0.1}` or whose scheme isn't http(s). Uses the modern 3-arg `shouldOverrideUrlLoading(view, request)` overload (avoids the deprecation warning on the 2-arg one). Pull-to-refresh: `SwipeRefreshLayout` (from `androidx.swiperefreshlayout:1.1.0`) wraps the WebView and calls `webView.reload()` on swipe. Picked over Compose's `PullToRefreshBox` because that's only in material3 1.3+ and our Compose BOM (2024.06.00) ships material3 1.2.1. Lifecycle: `WebView` is `remember`-ed so it survives recomposition; `DisposableEffect(Unit)` calls `webView.destroy()` on dispose so the renderer thread doesn't leak. **Unit tested (JVM):** `WebViewConfigTest` — 13 tests covering scheme / host / userinfo / host-suffix / case / malformed-URL edge cases. Verified: `./gradlew assembleDebug` → BUILD SUCCESSFUL (16 MB APK); `./gradlew testDebugUnitTest` and the backend suite pass; `./gradlew lintDebug` → clean; `aapt dump` confirms `INTERNET` permission + `networkSecurityConfig` resource ref in the packaged APK. **Visual verification was completed later in Phase 5.9.** |
 | 5.4 | Chat screen UI | `android/app/src/main/java/com/seed/app/ui/chat/ChatScreen.kt` (modified), `android/app/src/main/java/com/seed/app/ui/chat/ChatMessage.kt` (new), `android/app/src/main/java/com/seed/app/ui/chat/ChatViewModel.kt` (new), `android/app/src/main/java/com/seed/app/ui/chat/MessageBubble.kt` (new), `android/app/src/test/java/com/seed/app/ui/chat/ChatViewModelTest.kt` (new) | Replaces the 5.2 chat placeholder with a real chat surface: a `LazyColumn` of `MessageBubble` rows driven by a `ChatViewModel` (`StateFlow<List<ChatMessage>>`), plus a bottom input bar (text field + send button). **Data model** — new `ChatMessage.kt` module: sealed class `ChatMessage` with three subclasses (`User` / `Agent` / `System`) so the Compose `when` in `MessageBubble` is exhaustively checked at compile time; `AgentRole` enum (MIDDLEMAN / WORKER) with `displayName` for card labels; `SystemEventKind` enum (COMPLETE / APP_RELOAD / ERROR) for orchestrator events. The companion-object `newId()` / `now()` helpers exist because Kotlin doesn't resolve private members of the enclosing class in a nested data class's default-parameter expression. **ChatViewModel** — `StateFlow<List<ChatMessage>>` (starts empty), `StateFlow<String> inputText`, `onInputChange(String)` passthrough, `send()` that trims the input, no-ops on blank, appends a User message, clears the input. **No backend wiring** — that's Phase 6.3. The public API (`messages` / `inputText` / `onInputChange` / `send`) is stable; Phase 6.3 only adds work inside `send()` and a flow-collector for the WebSocket events. **MessageBubble** — three private variants: `UserMessageBubble` (right-aligned, primary container fill, asymmetric corner radius so it "points" at the user), `AgentMessageCard` (full-width card, surfaceVariant fill, role label above body), `SystemMessageBanner` (full-width, colour keyed to `SystemEventKind`: tertiary / secondary / error container). **ChatScreen** — `LazyColumn` keyed on `message.id` (preserves row identity across list edits), `LaunchedEffect(messages.size)` auto-scrolls to bottom on new messages, `imePadding()` on the outer Column so the input bar is pushed above the soft keyboard, `KeyboardOptions(imeAction = ImeAction.Send)` + `KeyboardActions(onSend = send)` so the IME Send key submits, `testTag` semantics on list / input / send for future UI tests, `viewModel()` defaults to the NavBackStackEntry so the message list survives tab switches. **Unit tested (JVM):** `ChatViewModelTest` — 8 tests covering initial state, `onInputChange`, `send` (appends / clears / trims / no-op on empty / no-op on whitespace), and multi-message order. Verified: `./gradlew :app:assembleDebug` → BUILD SUCCESSFUL (16 MB APK, no new deps); the Android JVM and backend suites pass; `./gradlew :app:lintDebug` → clean. **Visual verification was completed later in Phase 5.9.** |
 | 5.5 | Shell screen UI | `android/app/src/main/java/com/seed/app/ui/shell/ShellScreen.kt` (modified), `android/app/src/main/java/com/seed/app/ui/shell/OutputLine.kt` (new), `android/app/src/main/java/com/seed/app/ui/shell/ShellViewModel.kt` (new), `android/app/src/main/java/com/seed/app/ui/shell/OutputLineRow.kt` (new), `android/app/src/test/java/com/seed/app/ui/shell/ShellViewModelTest.kt` (new) | Replaces the 5.2 shell placeholder with a real shell surface: a top input row (text field + Run button + Cancel button) and a bottom `LazyColumn` of `OutputLineRow` rows driven by a `ShellViewModel` (`StateFlow<List<OutputLine>>`). **Data model** — new `OutputLine.kt` module: sealed class `OutputLine` with four subclasses (`Command` / `Stdout` / `Stderr` / `Exit`) so the Compose `when` in `OutputLineRow` is exhaustively checked at compile time. **ShellViewModel** — `StateFlow<List<OutputLine>>` (starts empty), `StateFlow<String> input`, `onInputChange(String)` passthrough, `submit()` that trims the input, no-ops on blank, appends a `Command` + a fake `Exit(0)`, clears the input. **No backend wiring** — that's Phase 6.4. The public API (`output` / `input` / `onInputChange` / `submit`) is stable; Phase 6.4 only adds work inside `submit()` and adds an `isExecuting` flow that drives the Cancel button. **OutputLineRow** — four private variants: `CommandLine` (monospaced two-tone `AnnotatedString`: `$` prompt in primary, command in onSurface), `PlainLine` (monospaced, onSurface — for Stdout), `StderrLine` (monospaced, error colour), `ExitLine` (monospaced, muted `onSurfaceVariant`, renders `[exit N]`). All rows are 13 sp monospaced so columns line up the way they would in a real terminal. **ShellScreen** — input at TOP, output at BOTTOM (the plan calls for this layout, vs. the chat screen's input-at-bottom: the shell is a "form + log" pattern, not conversational, so the input is always visible and easy to reach with one hand). `LazyColumn` keyed on `OutputLine.id`, `LaunchedEffect(output.size)` auto-scrolls to the bottom on new lines, `imePadding()` on the outer Column, `KeyboardOptions(imeAction = ImeAction.Send)` + `KeyboardActions(onSend = submit)` so the IME Send key submits. **Cancel button** is rendered (so the layout is stable when Phase 6.4 enables it) but is permanently `enabled = false` in 5.5 — there is no "command running" state. Phase 6.4 will add the `isExecuting` flow and `cancel()` method. `testTag` semantics on list / input / run / cancel for future UI tests. **Unit tested (JVM):** `ShellViewModelTest` — 8 tests covering initial state, `onInputChange`, `submit` (appends Command+Exit / clears input / trims / no-op on empty / no-op on whitespace-only), and multi-submit order. Verified: `./gradlew :app:assembleDebug` → BUILD SUCCESSFUL (16 MB APK, no new deps); the Android JVM and backend suites pass; `./gradlew :app:lintDebug` → clean. **Visual verification was completed later in Phase 5.9.** |
 | 5.6 | Settings screen UI | `android/app/src/main/java/com/seed/app/ui/settings/SettingsScreen.kt` (modified), `android/app/src/main/java/com/seed/app/ui/settings/SettingsForm.kt` (new), `android/app/src/main/java/com/seed/app/ui/settings/SettingsViewModel.kt` (new), `android/app/src/main/res/values/strings.xml` (modified), `android/app/src/test/java/com/seed/app/ui/settings/SettingsViewModelTest.kt` (new) | Replaces the 5.2 settings placeholder with a real settings form: a scrollable `Column` with a provider dropdown, model text field, secure API key field, two numeric port fields, a log-level dropdown, and a Save button — all bound to a `SettingsViewModel` (`StateFlow<SettingsForm>`). **Data model** — new `SettingsForm.kt` module: `data class SettingsForm` with six fields (provider, model, apiKey, backendPort, webappPort, logLevel) with `DEFAULTS` matching the dev ports (7777/7778) and `KNOWN_PROVIDERS` (openai / anthropic / local) the provider dropdown suggests; `enum class LogLevel` (DEBUG / INFO / WARNING / ERROR) with `displayName` for the dropdown label and `ordinal` for the future in-app logger filter (Phase 7+). **SettingsViewModel** — `StateFlow<SettingsForm>` (starts at DEFAULTS), `StateFlow<SettingsForm?> lastSaved` (null until Save), six typed setters (`onProviderChange(String)` / `onModelChange(String)` / `onApiKeyChange(String)` / `onBackendPortChange(Int)` / `onWebappPortChange(Int)` / `onLogLevelChange(LogLevel)`) that each do a single `copy(...)` so the other fields are preserved, and `save()` that records the current form into `lastSaved` (in-memory). **No persistence yet** — that's Phase 5.7. The public API (`form` / `lastSaved` / six onXChange setters / `save`) is stable; Phase 5.7 only rewires `save()` to call `SettingsRepo` and adds a constructor-injected repo. **SettingsScreen** — `Column` with `verticalScroll` so the form scrolls on small screens; `SettingsHeader` (title + `StatusPill` on the right that flips between "Modified" `errorContainer` and "Saved" `tertiaryContainer` based on `form == lastSaved`); `ProviderDropdown` (M3 `ExposedDropdownMenuBox`, free-form — KNOWN_PROVIDERS is suggestion, not closed set); `OutlinedTextField` for model; `OutlinedTextField` for apiKey with `PasswordVisualTransformation` + `KeyboardType.Password` so the key is hidden on screen; two `PortField`s side by side in a `Row` with `weight(1f)` each, parsing to `Int` on each keystroke (`toIntOrNull() ?: 0` silently drops mid-typed garbage); `LogLevelDropdown` (M3 `ExposedDropdownMenuBox` over the closed `LogLevel` enum, read-only field); Save `Button` at the bottom. `testTag` semantics on every field for future UI tests. `strings.xml` gained 9 new strings (six field labels, save action, modified / saved status labels). **Unit tested (JVM):** `SettingsViewModelTest` — 9 tests covering initial state, each of the six onXChange setters, multi-field changes accumulate, and `save()` records the current form as `lastSaved`. Verified: `./gradlew :app:assembleDebug` → BUILD SUCCESSFUL (16 MB APK, no new deps); the Android JVM and backend suites pass; `./gradlew :app:lintDebug` → clean. **Visual verification was completed later in Phase 5.9.** |
@@ -187,16 +208,17 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 **Current status:**
 - Phase 5.9 visual verification is complete; the emulator results are recorded below.
 - Phase 6 backend wiring is complete.
-- Phase 7 now builds arm64 or x86_64 runtime bundles, packages the selected proot through `jniLibs`, and extracts only rootfs/version data from assets.
-- Native embedded-runtime startup acceptance on the emulator remains pending.
+- Phase 7 now builds arm64 or x86_64 runtime bundles, packages the selected four-library native PRoot bundle through `jniLibs`, and extracts only rootfs/version data from assets.
+- Native embedded-runtime startup was accepted on the x86_64 emulator on 2026-08-12; the agent loop remained blocked by `fork(2)`.
 
 **Verification:**
-- ✅ `assembleDebug` produces an APK
+- ✅ `assembleDebug` produces a runtime-bearing debug APK (~370.6 MB decimal / 353.4 MiB for the current x86_64 build)
 - ✅ AAPT confirms manifest, resources, and version codes
-- ✅ Lint runs against the project
-- ✅ Backend/webapp and Android JVM suites pass
-- ✅ Compose instrumentation tests compile
-- ⏳ Native proot/rootfs startup still needs controller-run emulator acceptance
+- ✅ `lintDebug` completes with 0 errors (27 warnings on 2026-08-13)
+- ✅ Backend and webapp pass separately; Android JVM suite passes 173/173
+- ✅ Current instrumentation suite (2 classes / 6 methods) compiles
+- ✅ Native PRoot/rootfs, uvicorn, WebView, and Shell startup were accepted on the x86_64 emulator on 2026-08-12
+- ❌ The embedded `pi` processes still cannot start because `PiRunner` requires `fork(2)`
 
 ## ✅ Phase 6 — Android ↔ backend wiring (5/5)
 
@@ -205,8 +227,8 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 | 6.1 | Retrofit + OkHttp + Moshi backend client | `android/app/src/main/java/com/seed/app/data/BackendApi.kt` (new), `android/app/src/main/java/com/seed/app/data/ApiModule.kt` (new), `android/app/src/test/java/com/seed/app/data/BackendApiTest.kt` (new), `android/app/build.gradle.kts` (modified) | Adds the HTTP layer the Android app uses to talk to the FastAPI orchestrator. Three endpoints: `GET /health`, `POST /shell/exec`, `PUT /config`. Snake-case JSON fields (`exit_code`, `api_key`) are mapped to camelCase Kotlin properties via Moshi's `@Json(name=...)`. Manual DI: `ApiModule.default` lazy-binds to `BuildConfig.BACKEND_DEV_URL`; `ApiModule.forTesting(url)` builds a fresh Retrofit with debug logging forced on. No Hilt — the app is too small for the annotation-processor tax. **Deps:** retrofit 2.11.0, converter-moshi 2.11.0, okhttp 4.12.0 (+ logging-interceptor), moshi 1.15.1 + moshi-kotlin + kotlin-reflect 1.9.24, testImplementation mockwebserver 4.12.0. **APK:** 17.9 MB → 18.8 MB (+890 KB). **9 unit tests** via MockWebServer — pin the wire format (snake_case ↔ camelCase), the suspend boundary, the 422 path, and the body shape the backend's Pydantic models expect. |
 | 6.2 | WebSocket chat client | `android/app/src/main/java/com/seed/app/data/ChatEvent.kt` (new), `android/app/src/main/java/com/seed/app/data/ChatWebSocket.kt` (new), `android/app/src/test/java/com/seed/app/data/ChatWebSocketTest.kt` (new) | OkHttp `WebSocket` (no extra dep) wrapped in a small lifecycle class. Public surface: `connect()` (idempotent, starts a long-running coroutine), `disconnect()` (cancels the loop + closes the WS cleanly with code 1000), `send(text)` (JSON-escapes via Moshi, returns `false` if not connected), `events: SharedFlow<ChatEvent>` (0 replay, 64-slot buffer, `DROP_OLDEST`, `tryEmit` for order-preservation across concurrent `onMessage` calls), `state: StateFlow<ConnectionState>`. **Reconnect with backoff:** `ReconnectBackoff` is 1s/2s/4s/8s/16s/30s (cap), no jitter, reset on successful `onOpen`. **ChatEvent** sealed class: MiddlemanLine / WorkerLine / Complete / AppReload / Error — gives the ChatViewModel's `when` a compile-time exhaustiveness check. **12 unit tests** + 3 `ReconnectBackoffTest` tests via MockWebServer's `WebSocketListener` (the 4.12.0 API — no `WebSocketHandler` class in 4.x). The `tearDown` catches `MockWebServer.shutdown()`'s "Gave up waiting for queue to shut down" — a known interop quirk with OkHttp 4.x WebSocket; the test body has already passed by then. |
 | 6.3 | Wire Chat screen | `android/app/src/main/java/com/seed/app/data/ChatTransport.kt` (new), `android/app/src/main/java/com/seed/app/data/ChatWebSocket.kt` (modified), `android/app/src/main/java/com/seed/app/ui/chat/ChatViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/ui/chat/ChatViewModelTest.kt` (modified) | `ChatTransport` interface (connect/send/events/close) is the testability seam — `ChatWebSocket` implements it; tests provide a `FakeChatTransport` that captures outbound `send` calls and emits canned `ChatEvent`s via `MutableSharedFlow.tryEmit`. The ViewModel's constructor takes `chat: ChatTransport = ChatWebSocket(BuildConfig.BACKEND_DEV_URL)`. `init` calls `chat.connect()` and launches a `viewModelScope` collector that translates each `ChatEvent` to a `ChatMessage` (MiddlemanLine → `Agent(MIDDLEMAN)`, WorkerLine → `Agent(WORKER)`, Complete → `System(COMPLETE)`, AppReload → `System(APP_RELOAD)`, Error → `System(ERROR)`). `send()` now also calls `chat.send(text)` after appending the local User bubble. `onCleared` calls `chat.close()` so the connection loop and scope don't outlive the screen. The Compose `ChatScreen.kt` doesn't change — the public API (`messages`, `inputText`, `onInputChange`, `send`) is the same shape as Phase 5.4. **10 new unit tests** (8 pre-existing local-only tests, updated to pass `FakeChatTransport`); the ChatViewModel test suite passes. `onCleared` coverage is omitted — `ViewModel.onCleared` is `protected` and the JVM unit test classpath can't easily trigger it; the close logic is exercised in `ChatWebSocketTest`. |
-| 6.4 | Wire Shell screen | `android/app/src/main/java/com/seed/app/ui/shell/ShellViewModel.kt` (modified), `android/app/src/main/java/com/seed/app/ui/shell/ShellScreen.kt` (modified), `android/app/src/test/java/com/seed/app/ui/shell/ShellViewModelTest.kt` (modified) | Constructor takes `backend: BackendApi = ApiModule.default`. `submit()` launches a `viewModelScope` coroutine that calls `POST /shell/exec`, then appends `Stdout` (if stdout non-empty) + `Stderr` (if stderr non-empty) + `Exit(exitCode)` lines. Network/HTTP failures surface as a sentinel `Exit(-1)` so the user sees something went wrong without crashing. New `isExecuting: StateFlow<Boolean>` (true while a call is in flight) drives the Shell screen's Cancel button. New `cancel()` is a stub for v0.1 — the backend has no cancel endpoint (the orchestrator's `session.exec()` runs to completion); tapping Cancel flips `isExecuting` to false but the HTTP call continues and the response still lands. A future task (Phase 10) will add a real cancel. Guard against concurrent submits: a second `submit` while a call is in flight is a no-op (the Run button is also visually disabled in the screen via the same `isExecuting` flow). The Compose `ShellScreen.kt` reads `isExecuting` and passes it to the input bar; Run button enabled = `value.isNotBlank() && !isExecuting`. **7 new unit tests** + an `in-flight` test that holds the call open with a `CompletableDeferred`; the ShellViewModel test suite passes. `FakeBackendApi` (in the test file) captures every `shellExec` call; `health()` and `putConfig()` are `TODO()` because the Shell screen doesn't use them. |
-| 6.5 | Wire Settings screen + `PUT /config` route | `backend/seed_backend/service.py` (modified), `backend/tests/test_config_route.py` (new), `android/app/src/main/java/com/seed/app/data/ConfigSync.kt` (new), `android/app/src/main/java/com/seed/app/ui/settings/SettingsViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/data/ConfigSyncTest.kt` (new), `android/app/src/test/java/com/seed/app/ui/settings/SettingsViewModelTest.kt` (modified) | **Backend:** new `ConfigPayload` (Pydantic, mirrors the Android `ConfigRequest`), new `ConfigResponse` (`{ok: bool}`), new `PUT /config` route that writes the payload via `Config.save(DEFAULT_CONFIG_PATH)` where `DEFAULT_CONFIG_PATH = Path("config.json")` (the uvicorn CWD — the Makefile's `dev.sh` `cd`s into `backend/` so this resolves to `backend/config.json` in dev). `min_length=1` on `provider` and `model`; `api_key` accepts the empty string (a fresh install's default). **5 backend tests** pin the wire format, the overwrite-not-append behaviour, the 422-on-empty-provider path, and non-default port handling. **Android:** new `ConfigSync` class (open, so tests can subclass) bridges `SettingsForm` → `ConfigRequest` and PUTs to the backend. Constructor takes `BackendApi`; `sync(form)` returns true on `ok=true`, false on any failure (network, HTTP 4xx/5xx, `ok=false`) — no exceptions leak. The `toRequest` mapping drops `logLevel` (the orchestrator has no log level concept yet; Phase 7+ will wire it). The SettingsViewModel's `save()` now: `repo.save(current)` → `sync.sync(current)` → `_lastSaved.value = current` — best-effort; a sync failure doesn't roll back the local save or block the status-pill flip (the local save is authoritative, the backend sync is a sink). **3 new SettingsViewModel tests** + **5 new ConfigSync tests** (the wire format — snake_case `api_key`, nested `ports`, the `logLevel` drop). The Android and backend suites passed after this task. |
+| 6.4 | Wire Shell screen | `android/app/src/main/java/com/seed/app/ui/shell/ShellViewModel.kt` (modified), `android/app/src/main/java/com/seed/app/ui/shell/ShellScreen.kt` (modified), `android/app/src/test/java/com/seed/app/ui/shell/ShellViewModelTest.kt` (modified) | Constructor takes `backend: BackendApi = ApiModule.default`. `submit()` launches a `viewModelScope` coroutine that calls `POST /shell/exec`, then appends `Stdout` (if stdout non-empty) + `Stderr` (if stderr non-empty) + `Exit(exitCode)` lines. Network/HTTP failures surface as a sentinel `Exit(-1)` so the user sees something went wrong without crashing. New `isExecuting: StateFlow<Boolean>` (true while a call is in flight) drives the Shell screen's Cancel button. New `cancel()` is a no-op stub for v0.1 — the backend has no cancel endpoint, `isExecuting` remains true, and the HTTP call runs until it returns or times out. A future task (Phase 10) will add a real cancel. Guard against concurrent submits: a second `submit` while a call is in flight is a no-op (the Run button is also visually disabled in the screen via the same `isExecuting` flow). The Compose `ShellScreen.kt` reads `isExecuting` and passes it to the input bar; Run button enabled = `value.isNotBlank() && !isExecuting`. **7 new unit tests** + an `in-flight` test that holds the call open with a `CompletableDeferred`; the ShellViewModel test suite passes. `FakeBackendApi` (in the test file) captures every `shellExec` call; `health()` and `putConfig()` are `TODO()` because the Shell screen doesn't use them. |
+| 6.5 | Wire Settings screen + `PUT /config` route | `backend/seed_backend/service.py` (modified), `backend/tests/test_config_route.py` (new), `android/app/src/main/java/com/seed/app/data/ConfigSync.kt` (new), `android/app/src/main/java/com/seed/app/ui/settings/SettingsViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/data/ConfigSyncTest.kt` (new), `android/app/src/test/java/com/seed/app/ui/settings/SettingsViewModelTest.kt` (modified) | **Backend:** new `ConfigPayload` (Pydantic, mirrors the Android `ConfigRequest`), new `ConfigResponse` (`{ok: bool}`), new `PUT /config` route that writes the payload via `Config.save(DEFAULT_CONFIG_PATH)` where `DEFAULT_CONFIG_PATH = Path("config.json")` (the uvicorn CWD). `backend/scripts/dev.sh` currently runs from the caller's CWD rather than changing into `backend/`, so the actual dev path is CWD-dependent and needs cleanup. `min_length=1` on `provider` and `model`; `api_key` accepts the empty string (a fresh install's default). **5 backend tests** pin the wire format, the overwrite-not-append behaviour, the 422-on-empty-provider path, and non-default port handling. **Android:** new `ConfigSync` class (open, so tests can subclass) bridges `SettingsForm` → `ConfigRequest` and PUTs to the backend. Constructor takes `BackendApi`; `sync(form)` returns true on `ok=true`, false on any failure (network, HTTP 4xx/5xx, `ok=false`) — no exceptions leak. The `toRequest` mapping drops `logLevel` (the orchestrator has no log level concept yet; Phase 7+ will wire it). The SettingsViewModel's `save()` now: `repo.save(current)` → `sync.sync(current)` → `_lastSaved.value = current` — best-effort; a sync failure doesn't roll back the local save or block the status-pill flip (the local save is authoritative, the backend sync is a sink). **3 new SettingsViewModel tests** + **5 new ConfigSync tests** (the wire format — snake_case `api_key`, nested `ports`, the `logLevel` drop). The Android and backend suites passed after this task. |
 
 **Module shape after Phase 6:**
 - `data/BackendApi.kt` — Retrofit interface (`/health`, `/shell/exec`, `/config`) + DTOs (HealthResponse, ShellExecRequest, ShellExecResponse, ConfigRequest, ConfigPorts, ConfigResponse).
@@ -227,8 +249,8 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 
 | # | Task | Files | Notes |
 |---|---|---|---|
-| 7.1 | Architecture-aware builder + generated layout | `scripts/{build-runtime.sh,runtime-target.sh}`, `android/app/src/main/jniLibs/`, `android/app/src/main/assets/linux/`, `docs/build-runtime.md` | The builder supports arm64 and x86_64 Docker targets. It publishes the selected executable to `jniLibs/arm64-v8a/libproot.so` or `jniLibs/x86_64/libproot.so`, removes the opposite generated ABI after successful validation, and publishes the matching source `rootfs.tar.gz` plus `seed_version.json` under assets. Generated proot/rootfs files are Git-ignored; the marker is tracked and published last. |
-| 7.2 | Build and validate both target layouts | (verification/tooling) | Architecture mapping and publication checks cover arm64 and x86_64. The selected `libproot.so` must be a matching 64-bit ELF; the Alpine archive checksum, Docker image architecture, and required Python, Node, pi, backend, and webapp runtime contents are validated before publication. The emulator runtime still requires controller-run acceptance. |
+| 7.1 | Architecture-aware builder + generated layout | `scripts/{build-runtime.sh,runtime-target.sh}`, `android/app/src/main/jniLibs/`, `android/app/src/main/assets/linux/`, `docs/build-runtime.md` | The builder supports arm64 and x86_64 Docker targets. It publishes the selected four-file native bundle (`libproot.so`, `libproot-loader.so`, `libtalloc.so`, `libandroid-shmem.so`) under the matching `jniLibs` ABI, removes the opposite generated ABI after successful validation, and publishes the matching source `rootfs.tar.gz` plus tracked `seed_version.json`. Generated native/rootfs files are Git-ignored. |
+| 7.2 | Build and validate both target layouts | (verification/tooling) | Architecture mapping and publication checks cover arm64 and x86_64. Every selected native library must be a matching 64-bit ELF; the Alpine archive checksum, Docker image architecture, and required Python, Node, pi, backend, and webapp runtime contents are validated before publication. The x86_64 runtime was accepted on the emulator on 2026-08-12; arm64 still requires a matching generated build and physical-device verification. |
 | 7.3 | Rootfs data extraction | `app/src/main/java/com/seed/app/runtime/{ExtractionProgress,AssetSource,RuntimeExtractor}.kt` | `RuntimeExtractor` consumes data entries only. It expands the merged `rootfs.tar` directly into `filesDir/linux/rootfs`, copies the marker, preserves symlinks and executable modes, materializes hard links as independent copies because Android SELinux denies filesystem hard links in private app data, rejects traversal, and cleans partial extraction after failure. It never copies or applies `chmod` to proot. JVM tests cover the extraction contract. |
 | 7.4 | `RootfsVersion` + data-only `AndroidAssetSource` | `app/src/main/java/com/seed/app/runtime/{RootfsVersion,AndroidAssetSource}.kt` | `RootfsVersion(seedVersion, buildId)` parses the marker. `AndroidAssetSource` selects only merged `rootfs.tar` and `seed_version.json`; legacy asset proot entries are ignored because proot is installed through the selected `jniLibs` ABI. JVM tests cover marker parsing and the asset boundary. |
 | 7.5 | Boot controller + extraction UI + MainActivity wiring | `app/src/main/java/com/seed/app/runtime/{BootState,BootController,ExtractionScreen}.kt`, `app/src/main/java/com/seed/app/MainActivity.kt` | `BootController` owns a `StateFlow<BootState>` (`NeedsExtraction` → `Extracting(progress)` → `Ready`), compares `filesDir/linux/.version` to the asset version, drives the extraction flow, writes `.version` on success. Extraction is serialized across activity recreation. JVM tests cover the controller. |
@@ -244,49 +266,77 @@ Endpoint: **`POST /shell/exec`** — accepts `{"command": "..."}`, returns
 **Full design:** [`docs/plans/2026-07-03-embedded-runtime.md`](docs/plans/2026-07-03-embedded-runtime.md).
 Phase 7 built the *extraction* half of the embedded runtime; this phase
 builds the *process supervision* half — the foreground service that
-spawns `proot` and keeps it alive while the app is foregrounded.
+spawns `proot` and keeps it alive in a foreground service even when the
+activity is backgrounded.
 
 | # | Task | Files | Notes |
 |---|---|---|---|
-| 8.0 | Native proot + asset rootfs installation (Phase 7 carryover) | `android/app/src/main/jniLibs/{arm64-v8a,x86_64}/libproot.so` (selected ABI only), `android/app/src/main/assets/linux/{rootfs.tar.gz,seed_version.json}`, `runtime/{NativeProot,RuntimeExtractor}.kt`, related tests | ✅ Runtime generation publishes proot through the selected native-library ABI and keeps rootfs/version as assets. AGP expands source `rootfs.tar.gz` to merged `rootfs.tar`, stored with `noCompress`; extraction streams it into `filesDir/linux/rootfs/` with Commons Compress. It preserves supported files, symlinks, and executable modes, materializes hard links as independent copies because Android SELinux denies filesystem hard links in private app data, rejects traversal, observes cancellation, and removes partial rootfs trees on failure. JVM and shell suites cover these boundaries. |
-| 8.1 | `ProotRunner` | `app/src/main/java/com/seed/app/runtime/ProotRunner.kt`, `app/src/test/java/com/seed/app/runtime/ProotRunnerTest.kt` | ✅ Spawns `proot -r filesDir/linux/rootfs /bin/sh -c "cd /home/seed/backend && exec uvicorn seed_backend.service:app --host 127.0.0.1 --port 7777"` via an injected `ProcessFactory`; exposes `isAlive`, `destroy()`, and separate stdout/stderr flows. Their 64-capacity channels buffer early output and apply backpressure once full. `destroy()` is idempotent and non-blocking: SIGTERM is followed by a daemon-thread five-second wait and `destroyForcibly()` escalation. **9 JVM tests.** |
+| 8.0 | Native proot + asset rootfs installation (Phase 7 carryover) | `android/app/src/main/jniLibs/{arm64-v8a,x86_64}/` (selected ABI's four native libraries), `android/app/src/main/assets/linux/{rootfs.tar.gz,seed_version.json}`, `runtime/{NativeProot,RuntimeExtractor}.kt`, related tests | ✅ Runtime generation publishes PRoot, its loader, and required shared libraries through the selected native-library ABI and keeps rootfs/version as assets. AGP expands source `rootfs.tar.gz` to merged `rootfs.tar`, stored with `noCompress`; extraction streams it into `filesDir/linux/rootfs/` with Commons Compress. It preserves supported files, symlinks, and executable modes, materializes hard links as independent copies because Android SELinux denies filesystem hard links in private app data, rejects traversal, observes cancellation, and removes partial rootfs trees on failure. JVM and shell suites cover these boundaries. |
+| 8.1 | `ProotRunner` | `app/src/main/java/com/seed/app/runtime/ProotRunner.kt`, `app/src/test/java/com/seed/app/runtime/ProotRunnerTest.kt` | ✅ Spawns `proot -r filesDir/linux/rootfs -b /dev -b /proc --kill-on-exit /bin/sh -c "cd /home/seed/backend && exec uvicorn seed_backend.service:app --host 127.0.0.1 --port 7777"` via an injected `ProcessFactory`; exposes `isAlive`, `destroy()`, and separate stdout/stderr flows. Their 64-capacity channels buffer early output and apply backpressure once full. `destroy()` is idempotent and non-blocking: SIGTERM is followed by a daemon-thread five-second wait and `destroyForcibly()` escalation. **11 JVM tests currently** (9 at the initial Phase 8 task). |
 | 8.2 | `HealthMonitor` | `app/src/main/java/com/seed/app/runtime/HealthMonitor.kt`, `app/src/test/java/com/seed/app/runtime/HealthMonitorTest.kt` | ✅ Cold `Flow<HealthState>` emits `Unknown`, then polls `BackendApi.health()` every 500 ms for up to 60 attempts. Each request has a 500 ms timeout; failed probes retry, exhaustion emits the final error as `Unhealthy`, and cancellation propagates. Any successful backend response is `Healthy(flask)`, including `flask="down"`. **8 JVM tests** cover immediate success, Flask-down readiness, fixed retry cadence, exhausted attempts, request timeout, and cancellation during both a probe and retry delay. |
-| 8.3 | `RuntimeService` (foreground) | `app/src/main/java/com/seed/app/runtime/{RuntimeService,RuntimeBinder}.kt` (new), `data/ApiModule.kt` (modified) | ✅ `RuntimeService` promotes itself immediately, resolves proot from `applicationInfo.nativeLibraryDir`, starts it with an embedded Linux `HOME`/`PATH`/`TERM`, logs both output streams, and polls the loopback backend through `ApiModule.embedded`. `RuntimeBinder` exposes health, process liveness, and stop. `onDestroy` terminates proot and cancels the service scope. Emulator integration acceptance remains pending until the controller runs it; this worktree does not claim service-wiring verification on device. |
+| 8.3 | `RuntimeService` (foreground) | `app/src/main/java/com/seed/app/runtime/{RuntimeService,RuntimeBinder}.kt` (new), `data/ApiModule.kt` (modified) | ✅ `RuntimeService` promotes itself immediately, resolves a `NativeProotInstallation` (executable, loader, libtalloc, and libandroid-shmem) from `applicationInfo.nativeLibraryDir`, starts it with `HOME`, `LANG`, `PATH`, `TERM`, `PROOT_TMP_DIR`, `PROOT_LOADER`, and `LD_LIBRARY_PATH`, logs both output streams, and polls the loopback backend through `ApiModule.embedded`. `RuntimeBinder` exposes health, process liveness, and stop. `onDestroy` terminates proot and cancels the service scope. The x86_64 service wiring, embedded uvicorn, and health polling were accepted on the emulator on 2026-08-12. |
 | 8.4 | Manifest + permissions + notification channel | `app/src/main/AndroidManifest.xml`, `app/src/main/java/com/seed/app/SeedApp.kt`, `app/src/main/res/drawable/ic_stat_seed.xml`, `res/values/strings.xml` | ✅ Declares `FOREGROUND_SERVICE`, Android 14's `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, and the non-exported `dataSync` service. `SeedApp` creates the low-importance `seed_runtime` channel on API 26+, and the ongoing service notification uses a monochrome vector icon plus a `MainActivity` content intent. The API 33 notification prompt remains Phase 9 activity wiring. |
 
-**Module shape after Phase 8:** the runtime package owns installation (`RuntimeExtractor`), installed-native lookup (`NativeProot`), process launch/termination (`ProotRunner`), readiness polling (`HealthMonitor`), and Android lifetime (`RuntimeService` + `RuntimeBinder`). The Android JVM suite passes; emulator service acceptance remains pending.
+**Module shape after Phase 8:** the runtime package owns installation (`RuntimeExtractor`), installed-native lookup (`NativeProot`), process launch/termination (`ProotRunner`), readiness polling (`HealthMonitor`), and Android lifetime (`RuntimeService` + `RuntimeBinder`). The Android JVM suite passes, and the x86_64 service/runtime path was accepted on the emulator on 2026-08-12.
 
 ## ✅ Phase 9 — First-run runtime startup gate (4/4)
 
 | # | Task | Files | Notes |
 |---|---|---|---|
 | 9.1 | Startup state resolver | `runtime/RuntimeStartup.kt`, `RuntimeStartupTest.kt` | ✅ Keeps extraction-owned `BootState` separate from service-owned `HealthState`. A pure resolver maps the pair to extraction UI, runtime UI, or `SeedNav`; a single-fire gate starts the service only after extraction is ready. This supersedes the older duplicate `BootState.Starting` / `RuntimeError` proposal. |
-| 9.2 | Runtime startup + retry UI | `runtime/StartRuntimeScreen.kt`, `androidTest/.../StartRuntimeScreenTest.kt`, `res/values/strings.xml` | ✅ Shows polling progress and attempt count, or an error banner and Retry action. The Compose instrumentation suite compiles; it has not been run in this worktree. |
+| 9.2 | Runtime startup + retry UI | `runtime/StartRuntimeScreen.kt`, `androidTest/.../StartRuntimeScreenTest.kt`, `res/values/strings.xml` | ✅ Shows polling progress and attempt count, or an error banner and Retry action. The current instrumentation suite compiles; it was not run on a device during the 2026-08-13 verification. |
 | 9.3 | Service lifecycle wiring + retry | `MainActivity.kt`, `runtime/{RuntimeSupervisor,RuntimeService,RuntimeBinder}.kt` | ✅ `MainActivity` starts and binds the foreground service after extraction, mirrors binder health, requests Android 13+ notification permission once, gates navigation until healthy, retains the service in the background, and unbinds on destroy. Retry re-polls a live process or replaces a dead one. Extraction is single-flight across activity recreation. |
-| 9.4 | Embedded endpoint defaults + host persistence | `app/build.gradle.kts`, `data/{ApiModule,AndroidSettingsRepo}.kt`, `ui/{app,settings}/*`, related tests | ✅ HTTP, WebSocket, and WebView defaults now use `127.0.0.1:7777/7778`; cleartext and navigation allowlists remain restricted to loopback plus `10.0.2.2`. `SettingsForm.host` defaults to and persists `127.0.0.1`, with migration for older saved forms. Dynamic client rebuilding and the host UI remain Phase 10 because the embedded runtime ports are currently fixed. |
+| 9.4 | Embedded endpoint defaults + host persistence | `app/build.gradle.kts`, `data/{ApiModule,AndroidSettingsRepo}.kt`, `ui/{app,settings}/*`, related tests | ✅ Active HTTP, WebSocket, and WebView clients use `127.0.0.1:7777`; Flask is WSGI-mounted on the FastAPI port in the embedded runtime. Cleartext/navigation allowlists retain loopback plus `10.0.2.2`. `SettingsForm.host` persists `127.0.0.1`; its legacy `webappPort=7778` field and other saved endpoint values do not currently rebuild clients or reconfigure/restart the backend. That operational wiring and host UI remain Phase 10 work. |
 
-**Module shape after Phase 9:** `RuntimeSupervisor` owns retryable process/health startup, `RuntimeStartup` owns pure UI gating, and `MainActivity` is the Android lifecycle adapter. The Android JVM suite passes, and the Compose instrumentation suite compiles but has not been run in this worktree.
+**Module shape after Phase 9:** `RuntimeSupervisor` owns retryable process/health startup, `RuntimeStartup` owns pure UI gating, and `MainActivity` is the Android lifecycle adapter. The Android JVM suite passes; the current 2-class / 6-method instrumentation suite compiles but was not run during the latest verification.
 
-## ⬜ Phase 10 — End-to-end polish
+## ⬜ Phase 10 — Embedded agent loop + end-to-end readiness
 
-6 tasks: App screen auto-reload, error banners, cancel button in Shell,
-"Add a habit tracker" full demo, polish + edge cases, final demo.
+The first item is a release blocker; the remaining items turn the working
+runtime shell into a safe, recoverable product flow.
 
-Plus the **deferred items from the embedded-runtime design doc §4**:
-notification icon design, "stop / restart / wipe" runtime controls in
-Settings, health-status pill in the App bar, multi-process proot
-supervision / auto-restart on crash, splitting the rootfs into a
-separate `.obb` to shrink the APK.
+1. **Replace the fork-based `PiRunner` process model.** Android proot returns
+   ENOSYS for `fork(2)`, so neither embedded `pi` process currently starts.
+   Preserve RPC streaming, process-group termination, tool filtering, and tests
+   using an Android-compatible launcher.
+2. **Make worker edits take effect in embedded mode.** The in-process WSGI
+   fallback has no Flask reloader. Define a safe app reload/restart mechanism,
+   then make `app_reload` refresh the App WebView rather than only adding a Chat
+   banner.
+3. **Secure the loopback control plane.** Authenticate HTTP/WS requests, verify
+   backend identity, separate or authenticate mutable web content versus
+   privileged control routes, protect API-key transfer/storage, enforce a real
+   middle-man read-only boundary, and constrain worker mutation to the app
+   workspace.
+4. **Finish Shell and Chat behavior.** Add a real backend cancellation protocol,
+   wire Android Cancel to it, surface truncation/connection/sync failures, avoid
+   silently dropping offline sends, and bound or persist long histories.
+5. **Make Settings operational.** Load saved provider/model/key/ports at backend
+   startup, rebuild clients or restart services when endpoints change, expose
+   the persisted host where appropriate, and remove or migrate the legacy
+   two-port fields.
+6. **Harden runtime recovery.** Detect process death after initial health,
+   handle bind timeouts and extraction failures, add explicit stop/restart/wipe
+   controls, and enable bounded crash supervision.
+7. **Run the product demo and release checks.** Complete the "Add a habit
+   tracker" standalone-APK demo, run instrumentation on x86_64 and arm64,
+   resolve lint/release-signing/licensing items, and add CI plus static checks.
+
+Deferred distribution/UI work from the embedded-runtime design includes the
+notification/icon polish, App-bar health status, and moving the ~350 MB
+uncompressed rootfs out of the base APK (for example via an appropriate modern
+Android asset-delivery mechanism rather than assuming `.obb`).
 
 ---
 
 ## Phase 5.9 — visual verification (carried forward + completed)
 
-**Status: ✅ verified on the emulator (2026-07-03).** This section
-documents what the on-device demo showed end-to-end with the
-Phase 6 wiring in place.
+**Status: ✅ verified on the emulator against a host-side dev backend
+(2026-07-03).** This historical Phase 5/6 UI verification is distinct from the
+embedded-runtime bring-up on 2026-08-12. The referenced screenshots were local
+scratch artifacts and are not tracked in the repository.
 
-**What was verified** (screenshots in `.pi/scratch/seed-shots/`):
+**What was verified:**
 
 | # | Verification | Result |
 |---|---|---|
@@ -318,21 +368,74 @@ that handles the `/chat` upgrade). `pyproject.toml` declares
 the dep correctly (`"uvicorn[standard]>=0.27"`), so a fresh
 `pip install -e "./backend[dev]"` would have it — the venv
 just hadn't been re-installed since the dep was added. Fixed
-locally with `pip install 'uvicorn[standard]'`. A fresh
-`make install` (or equivalent) gets it for new clones.
+locally with `pip install 'uvicorn[standard]'`. `make install` installs
+Android tooling only; Python dependencies come from
+`.venv/bin/pip install -e "./backend[dev]" -e "./webapp[dev]"`.
 
 ## Known v0.1 limitations (carry-forward TODOs)
 
-- **Prototype security: the loopback backend is unauthenticated.** Android localhost ports are reachable by other apps, and the current surface includes `/shell/exec`, `/config`, `/chat`, and the mutable Flask app. Do not ship or install alongside untrusted apps. Before production, add authenticated transport plus server-identity protection so a malicious app cannot occupy ports 7777/7778 and capture credentials.
-- **Runtime startup still has three unrecoverable edge cases.** A proot process that dies immediately can leave health at `Unknown`; an accepted service binding has no callback timeout; and extraction exceptions are not translated into retryable UI. Add explicit `Unhealthy`/extraction-error transitions and regression tests after the prototype milestone.
-- **`os.fork()` from a multi-threaded process emits a `DeprecationWarning` in Python 3.12+.** Safe in practice here (child immediately `execvp`s — no Python state is touched) but the long-term fix is a `subprocess.Popen` + PTY abstraction or a dedicated single-threaded worker process. Phase 2+ is a good time to address.
-- **Stderr is merged into stdout** under PTY (both go to the slave). The response shape keeps `stderr: ""` for back-compat. A richer wire format (separate channels) is a later task if any client needs it.
-- **`ShellSession` cwd tracking is heuristic**, not a true persistent shell: only a leading `cd <path>` is recognised; `cd /tmp && ls` updates `cwd` for the Python side but the `ls` runs in the updated cwd. `cd` inside `$()` or backticks is not tracked. A real persistent shell process is a future task.
-- **No CI** — tests are run locally. A GitHub Actions workflow (or equivalent) is a future task.
-- **No `mypy`/lint config** in the repo. v0.1 is "ship it"; static analysis is a future task.
-- **No git remote** — Phase 0/1 work was merged locally to `master` only. Push + PR is a future task.
-- **Pi uses `--no-session` so it doesn't persist per-process session files** — the orchestrator drives long-running pi processes for the lifetime of the FastAPI app, and persisting those sessions would pollute `~/.pi/agent/sessions/`. Chat history persistence (replaying from the last seen message ID across reconnects) is a separate concern, handled at the orchestrator level (e.g. logging to `logs/tasks.jsonl`) rather than by pi's session. Phase 4+ will add that.
-
+- **The defining embedded agent loop is blocked.** `PiRunner` uses PTY +
+  `os.fork()`, while Android proot returns ENOSYS for `fork(2)`. The shell,
+  embedded backend, and WebView work, but Chat cannot run the two `pi` agents.
+  On Python 3.12+, the same code also warns that forking a multithreaded host
+  process can deadlock.
+- **Embedded worker edits cannot hot-reload yet.** Flask falls back to an
+  in-process WSGI mount on Android, which has no code reloader. The current
+  `app_reload` event only renders a Chat banner and does not refresh the App
+  WebView.
+- **Prototype security: the loopback backend is unauthenticated.** Android
+  localhost is shared with other apps, and the surface includes arbitrary
+  `/shell/exec`, `/config`, `/chat`, and mutable Flask routes. API keys cross
+  this cleartext channel, are written to backend JSON, and can appear in
+  debug-build OkHttp BODY logs. Add authenticated
+  transport and server-identity protection before distribution. Embedded
+  Flask content and the privileged FastAPI routes currently share the same
+  `http://127.0.0.1:7777` origin while WebView JavaScript is enabled, so mutable
+  web content can call control routes unless they are separated/authenticated.
+  The network-security and navigation allowlists restrict cleartext targets and
+  top-level navigation; they are not authentication and do not comprehensively
+  block HTTPS subresources. Prompt rules are not a sandbox, and current service
+  wiring does not enable the available middle-man tool filter.
+- **Settings are not operational backend configuration.** `PUT /config`
+  persists a CWD-relative, non-atomic JSON file, but startup does not load it;
+  provider/model still come from defaults or environment variables and ports
+  remain fixed. Android host/port changes do not rebuild active clients or
+  restart the runtime, and sync failures are not surfaced.
+- **Host dev path selection needs repair.** `backend/scripts/dev.sh` does not
+  set `SEED_APP_PATH` or change to a layout recognized by
+  `FlaskManager._default_app_dir()`. In this repository (`webapp/`, not `app/`),
+  the Flask subprocess path can fall back to WSGI and agents default to the
+  nonexistent `/home/seed/app` unless the environment is overridden.
+- **Runtime recovery is incomplete.** A process that dies immediately can
+  leave health at `Unknown`; an accepted service binding has no callback
+  timeout; extraction failures are not translated into retryable UI; and
+  health is not continuously monitored after the first success. A wedged but
+  still-alive process is re-polled rather than restarted, and any successful
+  `/health` response is treated as ready even when its `flask` field is down.
+- **Shell cancellation and output semantics are incomplete.** The library can
+  cancel a subprocess, but the HTTP/Android protocol does not expose it.
+  `subprocess.Popen` merges stderr into stdout, so `stderr` remains empty, and
+  Android currently ignores the `truncated` response flag.
+- **`ShellSession` cwd tracking is heuristic and process-global.** Only a
+  leading `cd <path>` is recognized, concurrent callers share the same cwd,
+  and every command still runs in a fresh shell.
+- **Chat and agent sessions are process-global.** Clients share the two agent
+  conversations and receive one another's events; queues may drop old events,
+  offline sends can be lost, and there is no replay/history persistence.
+- **Verification automation is incomplete.** There is no CI and no Python
+  lint/type-check configuration. The Python suite has a known fixed-port Flask
+  cleanup race when run as one combined command. Android instrumentation
+  compiles but was not run during the latest verification.
+- **Distribution is unfinished.** Generated rootfs/native artifacts are
+  Git-ignored and architecture-specific; a fresh checkout must run
+  `make runtime`. The current x86_64 debug APK is ~370.6 MB decimal, release
+  signing/minification are unfinished, the project license is TBD, and PRoot's
+  GPL/source-distribution obligations must be resolved.
+- **Pi uses `--no-session`.** Per-process pi session files are intentionally
+  disabled, but orchestrator-level chat/task history and reconnect replay have
+  not been implemented.
+- **Repository state:** `main` is synchronized with `origin/main`; the old
+  statement that the project had no remote was obsolete.
 ---
 
 ## Quick reference
@@ -344,17 +447,26 @@ python3 -m venv .venv
 # Set the API key for the default model (one-time, in your shell rc).
 # See docs/pi-config.md for the full story.
 export OPENCODE_API_KEY="sk-..."
-./backend/scripts/dev.sh   # starts uvicorn (which spawns Flask via lifespan)
+export SEED_APP_PATH="$PWD/webapp"  # required until dev-path discovery is fixed
+./backend/scripts/dev.sh   # starts uvicorn; current repo layout may use WSGI fallback
 # in another shell:
 curl http://127.0.0.1:7777/health    # {"status":"ok","flask":"up"}
 curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json' \
      -d '{"command": "ls --color=auto /tmp"}'
 ```
 
-**Run all tests:**
+**Run tests:**
 ```bash
-.venv/bin/python -m pytest backend/ webapp/ -v
-# backend/webapp suites pass
+# Isolated Python runs are authoritative while the fixed-port cleanup race remains.
+.venv/bin/python -m pytest backend/ -v   # 106 passed on 2026-08-13
+.venv/bin/python -m pytest webapp/ -v    # 2 passed on 2026-08-13
+./scripts/tests/runtime-tools-test.sh           # 30 passed
+
+cd android
+./gradlew --no-daemon :app:testDebugUnitTest  # 173 passed
+./gradlew --no-daemon :app:lintDebug :app:assembleDebug
+./gradlew --no-daemon :app:assembleDebugAndroidTest
+# Run connected instrumentation separately with a matching emulator/device.
 ```
 
 **Run the Phase 3 manual demo (no real pi / API key needed):**
@@ -369,5 +481,5 @@ git worktree add .worktrees/<phase-name> -b feat/<phase-name>
 cd .worktrees/<phase-name>
 python3 -m venv .venv && .venv/bin/pip install -e "./backend[dev]" -e "./webapp[dev]"
 # ... implement, test, commit ...
-# when done: merge to master, remove worktree, delete branch
+# when done: merge to main, remove worktree, delete branch
 ```
