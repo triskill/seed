@@ -72,14 +72,23 @@ class FlaskManager:
 
     @staticmethod
     def _default_app_dir() -> str:
-        # The runtime ships the webapp at `/home/seed/app`. Dev
-        # (`./backend/scripts/dev.sh`) puts uvicorn's cwd at
-        # `<repo>/backend/`, so the webapp is at the sibling
-        # `<repo>/webapp/`. Pick whichever exists so the manager
-        # works in both layouts without configuration.
-        for candidate in ("/home/seed/app", os.path.abspath("..") + "/app"):
-            if os.path.isdir(candidate):
-                return candidate
+        """Resolve the mutable webapp in embedded and source layouts.
+
+        `SEED_APP_PATH` is also passed to both agent roles, so honoring it here
+        keeps Flask and the worker pointed at the same tree. Without an
+        override, locate the repository webapp relative to this module rather
+        than the caller's working directory, then fall back to the embedded
+        runtime path.
+        """
+        configured = os.environ.get("SEED_APP_PATH")
+        if configured:
+            return os.path.abspath(configured)
+
+        repo_webapp = Path(__file__).resolve().parents[2] / "webapp"
+        candidates = (repo_webapp, Path("/home/seed/app"))
+        for candidate in candidates:
+            if candidate.is_dir():
+                return str(candidate)
         return "/home/seed/app"
 
     async def start(self) -> bool:

@@ -19,9 +19,18 @@ if [ -f "$REPO_ROOT/.venv/bin/activate" ]; then
     source "$REPO_ROOT/.venv/bin/activate"
 fi
 
-# Defaults — override via env if you need a different bind address.
+# Defaults — override via env if you need a different bind address or app.
 HOST="${SEED_BACKEND_HOST:-127.0.0.1}"
 PORT="${SEED_BACKEND_PORT:-7777}"
+SEED_APP_PATH="${SEED_APP_PATH:-$REPO_ROOT/webapp}"
+if [[ "$SEED_APP_PATH" != /* ]]; then
+    SEED_APP_PATH="$PWD/$SEED_APP_PATH"
+fi
+export SEED_APP_PATH
+
+# Run from backend/ so the source package imports without relying on a stale
+# editable install and the documented relative config path is deterministic.
+cd "$REPO_ROOT/backend"
 
 # `exec` so uvicorn becomes the foreground process and receives
 # signals directly (cleaner Ctrl-C behaviour than a bash wrapper).

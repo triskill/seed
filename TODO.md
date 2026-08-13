@@ -58,11 +58,11 @@ runtime bring-up itself was performed on `seed_dev` x86_64 on 2026-08-12._
 * The Shell tab runs Alpine commands; `echo hello` shows
   `$ echo hello` / `hello` / `[exit 0]`.
 
-Verification on 2026-08-13: **106/106 backend tests** and **2/2 webapp
-tests** pass in clean isolated runs; **173/173 Android JVM tests** pass. The
-combined 108-test Python command has a known fixed-port/reloader cleanup race
-and can intermittently report 107 passed / 1 failed (it also passed 108/108 on
-a later clean run). The runtime tooling shell suite passes **30/30**. Android
+Verification on 2026-08-13: **111/111 backend tests** and **2/2 webapp
+tests** pass, including the combined **113/113** Python run; **173/173 Android
+JVM tests** pass. The Flask environment test is isolated from fixed port 7778,
+removing its prior order-dependent readiness race. The runtime tooling shell
+suite passes **30/30**. Android
 `lintDebug` and
 `assembleDebug` pass (0 lint errors, 27 warnings), and the instrumentation APK
 compiles. The current instrumentation source contains **2 classes / 6 test
@@ -85,7 +85,7 @@ run on a device during this verification.
 | 0.3 | Config loading from `config.json` | `backend/seed_backend/config.py` | Small `Config` dataclass; load/save JSON; default persisted/dev schema `{backend: 7777, flask: 7778}`. The embedded runtime currently serves both FastAPI and WSGI-mounted Flask on 7777, and startup does not consume this saved config. |
 | 0.4 | Web app `/api/ping` endpoint | `webapp/seed_app/app.py` | Flask app with `/` (placeholder card) and `/api/ping` (readiness signal). |
 | 0.5 | Wire Flask into backend | `backend/seed_backend/flask_manager.py` | `FlaskManager` spawns Flask via `asyncio.create_subprocess_exec`, polls `/api/ping` for readiness, terminates cleanly. FastAPI lifespan owns it. `/health` reports `{"status":"ok","flask":"up|down"}`. |
-| 0.6 | Dev startup script | `backend/scripts/dev.sh` | One command (`./backend/scripts/dev.sh`) brings up the full dev stack. |
+| 0.6 | Dev startup script | `backend/scripts/dev.sh` | One command brings up the host stack. It now exports an absolute `SEED_APP_PATH`, runs uvicorn from `backend/`, and `FlaskManager` resolves the same webapp independently of the caller's CWD. |
 | 0.7 | README with quickstart | `README.md` | Project intro + quick start. |
 | 0.8 | Phase 0 demo | (verification) | Manual: curl `/health`, `/`, `/api/ping` against running stack — all green. |
 
@@ -228,7 +228,7 @@ that field.
 | 6.2 | WebSocket chat client | `android/app/src/main/java/com/seed/app/data/ChatEvent.kt` (new), `android/app/src/main/java/com/seed/app/data/ChatWebSocket.kt` (new), `android/app/src/test/java/com/seed/app/data/ChatWebSocketTest.kt` (new) | OkHttp `WebSocket` (no extra dep) wrapped in a small lifecycle class. Public surface: `connect()` (idempotent, starts a long-running coroutine), `disconnect()` (cancels the loop + closes the WS cleanly with code 1000), `send(text)` (JSON-escapes via Moshi, returns `false` if not connected), `events: SharedFlow<ChatEvent>` (0 replay, 64-slot buffer, `DROP_OLDEST`, `tryEmit` for order-preservation across concurrent `onMessage` calls), `state: StateFlow<ConnectionState>`. **Reconnect with backoff:** `ReconnectBackoff` is 1s/2s/4s/8s/16s/30s (cap), no jitter, reset on successful `onOpen`. **ChatEvent** sealed class: MiddlemanLine / WorkerLine / Complete / AppReload / Error — gives the ChatViewModel's `when` a compile-time exhaustiveness check. **12 unit tests** + 3 `ReconnectBackoffTest` tests via MockWebServer's `WebSocketListener` (the 4.12.0 API — no `WebSocketHandler` class in 4.x). The `tearDown` catches `MockWebServer.shutdown()`'s "Gave up waiting for queue to shut down" — a known interop quirk with OkHttp 4.x WebSocket; the test body has already passed by then. |
 | 6.3 | Wire Chat screen | `android/app/src/main/java/com/seed/app/data/ChatTransport.kt` (new), `android/app/src/main/java/com/seed/app/data/ChatWebSocket.kt` (modified), `android/app/src/main/java/com/seed/app/ui/chat/ChatViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/ui/chat/ChatViewModelTest.kt` (modified) | `ChatTransport` interface (connect/send/events/close) is the testability seam — `ChatWebSocket` implements it; tests provide a `FakeChatTransport` that captures outbound `send` calls and emits canned `ChatEvent`s via `MutableSharedFlow.tryEmit`. The ViewModel's constructor takes `chat: ChatTransport = ChatWebSocket(BuildConfig.BACKEND_DEV_URL)`. `init` calls `chat.connect()` and launches a `viewModelScope` collector that translates each `ChatEvent` to a `ChatMessage` (MiddlemanLine → `Agent(MIDDLEMAN)`, WorkerLine → `Agent(WORKER)`, Complete → `System(COMPLETE)`, AppReload → `System(APP_RELOAD)`, Error → `System(ERROR)`). `send()` now also calls `chat.send(text)` after appending the local User bubble. `onCleared` calls `chat.close()` so the connection loop and scope don't outlive the screen. The Compose `ChatScreen.kt` doesn't change — the public API (`messages`, `inputText`, `onInputChange`, `send`) is the same shape as Phase 5.4. **10 new unit tests** (8 pre-existing local-only tests, updated to pass `FakeChatTransport`); the ChatViewModel test suite passes. `onCleared` coverage is omitted — `ViewModel.onCleared` is `protected` and the JVM unit test classpath can't easily trigger it; the close logic is exercised in `ChatWebSocketTest`. |
 | 6.4 | Wire Shell screen | `android/app/src/main/java/com/seed/app/ui/shell/ShellViewModel.kt` (modified), `android/app/src/main/java/com/seed/app/ui/shell/ShellScreen.kt` (modified), `android/app/src/test/java/com/seed/app/ui/shell/ShellViewModelTest.kt` (modified) | Constructor takes `backend: BackendApi = ApiModule.default`. `submit()` launches a `viewModelScope` coroutine that calls `POST /shell/exec`, then appends `Stdout` (if stdout non-empty) + `Stderr` (if stderr non-empty) + `Exit(exitCode)` lines. Network/HTTP failures surface as a sentinel `Exit(-1)` so the user sees something went wrong without crashing. New `isExecuting: StateFlow<Boolean>` (true while a call is in flight) drives the Shell screen's Cancel button. New `cancel()` is a no-op stub for v0.1 — the backend has no cancel endpoint, `isExecuting` remains true, and the HTTP call runs until it returns or times out. A future task (Phase 10) will add a real cancel. Guard against concurrent submits: a second `submit` while a call is in flight is a no-op (the Run button is also visually disabled in the screen via the same `isExecuting` flow). The Compose `ShellScreen.kt` reads `isExecuting` and passes it to the input bar; Run button enabled = `value.isNotBlank() && !isExecuting`. **7 new unit tests** + an `in-flight` test that holds the call open with a `CompletableDeferred`; the ShellViewModel test suite passes. `FakeBackendApi` (in the test file) captures every `shellExec` call; `health()` and `putConfig()` are `TODO()` because the Shell screen doesn't use them. |
-| 6.5 | Wire Settings screen + `PUT /config` route | `backend/seed_backend/service.py` (modified), `backend/tests/test_config_route.py` (new), `android/app/src/main/java/com/seed/app/data/ConfigSync.kt` (new), `android/app/src/main/java/com/seed/app/ui/settings/SettingsViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/data/ConfigSyncTest.kt` (new), `android/app/src/test/java/com/seed/app/ui/settings/SettingsViewModelTest.kt` (modified) | **Backend:** new `ConfigPayload` (Pydantic, mirrors the Android `ConfigRequest`), new `ConfigResponse` (`{ok: bool}`), new `PUT /config` route that writes the payload via `Config.save(DEFAULT_CONFIG_PATH)` where `DEFAULT_CONFIG_PATH = Path("config.json")` (the uvicorn CWD). `backend/scripts/dev.sh` currently runs from the caller's CWD rather than changing into `backend/`, so the actual dev path is CWD-dependent and needs cleanup. `min_length=1` on `provider` and `model`; `api_key` accepts the empty string (a fresh install's default). **5 backend tests** pin the wire format, the overwrite-not-append behaviour, the 422-on-empty-provider path, and non-default port handling. **Android:** new `ConfigSync` class (open, so tests can subclass) bridges `SettingsForm` → `ConfigRequest` and PUTs to the backend. Constructor takes `BackendApi`; `sync(form)` returns true on `ok=true`, false on any failure (network, HTTP 4xx/5xx, `ok=false`) — no exceptions leak. The `toRequest` mapping drops `logLevel` (the orchestrator has no log level concept yet; Phase 7+ will wire it). The SettingsViewModel's `save()` now: `repo.save(current)` → `sync.sync(current)` → `_lastSaved.value = current` — best-effort; a sync failure doesn't roll back the local save or block the status-pill flip (the local save is authoritative, the backend sync is a sink). **3 new SettingsViewModel tests** + **5 new ConfigSync tests** (the wire format — snake_case `api_key`, nested `ports`, the `logLevel` drop). The Android and backend suites passed after this task. |
+| 6.5 | Wire Settings screen + `PUT /config` route | `backend/seed_backend/service.py` (modified), `backend/tests/test_config_route.py` (new), `android/app/src/main/java/com/seed/app/data/ConfigSync.kt` (new), `android/app/src/main/java/com/seed/app/ui/settings/SettingsViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/data/ConfigSyncTest.kt` (new), `android/app/src/test/java/com/seed/app/ui/settings/SettingsViewModelTest.kt` (modified) | **Backend:** new `ConfigPayload` (Pydantic, mirrors the Android `ConfigRequest`), new `ConfigResponse` (`{ok: bool}`), new `PUT /config` route that writes the payload via `Config.save(DEFAULT_CONFIG_PATH)` where `DEFAULT_CONFIG_PATH = Path("config.json")` (the uvicorn CWD). `backend/scripts/dev.sh` now changes into `backend/`, so host-dev writes resolve deterministically to `backend/config.json`; other launch methods remain CWD-relative. `min_length=1` on `provider` and `model`; `api_key` accepts the empty string (a fresh install's default). **5 backend tests** pin the wire format, the overwrite-not-append behaviour, the 422-on-empty-provider path, and non-default port handling. **Android:** new `ConfigSync` class (open, so tests can subclass) bridges `SettingsForm` → `ConfigRequest` and PUTs to the backend. Constructor takes `BackendApi`; `sync(form)` returns true on `ok=true`, false on any failure (network, HTTP 4xx/5xx, `ok=false`) — no exceptions leak. The `toRequest` mapping drops `logLevel` (the orchestrator has no log level concept yet; Phase 7+ will wire it). The SettingsViewModel's `save()` now: `repo.save(current)` → `sync.sync(current)` → `_lastSaved.value = current` — best-effort; a sync failure doesn't roll back the local save or block the status-pill flip (the local save is authoritative, the backend sync is a sink). **3 new SettingsViewModel tests** + **5 new ConfigSync tests** (the wire format — snake_case `api_key`, nested `ports`, the `logLevel` drop). The Android and backend suites passed after this task. |
 
 **Module shape after Phase 6:**
 - `data/BackendApi.kt` — Retrofit interface (`/health`, `/shell/exec`, `/config`) + DTOs (HealthResponse, ShellExecRequest, ShellExecResponse, ConfigRequest, ConfigPorts, ConfigResponse).
@@ -401,11 +401,6 @@ Android tooling only; Python dependencies come from
   provider/model still come from defaults or environment variables and ports
   remain fixed. Android host/port changes do not rebuild active clients or
   restart the runtime, and sync failures are not surfaced.
-- **Host dev path selection needs repair.** `backend/scripts/dev.sh` does not
-  set `SEED_APP_PATH` or change to a layout recognized by
-  `FlaskManager._default_app_dir()`. In this repository (`webapp/`, not `app/`),
-  the Flask subprocess path can fall back to WSGI and agents default to the
-  nonexistent `/home/seed/app` unless the environment is overridden.
 - **Runtime recovery is incomplete.** A process that dies immediately can
   leave health at `Unknown`; an accepted service binding has no callback
   timeout; extraction failures are not translated into retryable UI; and
@@ -423,9 +418,8 @@ Android tooling only; Python dependencies come from
   conversations and receive one another's events; queues may drop old events,
   offline sends can be lost, and there is no replay/history persistence.
 - **Verification automation is incomplete.** There is no CI and no Python
-  lint/type-check configuration. The Python suite has a known fixed-port Flask
-  cleanup race when run as one combined command. Android instrumentation
-  compiles but was not run during the latest verification.
+  lint/type-check configuration. Android instrumentation compiles but was not
+  run during the latest verification.
 - **Distribution is unfinished.** Generated rootfs/native artifacts are
   Git-ignored and architecture-specific; a fresh checkout must run
   `make runtime`. The current x86_64 debug APK is ~370.6 MB decimal, release
@@ -447,8 +441,7 @@ python3 -m venv .venv
 # Set the API key for the default model (one-time, in your shell rc).
 # See docs/pi-config.md for the full story.
 export OPENCODE_API_KEY="sk-..."
-export SEED_APP_PATH="$PWD/webapp"  # required until dev-path discovery is fixed
-./backend/scripts/dev.sh   # starts uvicorn; current repo layout may use WSGI fallback
+./backend/scripts/dev.sh   # exports the repo webapp path and starts uvicorn + Flask
 # in another shell:
 curl http://127.0.0.1:7777/health    # {"status":"ok","flask":"up"}
 curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json' \
@@ -457,9 +450,7 @@ curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json
 
 **Run tests:**
 ```bash
-# Isolated Python runs are authoritative while the fixed-port cleanup race remains.
-.venv/bin/python -m pytest backend/ -v   # 106 passed on 2026-08-13
-.venv/bin/python -m pytest webapp/ -v    # 2 passed on 2026-08-13
+.venv/bin/python -m pytest backend/ webapp/ -v  # 113 passed on 2026-08-13
 ./scripts/tests/runtime-tools-test.sh           # 30 passed
 
 cd android
