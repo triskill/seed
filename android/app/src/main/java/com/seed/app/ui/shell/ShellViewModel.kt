@@ -31,7 +31,9 @@ import kotlinx.coroutines.launch
  *     `POST /shell/exec`, then appends the
  *     response as a [OutputLine.Stdout] line, an
  *     optional [OutputLine.Stderr] line (only if
- *     the response has stderr), and a
+ *     the response has stderr), an optional
+ *     [OutputLine.Truncated] warning when the
+ *     backend capture limit was reached, and a
  *     [OutputLine.Exit] line with the real
  *     exit code from the backend;
  *   - a new [isExecuting] [StateFlow] is `true`
@@ -118,7 +120,9 @@ class ShellViewModel(
      * response is appended as a [OutputLine.Stdout]
      * line (if stdout is non-empty), a
      * [OutputLine.Stderr] line (if stderr is
-     * non-empty), and a [OutputLine.Exit] line
+     * non-empty), an [OutputLine.Truncated]
+     * warning when the response says output was
+     * truncated, and an [OutputLine.Exit] line
      * with the real exit code. Failures
      * (network down, backend 500) surface as a
      * special [OutputLine.Exit] with code `-1`
@@ -165,13 +169,15 @@ class ShellViewModel(
      *     signal);
      *   - [OutputLine.Stderr] iff `response.stderr`
      *     is non-empty (same rule);
+     *   - [OutputLine.Truncated] iff the backend's
+     *     capture cap was reached;
      *   - [OutputLine.Exit] always, with the
      *     response's exit code (or `-1` for
      *     network/HTTP failure, see [submit]).
      *
      * We append in submission-order, so a
      * command with both stdout and stderr
-     * renders as: [Stdout, Stderr, Exit].
+     * renders as: [Stdout, Stderr, Truncated, Exit].
      */
     private fun appendResponse(response: ShellExecResponse?) {
         val current = _output.value
@@ -184,6 +190,9 @@ class ShellViewModel(
                 }
                 if (response.stderr.isNotEmpty()) {
                     add(OutputLine.Stderr(text = response.stderr))
+                }
+                if (response.truncated) {
+                    add(OutputLine.Truncated())
                 }
                 add(OutputLine.Exit(code = response.exitCode))
             }

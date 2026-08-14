@@ -236,6 +236,47 @@ class ShellViewModelTest {
     }
 
     @Test
+    fun submitAppendsTruncationWarningBeforeExitWhenCaptureLimitWasReached() = runTest {
+        fakeBackend.nextResponse = ShellExecResponse(
+            stdout = "partial output\n",
+            stderr = "",
+            exitCode = 0,
+            truncated = true,
+        )
+        val vm = ShellViewModel(backend = fakeBackend)
+        vm.onInputChange("generate-lots-of-output")
+
+        vm.submit()
+
+        val lines = vm.output.value
+        assertEquals(4, lines.size)
+        assertEquals(OutputLine.Command("generate-lots-of-output"), lines[0])
+        assertEquals(OutputLine.Stdout("partial output\n"), lines[1])
+        assertTrue(lines[2] is OutputLine.Truncated)
+        assertEquals(OutputLine.Exit(0), lines[3])
+    }
+
+    @Test
+    fun submitShowsTruncationWarningEvenWhenNoOutputWasCaptured() = runTest {
+        fakeBackend.nextResponse = ShellExecResponse(
+            stdout = "",
+            stderr = "",
+            exitCode = 0,
+            truncated = true,
+        )
+        val vm = ShellViewModel(backend = fakeBackend)
+        vm.onInputChange("generate-one-huge-line")
+
+        vm.submit()
+
+        val lines = vm.output.value
+        assertEquals(3, lines.size)
+        assertEquals(OutputLine.Command("generate-one-huge-line"), lines[0])
+        assertTrue(lines[1] is OutputLine.Truncated)
+        assertEquals(OutputLine.Exit(0), lines[2])
+    }
+
+    @Test
     fun submitSetsIsExecutingFalseAfterResponse() = runTest {
         // The fake's shellExec is suspending but
         // returns immediately, so by the time

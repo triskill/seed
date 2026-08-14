@@ -5,9 +5,9 @@ import java.util.UUID
 /**
  * One row in the shell's output stream.
  *
- * Four cases — the same three a real terminal
+ * Five cases — the same three a real terminal
  * surfaces (echoed command, stdout, stderr) plus
- * a status row for the exit code:
+ * status rows for truncation and the exit code:
  *
  *   - [Command] — the line the user submitted,
  *                 rendered with a `$ ` prompt
@@ -17,10 +17,13 @@ import java.util.UUID
  *   - [Stdout]  — a normal output line.
  *   - [Stderr]  — a diagnostic line, rendered in
  *                 the error colour.
- *   - [Exit]    — a status line reporting the
- *                 command's exit code. Renders as
- *                 `[exit 0]` / `[exit 1]` etc. in
- *                 a muted colour.
+ *   - [Truncated] — a warning that the backend
+ *                   stopped capturing after its
+ *                   output limit was reached.
+ *   - [Exit]      — a status line reporting the
+ *                   command's exit code. Renders as
+ *                   `[exit 0]` / `[exit 1]` etc. in
+ *                   a muted colour.
  *
  * Sealed because [com.seed.app.ui.shell.OutputLineRow]
  * uses Compose `when` over this class and the
@@ -48,6 +51,11 @@ sealed class OutputLine {
 
     /** A line of stderr from the command. */
     data class Stderr(val text: String) : OutputLine() {
+        override val id: String = Companion.newId()
+    }
+
+    /** The backend reached its output capture limit. */
+    class Truncated : OutputLine() {
         override val id: String = Companion.newId()
     }
 

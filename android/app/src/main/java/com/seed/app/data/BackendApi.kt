@@ -136,9 +136,8 @@ data class ShellExecRequest(
  * [exitCode] is the child's exit status (0 on
  * success, non-zero on error). [truncated] is
  * `true` if the server-side 5000-line / 1-MiB cap
- * kicked in — the Shell screen can show an
- * "output truncated" affordance in a future task
- * (Phase 10 polish).
+ * kicked in — the Shell screen renders a warning
+ * row before the exit status when this is true.
  */
 data class ShellExecResponse(
     val stdout: String,

@@ -308,9 +308,11 @@ runtime shell into a safe, recoverable product flow.
    privileged control routes, protect API-key transfer/storage, enforce a real
    middle-man read-only boundary, and constrain worker mutation to the app
    workspace.
-4. **Finish Shell and Chat behavior.** Add a real backend cancellation protocol,
-   wire Android Cancel to it, surface truncation/connection/sync failures, avoid
-   silently dropping offline sends, and bound or persist long histories.
+4. **Finish Shell and Chat behavior.** Android now renders a distinct warning
+   when the backend reports truncated shell output (completed 2026-08-14).
+   Remaining work: add a real backend cancellation protocol, wire Android Cancel
+   to it, surface connection/sync failures, avoid silently dropping offline
+   sends, and bound or persist long histories.
 5. **Make Settings operational.** Load saved provider/model/key/ports at backend
    startup, rebuild clients or restart services when endpoints change, expose
    the persisted host where appropriate, and remove or migrate the legacy
@@ -409,8 +411,8 @@ Android tooling only; Python dependencies come from
   `/health` response is treated as ready even when its `flask` field is down.
 - **Shell cancellation and output semantics are incomplete.** The library can
   cancel a subprocess, but the HTTP/Android protocol does not expose it.
-  `subprocess.Popen` merges stderr into stdout, so `stderr` remains empty, and
-  Android currently ignores the `truncated` response flag.
+  `subprocess.Popen` merges stderr into stdout, so `stderr` remains empty.
+  Android now shows a warning row when the backend reports truncated output.
 - **`ShellSession` cwd tracking is heuristic and process-global.** Only a
   leading `cd <path>` is recognized, concurrent callers share the same cwd,
   and every command still runs in a fresh shell.
@@ -454,7 +456,7 @@ curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json
 ./scripts/tests/runtime-tools-test.sh           # 30 passed
 
 cd android
-./gradlew --no-daemon :app:testDebugUnitTest  # 173 passed
+./gradlew --no-daemon :app:testDebugUnitTest  # 175 passed
 ./gradlew --no-daemon :app:lintDebug :app:assembleDebug
 ./gradlew --no-daemon :app:assembleDebugAndroidTest
 # Run connected instrumentation separately with a matching emulator/device.

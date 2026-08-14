@@ -26,6 +26,7 @@
 
     <string name="shell_screen_title">Shell</string>
     <string name="shell_screen_subtitle">Run commands in the runtime</string>
+    <string name="shell_output_truncated">[output truncated: capture limit reached]</string>
 
     <string name="settings_screen_title">Settings</string>
     <string name="settings_screen_subtitle">Provider, model, API key</string>

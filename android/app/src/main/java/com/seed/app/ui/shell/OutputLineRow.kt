@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -14,12 +15,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.seed.app.R
 
 /**
  * Renders one [OutputLine] as a single row in the
  * shell's output `LazyColumn`.
  *
- * The four [OutputLine] subclasses map to four
+ * The five [OutputLine] subclasses map to five
  * visual variants:
  *
  *   - [OutputLine.Command] → `$ <text>` with the
@@ -30,10 +32,12 @@ import androidx.compose.ui.unit.sp
  *   - [OutputLine.Stdout]  → plain text, onSurface.
  *   - [OutputLine.Stderr]  → plain text, error
  *                             colour.
- *   - [OutputLine.Exit]    → `[exit N]` in a
- *                             muted style (a
- *                             slightly faded
- *                             onSurfaceVariant).
+ *   - [OutputLine.Truncated] → a warning in the
+ *                                tertiary colour.
+ *   - [OutputLine.Exit]      → `[exit N]` in a
+ *                               muted style (a
+ *                               slightly faded
+ *                               onSurfaceVariant).
  *
  * Every variant is monospaced (so columns line up
  * the way they would in a real terminal) and
@@ -41,11 +45,11 @@ import androidx.compose.ui.unit.sp
  * shell log scrolls fast and 16 sp body text is
  * too tall).
  *
- * The four variants are `private` Composables
+ * The five variants are `private` Composables
  * because they're not interesting on their own —
  * the entry point is the sealed-class `when` in
  * [OutputLineRow] which makes the exhaustiveness
- * check verify all four cases are handled.
+ * check verify all five cases are handled.
  */
 @Composable
 fun OutputLineRow(
@@ -59,6 +63,8 @@ fun OutputLineRow(
             PlainLine(text = line.text, modifier = modifier)
         is OutputLine.Stderr ->
             StderrLine(text = line.text, modifier = modifier)
+        is OutputLine.Truncated ->
+            TruncatedLine(modifier = modifier)
         is OutputLine.Exit ->
             ExitLine(code = line.code, modifier = modifier)
     }
@@ -110,6 +116,19 @@ private fun StderrLine(text: String, modifier: Modifier = Modifier) {
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 2.dp),
         color = MaterialTheme.colorScheme.error,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 13.sp,
+    )
+}
+
+@Composable
+private fun TruncatedLine(modifier: Modifier = Modifier) {
+    Text(
+        text = stringResource(R.string.shell_output_truncated),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        color = MaterialTheme.colorScheme.tertiary,
         fontFamily = FontFamily.Monospace,
         fontSize = 13.sp,
     )
