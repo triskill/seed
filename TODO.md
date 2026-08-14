@@ -18,8 +18,9 @@ described below.
 
 ## Status at a glance
 
-_Status re-verified 2026-08-13 at `main` commit `23982fc`. The embedded
-runtime bring-up itself was performed on `seed_dev` x86_64 on 2026-08-12._
+_Status updated 2026-08-14 in the working tree based on `main` commit
+`f54e771`. The embedded runtime bring-up itself was performed on `seed_dev`
+x86_64 on 2026-08-12._
 
 | Phase | What | Status |
 |---|---|---|
@@ -58,8 +59,8 @@ runtime bring-up itself was performed on `seed_dev` x86_64 on 2026-08-12._
 * The Shell tab runs Alpine commands; `echo hello` shows
   `$ echo hello` / `hello` / `[exit 0]`.
 
-Verification on 2026-08-13: **111/111 backend tests** and **2/2 webapp
-tests** pass, including the combined **113/113** Python run; **173/173 Android
+Verification on 2026-08-14: **124/124 backend tests** and **2/2 webapp
+tests** pass, including the combined **126/126** Python run; **175/175 Android
 JVM tests** pass. The Flask environment test is isolated from fixed port 7778,
 removing its prior order-dependent readiness race. The runtime tooling shell
 suite passes **30/30**. Android
@@ -119,7 +120,7 @@ that field.
 | 2.1 | Fake pi for testing | `backend/tests/fixtures/fake_pi.py` | Python script that reads stdin, writes 3 JSONL progress events + "done", exits 0. |
 | 2.2 | PTY spawn + read loop | `backend/seed_backend/pi_runner.py` | `PiRunner.__init__(cmd, role, ...)`, `start()`, `send()`, `read_lines()` async generator. Uses `pty.openpty()` + `os.fork()` + `os.execvp`; unlike the Shell executor, this has not yet been converted to an Android-compatible process launcher. Per-runner `ThreadPoolExecutor` (avoids default-executor fragility under multi-threaded pytest). Child reports its post-setsid pgid through a pipe; stop() uses that for killpg (with a fallback to `os.kill(pid, ...)` if setsid failed). Only one `os.waitpid` call site, in `stop()`. |
 | 2.3 | Output ANSI strip | `backend/seed_backend/pi_runner.py`, `backend/tests/test_ansi_strip.py` | `PiRunner(strip_ansi=True)` (default on). Two module-level regexes — CSI (`ESC [`) and OSC (`ESC ]`) — applied on every line in the read loop. |
-| 2.4 | Tool-call filter capability | `backend/seed_backend/pi_runner.py`, `backend/tests/test_tool_filter.py` | `PiRunner(read_only_tools={read,grep,find,ls})` can block disallowed `tool_execution_start` events, abort the child, and raise `ToolCallBlocked`. PTY EOF handling treats `EIO` as EOF. **Current production wiring does not pass `read_only_tools`, so the middle-man prompt's read-only policy is not yet enforced by this filter.** |
+| 2.4 | Tool-call filter capability | `backend/seed_backend/pi_runner.py`, `backend/tests/test_tool_filter.py` | `PiRunner(read_only_tools={read,grep,find,ls})` can block disallowed `tool_execution_start` events, abort the child, and raise `ToolCallBlocked`. PTY EOF handling treats `EIO` as EOF. A Phase 10 follow-up now enables both pi's `--tools read,grep,find,ls` allowlist and the matching `PiRunner.read_only_tools` filter for the middle-man; the worker remains unrestricted. |
 | 2.5 | System prompt preload | `backend/seed_backend/pi_runner.py`, `backend/tests/test_system_prompt.py` | `PiRunner(system_prompt=...)`. After fork but before `start()` returns, the runner writes the prompt + blank line to the child's stdin. Extracted into `_do_preload()` so auto-restart reuses it. |
 | 2.6 | Auto-restart on crash | `backend/seed_backend/pi_runner.py`, `backend/tests/test_auto_restart.py` | `PiRunner(auto_restart=False, max_restarts=5)` can restart from the reader's EOF path up to the configured limit. The default is off, and current production wiring also leaves it off; crash supervision remains Phase 10 work. |
 
@@ -170,10 +171,11 @@ that field.
 | 4.3 | Orchestrator speaks pi's RPC protocol | `backend/seed_backend/events.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi*.py`, `backend/tests/test_events.py`, `backend/tests/test_prompts.py` | The orchestrator was built assuming pi outputs plain text. Real `pi --mode rpc` expects JSON commands on stdin (`{"type":"prompt","message":"..."}`) and emits JSONL events on stdout (`message_update`, `tool_execution_start`, `turn_end`, etc.). Added `translate_pi_line` (in `events.py`) that unwraps pi's events back to plain text deltas / tool-call JSON / turn-boundary signals. `send_to_middleman` and the worker send now wrap messages in `{"type":"prompt",...}`. The fake pi fixtures were updated to parse the JSON wrapper and use the `message` field as the prompt, so the existing suite still passes without changes. New `scripts/demo_phase4_smoke.py` exercises the full stack with real `pi` (sends a question, gets a streamed text response). 13 new unit tests for the translator + 6 sanity tests for the prompt files. |
 | 4.4 | Real end-to-end build with live iteration | `backend/prompts/middleman.md`, `backend/prompts/worker.md`, `backend/seed_backend/flask_manager.py`, `backend/seed_backend/events.py` | Drove a real build (`Add a tiny /hello route`) with the local `opencode-go` / `deepseek-v4-flash` config. Observed the full chain: middle-man inspects state, emits a dispatch, worker edits `app.py` via the `edit` tool, verifies with `curl`, emits `<task:done summary="..."/>`, orchestrator broadcasts `complete` + `app_reload`. Three concrete issues found and fixed: (a) prompts hardcoded `/home/seed/app/` — replaced with `$SEED_APP_PATH` and threaded it through `pi_env_for_role` (env var, not argv); (b) the translator didn't handle `message_end` events, so the cheap deepseek model (which doesn't stream `text_delta` chunks) emitted the done marker only in `message_end` and the orchestrator's scan never saw it — added a `message_end` case that extracts the final text from `message.content` text blocks; (c) Flask wasn't in debug mode, so worker edits to `app.py` weren't picked up by the reloader and the worker had to manually `kill` + restart Flask (forbidden in production) — added `FLASK_DEBUG=1` to the subprocess env in `FlaskManager.start()`. After fixes, the worker verified the new route on the first `curl` attempt. The chat UI got `complete` + `app_reload` and the script exited cleanly. |
 
-> **Current embedded mismatch:** the Phase 4 host demo used Flask on port
-> 7778. Both role prompts still tell agents to verify routes on 7778, but the
-> Android WSGI fallback serves the webapp on FastAPI port 7777. Phase 10 must
-> make this endpoint mode-aware before an embedded worker can verify its edits.
+> **Embedded follow-up (2026-08-14):** verification is now mode-aware through
+> `SEED_APP_URL`: the service supplies port 7778 for the host Flask subprocess
+> and port 7777 for the Android WSGI mount. The remaining embedded mismatch is
+> reload behavior: Python route edits do not become live in the in-process WSGI
+> app until a safe runtime reload mechanism is implemented.
 
 **Module shape after Phase 4 (so far):**
 - `backend/prompts/middleman.md` (new) — role prompt for the intent agent.
@@ -299,15 +301,17 @@ runtime shell into a safe, recoverable product flow.
    ENOSYS for `fork(2)`, so neither embedded `pi` process currently starts.
    Preserve RPC streaming, process-group termination, tool filtering, and tests
    using an Android-compatible launcher.
-2. **Make worker edits take effect in embedded mode.** The in-process WSGI
-   fallback has no Flask reloader. Define a safe app reload/restart mechanism,
-   then make `app_reload` refresh the App WebView rather than only adding a Chat
-   banner.
-3. **Secure the loopback control plane.** Authenticate HTTP/WS requests, verify
-   backend identity, separate or authenticate mutable web content versus
-   privileged control routes, protect API-key transfer/storage, enforce a real
-   middle-man read-only boundary, and constrain worker mutation to the app
-   workspace.
+2. **Make worker edits take effect in embedded mode.** Worker verification now
+   uses the mode-aware `SEED_APP_URL` (completed 2026-08-14), but the in-process
+   WSGI fallback has no Flask reloader. Define a safe app reload/restart
+   mechanism, then make `app_reload` refresh the App WebView rather than only
+   adding a Chat banner.
+3. **Secure the loopback control plane.** The middle-man now has a matching
+   pi CLI tool allowlist and runtime event filter (completed 2026-08-14).
+   Remaining work: authenticate HTTP/WS requests, verify backend identity,
+   separate or authenticate mutable web content versus privileged control
+   routes, protect API-key transfer/storage, and constrain worker mutation to
+   the app workspace.
 4. **Finish Shell and Chat behavior.** Android now renders a distinct warning
    when the backend reports truncated shell output (completed 2026-08-14).
    Remaining work: add a real backend cancellation protocol, wire Android Cancel
@@ -396,8 +400,9 @@ Android tooling only; Python dependencies come from
   web content can call control routes unless they are separated/authenticated.
   The network-security and navigation allowlists restrict cleartext targets and
   top-level navigation; they are not authentication and do not comprehensively
-  block HTTPS subresources. Prompt rules are not a sandbox, and current service
-  wiring does not enable the available middle-man tool filter.
+  block HTTPS subresources. The middle-man now has both pi's read-only tool
+  allowlist and the matching runtime event filter, but prompt/tool rules are not
+  a complete sandbox and the worker boundary still needs enforcement.
 - **Settings are not operational backend configuration.** `PUT /config`
   persists a CWD-relative, non-atomic JSON file, but startup does not load it;
   provider/model still come from defaults or environment variables and ports
@@ -452,7 +457,7 @@ curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json
 
 **Run tests:**
 ```bash
-.venv/bin/python -m pytest backend/ webapp/ -v  # 113 passed on 2026-08-13
+.venv/bin/python -m pytest backend/ webapp/ -v  # 126 passed on 2026-08-14
 ./scripts/tests/runtime-tools-test.sh           # 30 passed
 
 cd android

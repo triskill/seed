@@ -73,6 +73,16 @@ def test_lifespan_orchestrator_middleman_and_worker_have_roles(orchestrator_clie
     assert orch.worker.role == "worker"
 
 
+def test_lifespan_enforces_middleman_read_only_tools(orchestrator_client):
+    """Production wiring enables the event-filter backstop for one role only."""
+    orch = orchestrator_client.app.state.orchestrator
+    assert orch.middleman.read_only_tools == {"read", "grep", "find", "ls"}
+    assert orch.worker.read_only_tools is None
+    assert orch.middleman.env is not None
+    assert orch.worker.env is not None
+    assert orch.middleman.env["SEED_APP_URL"] == orch.worker.env["SEED_APP_URL"]
+
+
 def test_lifespan_stops_runners_on_shutdown(monkeypatch):
     """Lifespan shutdown terminates both PiRunners (pid reset to None)."""
     monkeypatch.setattr(service, "pi_cmd_for_role", lambda role: _fake_pi_cmd())

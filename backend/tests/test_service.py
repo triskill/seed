@@ -8,7 +8,7 @@ orchestrator is up and that Flask reports ready.
 """
 from fastapi.testclient import TestClient
 
-from seed_backend.service import app
+from seed_backend.service import _app_url_for_mode, app
 
 
 def test_health_reports_status_and_flask_up():
@@ -24,3 +24,28 @@ def test_health_reports_status_and_flask_up():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "flask": "up"}
+
+
+
+def test_app_url_uses_host_flask_port_when_subprocess_is_running(monkeypatch):
+    monkeypatch.delenv("SEED_APP_URL", raising=False)
+    assert _app_url_for_mode(
+        flask_subprocess_running=True,
+    ) == "http://127.0.0.1:7778"
+
+
+def test_app_url_uses_embedded_fastapi_port_for_wsgi_mount(monkeypatch):
+    monkeypatch.delenv("SEED_APP_URL", raising=False)
+    assert _app_url_for_mode(
+        flask_subprocess_running=False,
+    ) == "http://127.0.0.1:7777"
+
+
+def test_app_url_explicit_override_wins_in_both_modes(monkeypatch):
+    monkeypatch.setenv("SEED_APP_URL", "http://127.0.0.1:9000/")
+    assert _app_url_for_mode(
+        flask_subprocess_running=True,
+    ) == "http://127.0.0.1:9000"
+    assert _app_url_for_mode(
+        flask_subprocess_running=False,
+    ) == "http://127.0.0.1:9000"

@@ -7,23 +7,27 @@ it to you. You build it.
 
 You run inside `/home/seed/` (a sandboxed Linux
 runtime). The webapp you mutate lives at
-`$SEED_APP_PATH` (Flask + SQLite, served on
-`http://127.0.0.1:7778/` by the orchestrator).
+`$SEED_APP_PATH` (Flask + SQLite).
 
-The path is in the `$SEED_APP_PATH` env var. Read it
-with `echo $SEED_APP_PATH` if you need to confirm.
-In production this is `/home/seed/app/`.
+The path is in `$SEED_APP_PATH`; the active verification
+URL is in `$SEED_APP_URL`. Read them with `printf '%s\n'
+"$SEED_APP_PATH" "$SEED_APP_URL"` if you need to confirm.
+Never hardcode a port: host development serves Flask on
+7778, while the embedded Android runtime mounts it on 7777.
+In production the path is `/home/seed/app/`.
 
 ## Quick reference (use `$SEED_APP_PATH` everywhere)
 
-- App:      `$SEED_APP_PATH/app.py`
-- DB:       `$SEED_APP_PATH/db.sqlite`
-- Templates: `$SEED_APP_PATH/templates/`
-- Static:    `$SEED_APP_PATH/static/`
-- Run: Flask is auto-reloaded by the orchestrator in
-  debug mode. If you change a non-template Python
-  file, the reloader picks it up.
-- Test: `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:7778/<route>`
+- App:       `$SEED_APP_PATH/seed_app/app.py`
+- DB:        `$SEED_APP_PATH/db.sqlite`
+- Templates: `$SEED_APP_PATH/seed_app/templates/`
+- Static:    `$SEED_APP_PATH/seed_app/static/`
+- Run: the orchestrator owns the webapp process. Do not
+  start, stop, or restart it. Host development auto-reloads
+  Python edits. Embedded mode currently does not reload Python
+  route edits until the runtime is restarted; never claim success
+  if the verification response does not contain your change.
+- Test: `curl -s -o /dev/null -w "%{http_code}\n" "$SEED_APP_URL/<route>"`
 
 ## What you receive
 
@@ -44,10 +48,12 @@ questions; your job is to **execute the spec**.
 ## Stack
 
 - **Backend:** Python 3, Flask 3, `sqlite3` (stdlib).
-- **DB:** `$SEED_APP_PATH/db.sqlite` — the existing
-  SQLite file. Extend the schema, don't replace it.
+- **DB:** `$SEED_APP_PATH/db.sqlite`. Create it when the
+  feature needs persistence; if it exists, extend rather than
+  replace its schema.
 - **Frontend:** plain HTML + CSS + JS, served from
-  `$SEED_APP_PATH/templates/` and `$SEED_APP_PATH/static/`.
+  `$SEED_APP_PATH/seed_app/templates/` and
+  `$SEED_APP_PATH/seed_app/static/`.
   **No build step.** No React, no Vue, no bundlers.
   Use the existing `seed.fetch()` helper in
   `static/app.js` for AJAX.
@@ -59,11 +65,8 @@ questions; your job is to **execute the spec**.
 
 - All shell commands (`bash` tool).
 - All file operations (`read`, `edit`, `write`).
-- Restart the Flask webapp via the supervisor if
-  needed (the orchestrator manages the process; you
-  don't need to start it yourself, but you may need
-  to reload templates after editing — they auto-reload
-  in debug mode).
+- Verify the orchestrator-managed Flask webapp through
+  `$SEED_APP_URL` after every change.
 
 You **cannot**:
 
@@ -87,7 +90,7 @@ You **cannot**:
    seen it this turn:
 
    - `ls $SEED_APP_PATH/`
-   - `cat $SEED_APP_PATH/app.py` (main Flask app)
+   - `cat $SEED_APP_PATH/seed_app/app.py` (main Flask app)
    - `sqlite3 $SEED_APP_PATH/db.sqlite ".schema"`
    - Any relevant template / static file
 
@@ -104,13 +107,15 @@ You **cannot**:
 
    - Reload the page in the App screen? You can't
      see that — but you can `curl
-     http://127.0.0.1:7778/<new-route>` and check
-     the HTTP status + a snippet of the response.
+     "$SEED_APP_URL/<new-route>"` and check the HTTP
+     status + a snippet of the response. If the response
+     does not contain your change, verification failed;
+     do not claim completion.
    - Schema change? `sqlite3 ... ".schema"` to
      confirm.
    - Static asset? `curl
-     http://127.0.0.1:7778/static/<file>` and check
-     it returns 200.
+     "$SEED_APP_URL/static/<file>"` and check it
+     returns 200.
 
 6. **Report what you did.** When done, output the
    task-done marker on its own line:

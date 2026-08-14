@@ -94,6 +94,12 @@ _WORKER_PROMPT = _PROMPTS_DIR / "worker.md"
 _DEFAULT_PI_PROVIDER = "opencode-go"
 _DEFAULT_PI_MODEL = "deepseek-v4-flash"
 _DEFAULT_PI_THINKING = "low"
+_DEFAULT_APP_URL = "http://127.0.0.1:7778"
+
+# The intent agent may inspect the app, but it must not mutate it.
+# `--tools` is the primary capability boundary; PiRunner's event
+# filter is a defense-in-depth backstop using the same allowlist.
+MIDDLEMAN_READ_ONLY_TOOLS = ("read", "grep", "find", "ls")
 
 
 def pi_cmd_for_role(role: str) -> list[str]:
@@ -126,6 +132,10 @@ def pi_cmd_for_role(role: str) -> list[str]:
                                so high thinking is
                                overkill for the
                                orchestrator's prompts.
+      * `--tools` (middle-man only): limits the intent agent to
+                               `read`, `grep`, `find`, and `ls`.
+                               PiRunner enforces the same allowlist
+                               against emitted tool events.
       * `--no-session`       : the orchestrator drives
                                long-running pi processes
                                for the lifetime of the
@@ -182,7 +192,7 @@ def pi_cmd_for_role(role: str) -> list[str]:
     prompt_file = (
         _MIDDLEMAN_PROMPT if role == "middleman" else _WORKER_PROMPT
     )
-    return [
+    argv = [
         "pi",
         "--mode", "rpc",
         "--provider", provider,
@@ -191,9 +201,28 @@ def pi_cmd_for_role(role: str) -> list[str]:
         "--no-session",
         "--append-system-prompt", str(prompt_file),
     ]
+    if role == "middleman":
+        app_path = os.environ.get("SEED_APP_PATH", "/home/seed/app")
+        argv.extend(
+            [
+                "--append-system-prompt",
+                (
+                    "Resolved Seed app workspace (trusted runtime config): "
+                    f"{app_path}. Use this exact literal path with read-only "
+                    "tools; do not try to expand $SEED_APP_PATH."
+                ),
+                "--tools",
+                ",".join(MIDDLEMAN_READ_ONLY_TOOLS),
+            ]
+        )
+    return argv
 
 
-def pi_env_for_role(role: str) -> dict[str, str]:
+def pi_env_for_role(
+    role: str,
+    *,
+    app_url: str | None = None,
+) -> dict[str, str]:
     """Return the env dict passed to the child `pi` process.
 
     Starts from the parent's `os.environ` (so API keys set
@@ -214,12 +243,12 @@ def pi_env_for_role(role: str) -> dict[str, str]:
     have customised it.
 
     Args:
-        role: "middleman" or "worker". Currently unused
-              (both roles share the same env), but kept
-              in the signature for symmetry with
-              `pi_cmd_for_role` and to leave room for
-              per-role env differences in the future
-              (e.g. separate session dirs).
+        role: "middleman" or "worker".
+        app_url: URL the worker must use to verify webapp routes.
+                 The service supplies a mode-aware value: port 7778
+                 for the host Flask subprocess or port 7777 for the
+                 embedded in-process WSGI mount. When omitted, an
+                 inherited `SEED_APP_URL` or the host-dev URL is used.
 
     Returns:
         A new env dict suitable for `os.execvpe`.
@@ -245,6 +274,8 @@ def pi_env_for_role(role: str) -> dict[str, str]:
     env["SEED_APP_PATH"] = os.environ.get(
         "SEED_APP_PATH", "/home/seed/app"
     )
+    selected_app_url = app_url or os.environ.get("SEED_APP_URL")
+    env["SEED_APP_URL"] = (selected_app_url or _DEFAULT_APP_URL).rstrip("/")
     return env
 
 

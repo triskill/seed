@@ -26,6 +26,7 @@ from seed_backend.orchestrator import (
     _DEFAULT_PI_MODEL,
     _DEFAULT_PI_PROVIDER,
     _DEFAULT_PI_THINKING,
+    MIDDLEMAN_READ_ONLY_TOOLS,
     pi_cmd_for_role,
     pi_env_for_role,
 )
@@ -77,6 +78,30 @@ def test_pi_cmd_for_role_picks_per_role_prompt_file():
     assert mm_prompt.endswith("middleman.md"), mm_prompt
     assert wk_prompt.endswith("worker.md"), wk_prompt
     assert mm_prompt != wk_prompt
+
+
+def test_pi_cmd_restricts_middleman_tools_but_not_worker():
+    """The intent agent gets pi's read-only allowlist; the worker does not."""
+    middleman = pi_cmd_for_role("middleman")
+    worker = pi_cmd_for_role("worker")
+
+    assert middleman[middleman.index("--tools") + 1] == ",".join(
+        MIDDLEMAN_READ_ONLY_TOOLS
+    )
+    assert "--tools" not in worker
+
+
+def test_middleman_prompt_receives_resolved_literal_app_path(monkeypatch):
+    """Read-only tools cannot expand env vars, so argv supplies the path."""
+    monkeypatch.setenv("SEED_APP_PATH", "/tmp/seed workspace")
+    argv = pi_cmd_for_role("middleman")
+    prompt_values = [
+        argv[index + 1]
+        for index, value in enumerate(argv)
+        if value == "--append-system-prompt"
+    ]
+    assert any("/tmp/seed workspace" in value for value in prompt_values)
+    assert any("do not try to expand $SEED_APP_PATH" in value for value in prompt_values)
 
 
 def test_pi_cmd_for_role_rejects_unknown_role():
@@ -154,3 +179,34 @@ def test_pi_env_for_role_seed_app_path_overridable(monkeypatch):
     monkeypatch.setenv("SEED_APP_PATH", "/tmp/my-webapp")
     env = pi_env_for_role("worker")
     assert env["SEED_APP_PATH"] == "/tmp/my-webapp"
+
+
+def test_pi_env_for_role_sets_host_app_url_by_default(monkeypatch):
+    """Direct host-side use keeps the separate Flask URL on port 7778."""
+    monkeypatch.delenv("SEED_APP_URL", raising=False)
+    env = pi_env_for_role("worker")
+    assert env["SEED_APP_URL"] == "http://127.0.0.1:7778"
+
+
+def test_pi_env_for_role_honors_inherited_app_url(monkeypatch):
+    """Custom host layouts can override the verification endpoint."""
+    monkeypatch.setenv("SEED_APP_URL", "http://127.0.0.1:9000/")
+    env = pi_env_for_role("worker")
+    assert env["SEED_APP_URL"] == "http://127.0.0.1:9000"
+
+
+def test_pi_env_for_role_explicit_app_url_selects_embedded_mode(monkeypatch):
+    """The service can override a parent value after selecting WSGI mode."""
+    monkeypatch.setenv("SEED_APP_URL", "http://127.0.0.1:9000")
+    env = pi_env_for_role(
+        "worker",
+        app_url="http://127.0.0.1:7777/",
+    )
+    assert env["SEED_APP_URL"] == "http://127.0.0.1:7777"
+
+
+
+def test_pi_env_for_role_ignores_blank_explicit_app_url(monkeypatch):
+    monkeypatch.delenv("SEED_APP_URL", raising=False)
+    env = pi_env_for_role("worker", app_url="")
+    assert env["SEED_APP_URL"] == "http://127.0.0.1:7778"

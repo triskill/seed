@@ -110,3 +110,29 @@ def test_worker_prompt_describes_task_done_marker():
         "worker prompt doesn't tell the agent to include summary=\"...\" "
         "in the marker — the chat UI will show the placeholder"
     )
+
+
+
+def test_prompts_use_mode_aware_app_url():
+    """Neither role should bake the host-only Flask port into a task."""
+    for prompt in (_MIDDLEMAN_PROMPT, _WORKER_PROMPT):
+        text = prompt.read_text(encoding="utf-8")
+        assert "$SEED_APP_URL" in text
+        assert "http://127.0.0.1:7778" not in text
+        assert "http://127.0.0.1:7777" not in text
+
+
+def test_worker_prompt_does_not_tell_agent_to_restart_webapp():
+    """Process lifetime belongs to the orchestrator in both runtime modes."""
+    text = _WORKER_PROMPT.read_text(encoding="utf-8")
+    assert "Do not\n  start, stop, or restart it" in text
+
+
+
+def test_middleman_prompt_matches_enforced_tool_allowlist():
+    """The prompt must not advertise shell access the runner will block."""
+    text = _MIDDLEMAN_PROMPT.read_text(encoding="utf-8")
+    assert "`read`, `grep`, `find`, and `ls`" in text
+    assert "python -c" not in text
+    assert "`cat`" not in text
+    assert "`sqlite3`" not in text

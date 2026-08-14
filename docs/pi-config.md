@@ -58,6 +58,16 @@ explicitly on the command line:
  "--no-session"]
 ```
 
+The middle-man invocation additionally receives:
+
+```python
+["--tools", "read,grep,find,ls"]
+```
+
+The same allowlist is enforced again by `PiRunner` when it reads pi's
+RPC tool events. The worker does not receive `--tools` and keeps the
+editing tools it needs.
+
 This is belt-and-braces: the local `settings.json` is the
 default, and the CLI flags override whatever's in there.
 A misconfigured local file can't silently route to a
@@ -81,6 +91,20 @@ SEED_PI_THINKING=off \
 | `SEED_PI_PROVIDER` | `opencode-go` | The pi provider (e.g. `anthropic`, `openai`, `opencode-go`). |
 | `SEED_PI_MODEL` | `deepseek-v4-flash` | The model ID within the provider. |
 | `SEED_PI_THINKING` | `low` | Thinking level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`. |
+
+The orchestrator also supplies runtime app context to the agents:
+
+| Env var | Host default | Embedded default | Purpose |
+|---|---|---|---|
+| `SEED_APP_PATH` | `<repo>/webapp` via `dev.sh` | `/home/seed/app` | Mutable webapp workspace. |
+| `SEED_APP_URL` | `http://127.0.0.1:7778` | `http://127.0.0.1:7777` | Mode-aware URL used by the worker for `curl` verification. |
+
+`SEED_APP_URL` is selected after the service knows whether Flask started
+as a host subprocess or fell back to the embedded WSGI mount. An explicit
+`SEED_APP_URL` overrides that selection for custom development layouts.
+The read-only middle-man cannot expand environment variables through a
+shell, so its resolved workspace path is also appended as literal system
+context at spawn time.
 
 The matching `*_API_KEY` env var is picked up
 automatically by pi (e.g. `ANTHROPIC_API_KEY` for

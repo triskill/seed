@@ -17,6 +17,8 @@ itself is defined in `orchestrator.py` (not here) to keep
 """
 from __future__ import annotations
 
+import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,6 +29,7 @@ from seed_backend.chat import handle_chat
 from seed_backend.config import Config, DEFAULT_PORTS
 from seed_backend.flask_manager import FlaskManager
 from seed_backend.orchestrator import (
+    MIDDLEMAN_READ_ONLY_TOOLS,
     Orchestrator,
     pi_cmd_for_role,
     pi_env_for_role,
@@ -39,6 +42,26 @@ from seed_backend.shell import ShellSession
 # Task 1.4 will add client-driven cancellation on top of this server
 # cap; the cap stays.
 SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS: float = 60.0
+
+_HOST_APP_URL = "http://127.0.0.1:7778"
+_EMBEDDED_APP_URL = "http://127.0.0.1:7777"
+
+log = logging.getLogger(__name__)
+
+
+def _app_url_for_mode(*, flask_subprocess_running: bool) -> str:
+    """Return the webapp URL exposed by the active Flask mode.
+
+    Host development runs Flask separately on port 7778. Android PRoot
+    cannot spawn that process, so Flask is WSGI-mounted into FastAPI on
+    port 7777. An explicit SEED_APP_URL remains available for custom
+    development layouts.
+    """
+    configured = os.environ.get("SEED_APP_URL")
+    if configured:
+        return configured.rstrip("/")
+    return _HOST_APP_URL if flask_subprocess_running else _EMBEDDED_APP_URL
+
 
 # Where the orchestrator reads / writes its
 # config.json. The Android Settings screen
@@ -171,16 +194,18 @@ async def lifespan(app: FastAPI):
     # (so the agent uses our defaultProvider/defaultModel
     # from `.pi/agent/settings.json`) while still
     # inheriting API keys set in the parent shell.
+    app_url = _app_url_for_mode(flask_subprocess_running=subprocess_ok)
     orchestrator = Orchestrator(
         middleman=PiRunner(
             cmd=pi_cmd_for_role("middleman"),
             role="middleman",
-            env=pi_env_for_role("middleman"),
+            env=pi_env_for_role("middleman", app_url=app_url),
+            read_only_tools=set(MIDDLEMAN_READ_ONLY_TOOLS),
         ),
         worker=PiRunner(
             cmd=pi_cmd_for_role("worker"),
             role="worker",
-            env=pi_env_for_role("worker"),
+            env=pi_env_for_role("worker", app_url=app_url),
         ),
     )
     app.state.orchestrator = orchestrator
@@ -190,7 +215,7 @@ async def lifespan(app: FastAPI):
         # Pi failed to spawn (likely `pi` not installed). Leave
         # the orchestrator in app.state — /health still works,
         # /chat will surface the failure on first use.
-        pass
+        log.exception("pi orchestrator failed to start")
 
     yield
 
