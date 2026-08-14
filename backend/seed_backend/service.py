@@ -130,14 +130,10 @@ async def lifespan(app: FastAPI):
     `flask: "down"` if both fail (e.g. `seed_app` not
     installed).
 
-    If the `pi` cmd is unrunnable (e.g. `pi` not installed yet,
-    pre-Phase 4) the orchestrator still comes up. The lifespan
-    swallows the spawn failure and leaves the orchestrator in
-    `app.state` so a later restart (or a `pip install
-    pi-coding-agent`) can bring it up without restarting uvicorn.
-    In that case, `orchestrator.middleman.pid` is set (the fork
-    succeeded) but the child immediately exited; the runner
-    surfaces that on first `send()`.
+    If the `pi` cmd is unrunnable (e.g. `pi` is not installed), the
+    backend still comes up. `subprocess.Popen` reports the exec failure
+    synchronously; the lifespan logs it and leaves the orchestrator in
+    `app.state` so `/health`, the webapp, and Shell remain available.
 
     Also creates a single `ShellSession` on `app.state` so every
     `/shell/exec` call shares the same cwd. Task 1.5: the
@@ -335,6 +331,9 @@ class ConfigPayload(BaseModel):
 
     provider: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
+    # Accepted for backward wire compatibility but deliberately ignored by
+    # put_config; Android injects credentials from encrypted storage directly
+    # into the embedded process environment.
     api_key: str = ""
     ports: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_PORTS))
 
@@ -363,8 +362,9 @@ async def put_config(payload: ConfigPayload) -> ConfigResponse:
          `SettingsRepo.save(form)` (local persistence to
          DataStore + EncryptedSharedPreferences) and then
          `ConfigSync.sync(form)` (this endpoint).
-      3. The route builds a [Config] from [payload] and
-         writes it via `Config.save(DEFAULT_CONFIG_PATH)`.
+      3. The route writes non-secret settings via
+         `Config.save(DEFAULT_CONFIG_PATH)`. The legacy `api_key` request field
+         is ignored and the file is cleared to an empty key.
       4. On the next orchestrator start (Phase 7+ will wire
          this), the file is read back via
          `Config.load(DEFAULT_CONFIG_PATH)`.
@@ -378,7 +378,9 @@ async def put_config(payload: ConfigPayload) -> ConfigResponse:
     cfg = Config(
         provider=payload.provider,
         model=payload.model,
-        api_key=payload.api_key,
+        # Never duplicate Android's encrypted credential into plaintext
+        # config.json. Host development continues to use provider env vars.
+        api_key="",
         ports=payload.ports,
     )
     cfg.save(DEFAULT_CONFIG_PATH)

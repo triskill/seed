@@ -3,7 +3,7 @@
 The orchestrator owns the middle-man and worker `PiRunner`
 subprocesses and exposes a tiny pub-sub interface that the
 WebSocket `/chat` route consumes. It is a thin container; the
-`PiRunner`s do the actual PTY + read-loop work, and the route
+`PiRunner`s do the pipe-backed process + read-loop work, and the route
 layer (in `chat.py`) is what streams events back to clients.
 
 Why is this in its own module? Both `service.py` (which
@@ -328,10 +328,10 @@ class Orchestrator:
     async def start(self) -> None:
         """Spawn both `pi` processes. No-op if already started.
 
-        Each `PiRunner.start()` does its own fork+exec, so this
-        call returns as soon as both children are running (or
-        have already failed to exec — the runner keeps the pid
-        in that case so `stop()` can still reap the child).
+        Each `PiRunner.start()` launches a pipe-backed `Popen` child, so
+        this call returns once both executables have started. Exec failures
+        are raised synchronously and the service lifespan records them while
+        leaving the non-agent routes available.
 
         Also starts the background read loops (Task 3.3 +
         3.5). The loops shovel middle-man and worker output
@@ -484,7 +484,7 @@ class Orchestrator:
         try:
             async for line in self.middleman.read_lines():
                 if line is None:
-                    # EOF — child closed the slave end. Done.
+                    # EOF — child closed its output pipe. Done.
                     break
                 events, text_chunk = translate_pi_line(line, role="middleman")
                 if events:
@@ -570,7 +570,7 @@ class Orchestrator:
         try:
             async for line in self.worker.read_lines():
                 if line is None:
-                    # EOF — child closed the slave end. Done.
+                    # EOF — child closed its output pipe. Done.
                     break
                 # Phase 4: worker output may be plain text
                 # (fake fixture) or JSONL events (real pi).

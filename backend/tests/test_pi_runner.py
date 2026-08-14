@@ -1,9 +1,9 @@
 """Tests for the PiRunner (Task 2.2).
 
-PiRunner is a thin PTY-backed wrapper around the `pi` CLI. It
+PiRunner is a pipe-backed wrapper around the `pi --mode rpc` CLI. It
 owns:
-  * spawning pi in a PTY (so TTY-detecting programs see a TTY)
-  * writing the user's message to the PTY master
+  * spawning pi through the Android-compatible `subprocess.Popen` path
+  * writing the user's message to the child's stdin pipe
   * reading pi's output line-by-line (async generator)
   * a clean shutdown path (SIGTERM, then SIGKILL after grace)
 
@@ -151,8 +151,8 @@ def test_runner_role_is_stored():
 def test_runner_env_is_stored_when_provided():
     """The optional `env` arg is stored on the instance.
 
-    The runner uses it in `_do_fork` via `os.execvpe`
-    instead of `os.execvp`. This test only checks the
+    The runner passes it to `subprocess.Popen` instead of
+    inheriting implicitly. This test only checks the
     attribute (no actual spawn — the exec path is
     covered by the e2e tests that spawn real `pi`).
     """
@@ -169,3 +169,80 @@ def test_runner_env_defaults_to_none():
     """
     runner = PiRunner(cmd=fake_pi_cmd(), role="middleman")
     assert runner.env is None
+
+def test_runner_does_not_call_python_os_fork(monkeypatch):
+    """The normal round trip must work when Python-level fork is forbidden."""
+    import os
+
+    def forbidden_fork():
+        raise AssertionError("PiRunner must not call os.fork()")
+
+    monkeypatch.setattr(os, "fork", forbidden_fork)
+
+    async def scenario():
+        runner = PiRunner(cmd=fake_pi_cmd(), role="worker")
+        try:
+            await runner.start()
+            await runner.send("hello without fork")
+            return await _drive_to_done(runner)
+        finally:
+            await runner.stop()
+
+    lines = asyncio.run(scenario())
+    assert lines[-1] == "done"
+    assert "'hello without fork'" in lines[0]
+
+
+def test_missing_command_fails_synchronously_and_stop_cleans_executor():
+    """Popen reports exec failure from start() without publishing a stale PID."""
+    async def scenario():
+        runner = PiRunner(
+            cmd=["/definitely/missing/seed-pi"],
+            role="worker",
+        )
+        with pytest.raises(FileNotFoundError):
+            await runner.start()
+        assert runner.pid is None
+        await runner.stop()
+        await runner.stop()
+        return runner
+
+    runner = asyncio.run(scenario())
+    assert runner._executor_shutdown is True
+
+def test_runner_preserves_utf8_split_across_pipe_reads():
+    fixture = Path(__file__).parent / "fixtures" / "fake_pi_utf8_split.py"
+
+    async def scenario():
+        runner = PiRunner(cmd=[sys.executable, str(fixture)], role="worker")
+        try:
+            await runner.start()
+            async with asyncio.timeout(5):
+                return [line async for line in runner.read_lines()]
+        finally:
+            await runner.stop()
+
+    assert asyncio.run(scenario()) == ["🙂"]
+
+def test_stop_kills_term_ignoring_process_group():
+    """SIGKILL escalation reaches helpers, not only the pi leader."""
+    fixture = Path(__file__).parent / "fixtures" / "fake_pi_process_tree.py"
+
+    async def scenario():
+        runner = PiRunner(cmd=[sys.executable, str(fixture)], role="worker")
+        await runner.start()
+        async with asyncio.timeout(5):
+            helper_line = await anext(runner.read_lines())
+        helper_pid = int(helper_line.removeprefix("helper-pid:"))
+        await runner.stop()
+        return runner, helper_pid
+
+    runner, helper_pid = asyncio.run(scenario())
+    assert runner.pid is None
+
+    # An orphan can remain briefly as a zombie until Android/Linux init reaps
+    # it; either absence or zombie state proves it is no longer executing.
+    stat_path = Path(f"/proc/{helper_pid}/stat")
+    if stat_path.exists():
+        state = stat_path.read_text().split()[2]
+        assert state == "Z"

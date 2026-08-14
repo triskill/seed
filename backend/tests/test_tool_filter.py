@@ -169,3 +169,24 @@ def test_filter_default_is_none():
     """read_only_tools defaults to None (no filter) for backward compat."""
     runner = PiRunner(cmd=fake_pi_cmd(), role="worker")
     assert runner.read_only_tools is None
+
+def test_filter_blocks_unterminated_final_tool_event():
+    """EOF processing must filter a JSON event even without a final LF."""
+    fixture = Path(__file__).parent / "fixtures" / "fake_pi_tool_no_newline.py"
+
+    async def scenario():
+        runner = PiRunner(
+            cmd=[sys.executable, str(fixture)],
+            role="middleman",
+            read_only_tools={"read", "grep", "find", "ls"},
+        )
+        try:
+            await runner.start()
+            with pytest.raises(ToolCallBlocked) as exc_info:
+                await _collect_until_exception(runner)
+            return exc_info.value
+        finally:
+            await runner.stop()
+
+    violation = asyncio.run(scenario())
+    assert violation.tool_name == "bash"

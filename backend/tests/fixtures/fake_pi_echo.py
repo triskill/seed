@@ -3,7 +3,7 @@
 
 Reads every line of stdin and writes it back to
 stdout prefixed with 'echo: '. Exits when stdin is
-closed (the runner closes the slave end of the PTY
+closed (the runner closes the stdin pipe
 when it calls stop()).
 
 The 'echo: ' prefix is what the prompt tests grep

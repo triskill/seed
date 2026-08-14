@@ -61,8 +61,8 @@ def test_put_config_writes_payload_to_default_path(config_client):
     in the on-disk JSON shape the Config dataclass writes.
 
     The on-disk shape is `{"provider", "model", "api_key", "ports"}` —
-    matches the Android `data.ConfigRequest` field-for-field
-    (Phase 6.1 pinned the wire format).
+    retains an empty legacy `api_key`; Android no longer transfers secrets
+    through this endpoint.
     """
     client, config_path = config_client
     response = client.put(
@@ -70,15 +70,15 @@ def test_put_config_writes_payload_to_default_path(config_client):
         json={
             "provider": "anthropic",
             "model": "claude-sonnet-4-5",
-            "api_key": "sk-test-1234",
+            "api_key": "must-not-be-persisted",
             "ports": {"backend": 7777, "flask": 7778},
         },
     )
     assert response.status_code == 200
     assert response.json() == {"ok": True}
 
-    # The on-disk file is the same shape the
-    # Android client sent. We compare as a dict
+    # The legacy secret is cleared rather than copied into plaintext. Compare
+    # as a dict
     # (not a raw string) so a future cosmetic
     # change to Config.save (indentation,
     # key order) doesn't break this test.
@@ -87,7 +87,7 @@ def test_put_config_writes_payload_to_default_path(config_client):
     assert on_disk == {
         "provider": "anthropic",
         "model": "claude-sonnet-4-5",
-        "api_key": "sk-test-1234",
+        "api_key": "",
         "ports": {"backend": 7777, "flask": 7778},
     }
 
@@ -106,7 +106,7 @@ def test_put_config_overwrites_existing_file(config_client, tmp_path):
         },
     )
     assert json.loads(config_path.read_text())["provider"] == "openai"
-    # Second write (different provider + key).
+    # Second write (different provider + attempted legacy key).
     client.put(
         "/config",
         json={
@@ -118,24 +118,17 @@ def test_put_config_overwrites_existing_file(config_client, tmp_path):
     )
     on_disk = json.loads(config_path.read_text())
     assert on_disk["provider"] == "anthropic"
-    assert on_disk["api_key"] == "sk-second"
+    assert on_disk["api_key"] == ""
 
 
-def test_put_config_accepts_empty_api_key(config_client):
-    """The `api_key` field has no min_length — the user can clear it.
-
-    The Android form's `apiKey` field can be empty (a fresh
-    install's default). The backend should accept the empty
-    string and persist it (the `Config.save` serialises
-    `api_key=""` as the literal string).
-    """
+def test_put_config_accepts_omitted_api_key(config_client):
+    """Android omits the legacy secret field; the backend persists empty."""
     client, config_path = config_client
     response = client.put(
         "/config",
         json={
             "provider": "anthropic",
             "model": "claude-sonnet-4-5",
-            "api_key": "",
             "ports": {"backend": 7777, "flask": 7778},
         },
     )

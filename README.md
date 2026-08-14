@@ -19,6 +19,13 @@ end of day 1, the user has the web app they asked for.
 - `scripts/` — architecture-aware runtime build and validation tooling.
 - `docs/plans/` — full design and phased implementation plans.
 
+The pipe-backed `PiRunner` and both real pi RPC processes were accepted inside
+the x86_64 Android PRoot runtime on 2026-08-14. Saved Android provider/model/key
+settings are loaded from DataStore/Keystore storage and injected on embedded
+runtime startup without copying the key to loopback HTTP or plaintext config.
+A successful provider-backed turn, live apply/restart after Save, embedded Python
+edit reload, and product hardening remain Phase 10 work.
+
 ## Quick start (host dev)
 
 Requires Python 3.11+ (3.12 is what we test on) and the

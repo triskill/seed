@@ -8,6 +8,7 @@ import android.os.IBinder
 import android.util.Log
 import com.seed.app.MainActivity
 import com.seed.app.R
+import com.seed.app.data.AndroidSettingsRepo
 import com.seed.app.data.ApiModule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,14 +35,23 @@ class RuntimeService : Service() {
         supervisor = RuntimeSupervisor(
             scope = serviceScope,
             startProcess = {
+                // Loading is suspendable DataStore/Keystore I/O. RuntimeSupervisor
+                // invokes this lambda on the service's IO scope for every actual
+                // process generation, so a cold start or crash replacement picks
+                // up the latest encrypted provider settings without blocking the
+                // Android service main thread.
+                val piEnvironment = AndroidSettingsRepo(applicationContext)
+                    .load()
+                    .toPiRuntimeEnvironment()
                 val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
+                val environment = ProotEnvironment.create(
+                    tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
+                    installation = nativeProot,
+                ) + piEnvironment
                 val runner = ProotRunner(
                     prootExecutable = nativeProot.executable,
                     rootfsDir = File(File(filesDir, LINUX_DIRECTORY), ROOTFS_DIRECTORY),
-                    env = ProotEnvironment.create(
-                        tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
-                        installation = nativeProot,
-                    ),
+                    env = environment,
                 )
                 runner.start(serviceScope).also(::collectRuntimeLogs)
             },

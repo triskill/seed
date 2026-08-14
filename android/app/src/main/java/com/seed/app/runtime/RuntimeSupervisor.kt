@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 internal class RuntimeSupervisor(
     private val scope: CoroutineScope,
-    private val startProcess: () -> ProotHandle,
+    private val startProcess: suspend () -> ProotHandle,
     private val healthStates: () -> Flow<HealthState>,
     private val onFailure: (message: String, failure: Throwable) -> Unit = { _, _ -> },
 ) {
@@ -75,7 +75,7 @@ internal class RuntimeSupervisor(
         }
     }
 
-    private fun activeOrReplacement(commandGeneration: Long): ProotHandle? {
+    private suspend fun activeOrReplacement(commandGeneration: Long): ProotHandle? {
         val currentHandle = synchronized(lifecycleLock) { handle }
         if (currentHandle?.isAlive == true) return currentHandle
 

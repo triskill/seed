@@ -8,8 +8,8 @@ import com.seed.app.ui.settings.SettingsForm
  *
  * **Phase 6.5** introduces this class as the
  * bridge between the Settings UI (which owns the
- * authoritative form, in DataStore + EncryptedSharedPreferences)
- * and the backend's `config.json` (which the
+ * authoritative non-secret form, with the API key kept separately in
+ * EncryptedSharedPreferences) and the backend's `config.json` (which the
  * orchestrator will read on its next start in
  * Phase 7+).
  *
@@ -41,10 +41,9 @@ import com.seed.app.ui.settings.SettingsForm
  * [ConfigRequest]:
  *   - [SettingsForm.provider] → [ConfigRequest.provider]
  *   - [SettingsForm.model] → [ConfigRequest.model]
- *   - [SettingsForm.apiKey] → [ConfigRequest.apiKey]
- *     (sent over the loopback HTTP connection;
- *     the field name is `api_key` per Moshi's
- *     `@Json(name = ...)` mapping on the DTO)
+ *   - [SettingsForm.apiKey] is deliberately not sent. RuntimeService reads
+ *     it from EncryptedSharedPreferences and injects the corresponding
+ *     provider environment variable when PRoot starts.
  *   - [SettingsForm.backendPort] → [ConfigRequest.ports.backend]
  *   - [SettingsForm.webappPort] → [ConfigRequest.ports.flask]
  *   - [SettingsForm.logLevel] is **not** sent.
@@ -103,7 +102,6 @@ open class ConfigSync(
     internal fun toRequest(form: SettingsForm): ConfigRequest = ConfigRequest(
         provider = form.provider,
         model = form.model,
-        apiKey = form.apiKey,
         ports = ConfigPorts(
             backend = form.backendPort,
             flask = form.webappPort,

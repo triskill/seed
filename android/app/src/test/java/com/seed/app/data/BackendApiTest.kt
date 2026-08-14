@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
  *   - The request body is serialized with the
  *     snake_case field names the backend's Pydantic
  *     models expect (e.g. `exit_code` not
- *     `exitCode`, `api_key` not `apiKey`).
+ *     `exitCode` and nested config `ports`).
  *   - The response body is deserialized into the
  *     right Kotlin DTOs (snake_case JSON → camelCase
  *     Kotlin fields via Moshi's `@Json(name=...)`).
@@ -203,7 +203,6 @@ class BackendApiTest {
             ConfigRequest(
                 provider = "anthropic",
                 model = "claude-sonnet-4-5",
-                apiKey = "sk-test-1234",
                 ports = ConfigPorts(backend = 7777, flask = 7778),
             ),
         )
@@ -213,13 +212,11 @@ class BackendApiTest {
         assertEquals("PUT", request.method)
         assertEquals("/config", request.path)
         val body = request.body.readUtf8()
-        // Verify the wire format byte-for-byte:
-        // snake_case `api_key`, nested `ports` object
-        // with `backend` and `flask` keys. This is
-        // the contract the backend's Pydantic model
-        // expects.
+        // Verify the wire format byte-for-byte. Provider/model and nested
+        // ports are synchronized, but the encrypted API key must never cross
+        // the loopback HTTP boundary.
         assertEquals(
-            """{"provider":"anthropic","model":"claude-sonnet-4-5","api_key":"sk-test-1234","ports":{"backend":7777,"flask":7778}}""",
+            """{"provider":"anthropic","model":"claude-sonnet-4-5","ports":{"backend":7777,"flask":7778}}""",
             body,
         )
     }
@@ -241,7 +238,6 @@ class BackendApiTest {
             ConfigRequest(
                 provider = "openai",
                 model = "gpt-4o",
-                apiKey = "",
                 ports = ConfigPorts(backend = 7777, flask = 7778),
             ),
         )

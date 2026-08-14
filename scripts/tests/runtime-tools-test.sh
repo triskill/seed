@@ -175,11 +175,11 @@ test_arm64_target() (
     assert_eq "44ef39c1e1a18c09f6e4c4b5d6f8bba82d30596598bd155ec162d05c5122ff04" "$PROOT_LOADER_SHA" "arm64 loader SHA"
     assert_eq "3c9b207c0a6ea2896b7523e03f55d9ab0d9e88baa115d4c32b84058ff4246fbb" "$TALLOC_SHA" "arm64 talloc SHA"
     assert_eq "84475798e07c8174dbbfaec70a827fdb02f19ffa69a589380c13e7507fd0e731" "$ANDROID_SHMEM_SHA" "arm64 shmem SHA"
-    assert_eq "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz" "$ALPINE_URL" "arm64 Alpine URL"
-    assert_eq "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de" "$ALPINE_SHA" "arm64 Alpine SHA"
+    assert_eq "https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/aarch64/alpine-minirootfs-3.22.5-aarch64.tar.gz" "$ALPINE_URL" "arm64 Alpine URL"
+    assert_eq "3fbc6285032ed46821b511292633d7b2a6306a2e254f590e92bdafff56cf2f70" "$ALPINE_SHA" "arm64 Alpine SHA"
     assert_eq "linux/arm64" "$DOCKER_PLATFORM" "arm64 Docker platform"
     assert_eq "arm64" "$DOCKER_IMAGE_ARCH" "arm64 Docker image architecture"
-    assert_eq "alpine:3.20.3" "$ALPINE_BASE_IMAGE" "arm64 multi-platform Alpine base image"
+    assert_eq "alpine:3.22.5" "$ALPINE_BASE_IMAGE" "arm64 multi-platform Alpine base image"
     assert_eq "ARM aarch64" "$PROOT_FILE_MARKER" "arm64 proot file marker"
     assert_eq "arm64-v8a" "$ANDROID_ABI" "arm64 Android ABI"
     assert_eq "arm64-v8a/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "arm64 native proot path"
@@ -202,11 +202,11 @@ test_x86_64_target() (
     assert_eq "914564ea1c66f50b38f18cac857fcf814c6b1ab027789178880fca1d530599b3" "$PROOT_LOADER_SHA" "x86_64 loader SHA"
     assert_eq "77be445f4ec245fff9c19e9874ebcf99618244cf48737f5fca938316daaa70da" "$TALLOC_SHA" "x86_64 talloc SHA"
     assert_eq "092926060298acd3778e6239033d7aef1280dcb59aebe021a3719612e6a3465f" "$ANDROID_SHMEM_SHA" "x86_64 shmem SHA"
-    assert_eq "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz" "$ALPINE_URL" "x86_64 Alpine URL"
-    assert_eq "d4e6fd67dcf75e40c451560ac7265166c2b72a0f38ddc9aae756a7de3d1efa0c" "$ALPINE_SHA" "x86_64 Alpine SHA"
+    assert_eq "https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/alpine-minirootfs-3.22.5-x86_64.tar.gz" "$ALPINE_URL" "x86_64 Alpine URL"
+    assert_eq "4b4daa9fe2fc696c4919c4412a4c3d3e770d8fb70292a004a2c72f5096175282" "$ALPINE_SHA" "x86_64 Alpine SHA"
     assert_eq "linux/amd64" "$DOCKER_PLATFORM" "x86_64 Docker platform"
     assert_eq "amd64" "$DOCKER_IMAGE_ARCH" "x86_64 Docker image architecture"
-    assert_eq "alpine:3.20.3" "$ALPINE_BASE_IMAGE" "x86_64 multi-platform Alpine base image"
+    assert_eq "alpine:3.22.5" "$ALPINE_BASE_IMAGE" "x86_64 multi-platform Alpine base image"
     assert_eq "x86-64" "$PROOT_FILE_MARKER" "x86_64 proot file marker"
     assert_eq "x86_64" "$ANDROID_ABI" "x86_64 Android ABI"
     assert_eq "x86_64/libproot.so" "$PROOT_JNI_RELATIVE_PATH" "x86_64 native proot path"
@@ -243,8 +243,17 @@ test_target_can_be_reconfigured() (
 
 test_dockerfile_base_image_default() {
     assert_contains "$BUILD_SCRIPT" \
-        "ARG ALPINE_BASE_IMAGE=alpine:3.20.3" \
+        "ARG ALPINE_BASE_IMAGE=alpine:3.22.5" \
         "Dockerfile Alpine base image default"
+}
+
+test_dockerfile_validates_pi_node_runtime() {
+    assert_contains "$BUILD_SCRIPT" \
+        "if (major < 22) process.exit(1)" \
+        "Dockerfile minimum Node version check"
+    assert_contains "$BUILD_SCRIPT" \
+        "&& pi --version" \
+        "Dockerfile pi startup smoke check"
 }
 
 test_unsupported_target() {
@@ -1068,7 +1077,7 @@ case "$(<"$target")" in
         actual='ca5279447ed4693b5e66e6eb1228da65a7c9c3b2fe23953c143216b55b7b9839'
         ;;
     controlled-alpine-archive)
-        actual='d4e6fd67dcf75e40c451560ac7265166c2b72a0f38ddc9aae756a7de3d1efa0c'
+        actual='4b4daa9fe2fc696c4919c4412a4c3d3e770d8fb70292a004a2c72f5096175282'
         ;;
     *) actual='invalid' ;;
 esac
@@ -1451,6 +1460,7 @@ run_test "x86_64 target configuration" test_x86_64_target
 run_test "arm64 default target" test_default_target
 run_test "target configuration can be repeated and changed" test_target_can_be_reconfigured
 run_test "Dockerfile has valid multi-platform Alpine default" test_dockerfile_base_image_default
+run_test "Dockerfile validates pi-compatible Node" test_dockerfile_validates_pi_node_runtime
 run_test "native bundle builder declares prerequisites" test_native_bundle_builder_declares_prerequisites
 run_test "native bundle builder extracts known Termux files" test_native_bundle_builder_extracts_known_termux_files
 run_test "native bundle builder validates and publishes complete unit" test_native_bundle_builder_validates_and_publishes_complete_unit

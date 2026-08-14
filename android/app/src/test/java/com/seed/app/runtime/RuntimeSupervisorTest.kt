@@ -368,6 +368,33 @@ class RuntimeSupervisorTest {
     }
 
     @Test
+    fun stopDuringSuspendingProcessCreationDestroysLateHandle() = runTest {
+        val creationEntered = CompletableDeferred<Unit>()
+        val releaseCreation = CompletableDeferred<Unit>()
+        val createdHandle = FakeProotHandle()
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = {
+                creationEntered.complete(Unit)
+                withContext(NonCancellable) { releaseCreation.await() }
+                createdHandle
+            },
+            healthStates = { emptyFlow() },
+        )
+
+        supervisor.startOrRetry()
+        runCurrent()
+        assertTrue(creationEntered.isCompleted)
+
+        supervisor.stop()
+        releaseCreation.complete(Unit)
+        runCurrent()
+
+        assertEquals(1, createdHandle.destroyCalls)
+        assertFalse(supervisor.isRuntimeAlive)
+    }
+
+    @Test
     fun stopCancelsPollingAndDestroysActiveHandleExactlyOnce() = runTest {
         val handle = FakeProotHandle()
         var pollingCancelled = false

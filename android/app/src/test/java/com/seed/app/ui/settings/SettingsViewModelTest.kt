@@ -10,6 +10,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -279,7 +280,7 @@ class SettingsViewModelTest {
         val req = fakeSync.requests[0]
         assertEquals("anthropic", req.provider)
         assertEquals("claude-sonnet-4-5", req.model)
-        assertEquals("sk-test", req.apiKey)
+        assertFalse(req.toString().contains("sk-test"))
         assertEquals(8888, req.ports.backend)
         assertEquals(9999, req.ports.flask)
     }

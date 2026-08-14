@@ -75,7 +75,7 @@ def parse_task_done(line: str) -> Optional[str]:
 
     Args:
         line: A single line of worker stdout (newline
-              already stripped by the PTY reader).
+              already stripped by the PiRunner reader).
 
     Returns:
         The summary string if the marker carries one,
@@ -128,7 +128,6 @@ PI_EVENT_TOOL_START = "tool_execution_start"
 PI_EVENT_TOOL_END = "tool_execution_end"
 PI_EVENT_TURN_END = "turn_end"
 PI_EVENT_MESSAGE_END = "message_end"
-PI_EVENT_MESSAGE_END = "message_end"
 PI_EVENT_RESPONSE = "response"
 PI_EVENT_EXTENSION_UI_REQUEST = "extension_ui_request"
 
@@ -171,7 +170,7 @@ def translate_pi_line(
 
     Args:
         raw_line: One line of pi's stdout (newline
-                  already stripped by the PTY reader).
+                  already stripped by the PiRunner reader).
         role:     "middleman" or "worker". Determines
                   which WS event type tag the
                   broadcasts use (`middleman_line` vs
@@ -227,8 +226,14 @@ def translate_pi_line(
         return (None, "")
 
     if t == PI_EVENT_RESPONSE:
-        # Ack for a `prompt` command. Not interesting
-        # to the chat UI; ignore.
+        # Successful command acknowledgements are internal. Failed prompt
+        # responses (missing API key, invalid model/provider, etc.) must reach
+        # Android; otherwise the user sees a silent, permanently idle chat.
+        if event.get("success") is False:
+            message = event.get("error")
+            if not isinstance(message, str) or not message:
+                message = "pi command failed"
+            return ([{"type": WS_TYPE_ERROR, "message": message}], "")
         return (None, "")
 
     if t == PI_EVENT_EXTENSION_UI_REQUEST:

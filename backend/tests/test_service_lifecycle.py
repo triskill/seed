@@ -50,7 +50,7 @@ def test_lifespan_creates_orchestrator_with_two_runners(orchestrator_client):
     """app.state.orchestrator has middleman + worker PiRunners with valid PIDs.
 
     Two distinct PIDs (and a non-None orchestrator) prove the lifespan
-    actually forked+exec'd the fake pi twice — one per role. If either
+    actually launched the fake pi twice — one per role. If either
     runner hadn't been started, its `pid` would be None.
     """
     orch = orchestrator_client.app.state.orchestrator
@@ -107,9 +107,8 @@ def test_lifespan_survives_missing_pi_command(monkeypatch):
     fail when someone tries to send a message. The lifespan swallows
     the spawn failure and leaves the orchestrator in app.state.
     """
-    # Use a cmd that can't possibly exist. The fork succeeds but
-    # the child fails to exec and exits 127 — that's still fine
-    # from the lifespan's perspective.
+    # Popen reports this missing executable synchronously; the lifespan logs
+    # the failure and keeps the non-agent application surface available.
     monkeypatch.setattr(service, "pi_cmd_for_role", lambda role: [
         "/nonexistent/pi/binary/that/does/not/exist"
     ])

@@ -189,3 +189,29 @@ def test_runner_accepts_multiline_system_prompt():
     assert "Line two." in prompt_lines
     assert "Line three." in prompt_lines
     assert "" in prompt_lines
+
+def test_large_preload_does_not_deadlock_with_large_startup_output():
+    """The stdout drainer starts before preload fills the opposite pipe."""
+    fixture = Path(__file__).parent / "fixtures" / "fake_pi_startup_burst.py"
+    prompt = "p" * (256 * 1024)
+
+    async def scenario():
+        runner = PiRunner(
+            cmd=[sys.executable, str(fixture)],
+            role="worker",
+            system_prompt=prompt,
+        )
+        try:
+            async with asyncio.timeout(5):
+                await runner.start()
+                await runner.send("go")
+                return await _read_lines_with_timeout(
+                    runner,
+                    stop_after="echo: go",
+                )
+        finally:
+            await runner.stop()
+
+    lines = asyncio.run(scenario())
+    assert f"prompt-bytes:{len(prompt) + 1}" in lines
+    assert "echo: go" in lines

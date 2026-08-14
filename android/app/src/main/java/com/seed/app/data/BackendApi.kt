@@ -21,7 +21,7 @@ import retrofit2.http.PUT
  *
  * **JSON shape** — every DTO in this file matches
  * the backend's Pydantic models field-for-field.
- * Snake-case JSON fields (`exit_code`, `api_key`)
+ * Snake-case JSON fields (such as `exit_code`)
  * are mapped to camelCase Kotlin properties via
  * Moshi's `@Json(name = "...")` annotation so the
  * Kotlin code reads naturally. The DTOs are
@@ -83,7 +83,7 @@ interface BackendApi {
 
     /**
      * `PUT /config` — write the Android-side settings
-     * (provider, model, API key, ports) to the
+     * (provider, model, ports) to the
      * backend's `config.json` so the next orchestrator
      * restart picks them up.
      *
@@ -156,17 +156,15 @@ data class ShellExecResponse(
  * partial write is recoverable — but the Android
  * side always sends all four fields populated.
  *
- * [apiKey] is sent over the loopback HTTP connection
- * (the backend lives in `127.0.0.1:7777` from the
- * device's perspective, or `10.0.2.2:7777` from the
- * emulator's). The connection is local-only (no
- * network egress), so TLS isn't strictly required,
- * but Phase 7+ may add a loopback-only HTTPS path.
+ * The API key is deliberately absent. Android keeps it in
+ * EncryptedSharedPreferences and injects it directly into the embedded
+ * process environment at startup. Sending it through this unauthenticated
+ * loopback endpoint would expose it to debug HTTP logging and duplicate it in
+ * the guest's plaintext `config.json`.
  */
 data class ConfigRequest(
     val provider: String,
     val model: String,
-    @Json(name = "api_key") val apiKey: String,
     val ports: ConfigPorts,
 )
 

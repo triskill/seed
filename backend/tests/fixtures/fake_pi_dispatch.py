@@ -32,7 +32,7 @@ import sys
 def main() -> int:
     # Read one line of input. Phase 4: orchestrator wraps in
     # a pi RPC `prompt` command. We just need to consume the
-    # line so the PTY doesn't block; the prompt contents are
+    # line so the output pipe flushes promptly; the prompt contents are
     # irrelevant for this fixture (it always emits the same
     # canned dispatch).
     sys.stdin.readline()

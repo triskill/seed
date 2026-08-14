@@ -75,7 +75,7 @@ def test_parse_task_done_finds_marker_in_longer_line():
     """
     assert parse_task_done("[info] <task:done summary=\"ok\"/>") == "ok"
     # Trailing whitespace / newline already stripped by the
-    # PTY reader, but the parser shouldn't depend on that.
+    # PiRunner reader, but the parser shouldn't depend on that.
     assert parse_task_done('<task:done summary="ok"/>   ') == "ok"
 
 
@@ -215,6 +215,26 @@ def test_translate_response_is_silently_dropped():
     )
     events, text = translate_pi_line(line, role="middleman")
     assert events is None
+    assert text == ""
+
+
+def test_translate_failed_response_surfaces_chat_error():
+    """Provider/config failures must not leave Android Chat silently idle."""
+    line = json.dumps(
+        {
+            "type": "response",
+            "command": "prompt",
+            "success": False,
+            "error": "No API key found for opencode-go.",
+        }
+    )
+    events, text = translate_pi_line(line, role="middleman")
+    assert events == [
+        {
+            "type": "error",
+            "message": "No API key found for opencode-go.",
+        }
+    ]
     assert text == ""
 
 

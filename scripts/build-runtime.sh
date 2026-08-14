@@ -311,12 +311,16 @@ cat > "$BUILD_DIR/ctx/Dockerfile" <<'DOCKERFILE'
 # Pinned for reproducible builds. Update both pins together when bumping:
 #   - base image: selected by ALPINE_BASE_IMAGE (must match ALPINE_URL)
 #   - pi: @earendil-works/pi-coding-agent <exact version> (run `npm view` to check)
-# Last bumped: 2026-07-03, pi 0.80.3, alpine 3.20.3.
+# Last bumped: 2026-08-14, pi 0.80.3, alpine 3.22.5 (Node 22).
 # Full digest pinning is a v0.2 follow-up.
-ARG ALPINE_BASE_IMAGE=alpine:3.20.3
+ARG ALPINE_BASE_IMAGE=alpine:3.22.5
 FROM ${ALPINE_BASE_IMAGE}
 RUN apk add --no-cache --update python3 py3-pip nodejs npm git tmux
 RUN npm install -g @earendil-works/pi-coding-agent@0.80.3
+# pi 0.80.3's undici dependency requires Node 22 APIs. Run the CLI during
+# image construction so an incompatible distro Node cannot ship silently.
+RUN node -e 'const major=Number(process.versions.node.split(".")[0]); if (major < 22) process.exit(1)' \
+    && pi --version
 COPY backend /home/seed/backend
 COPY webapp /home/seed/app
 RUN cd /home/seed/app && git init -q

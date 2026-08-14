@@ -95,7 +95,9 @@ applicable source and license obligations for PRoot and its dependencies.
 
 The script uses `docker buildx build` with `linux/arm64` for arm64 or
 `linux/amd64` for x86_64. Both select the corresponding variant of the pinned
-multi-platform `alpine:3.20.3` base image. QEMU user-mode emulation registered
+multi-platform `alpine:3.22.5` base image. Node 22 is required by pi 0.80.3,
+and the image build runs `pi --version` so an incompatible Node/undici
+combination fails before publication. QEMU user-mode emulation registered
 with `binfmt_misc` is needed only when the selected target differs from the
 Docker host architecture. A recent Docker Desktop commonly provides this; on
 Linux it can be registered, for example, with:

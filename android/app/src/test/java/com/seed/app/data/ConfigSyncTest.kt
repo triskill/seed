@@ -24,12 +24,9 @@ import org.junit.Test
  * called, what happens on failure). This file
  * pins the *wire format* — the field names
  * the backend's `PUT /config` route expects,
- * including the snake_case `api_key` ↔
- * camelCase `apiKey` mapping, the nested
- * `ports` object, and the deliberate drop of
- * `logLevel` (the backend has no concept of
- * log level yet, so the field is intentionally
- * not sent).
+ * including the nested `ports` object and the deliberate omission of both
+ * `apiKey` (injected directly from encrypted storage at runtime startup) and
+ * `logLevel` (the backend has no concept of log level yet).
  */
 class ConfigSyncTest {
 
@@ -62,7 +59,7 @@ class ConfigSyncTest {
 
         assertEquals("anthropic", request.provider)
         assertEquals("claude-sonnet-4-5", request.model)
-        assertEquals("sk-test-1234", request.apiKey)
+        assertTrue("ConfigRequest must not expose apiKey", request.toString().contains("sk-test-1234").not())
         assertEquals(8888, request.ports.backend)
         assertEquals(9999, request.ports.flask)
     }
@@ -73,7 +70,7 @@ class ConfigSyncTest {
         // is absent (the ConfigRequest has no
         // `logLevel` property), so we assert the
         // *positive* side: the toRequest
-        // function only reads the five wire-level
+        // function only reads the non-secret wire-level
         // fields. The mapping is verified
         // indirectly by the BackendApiTest
         // contract tests on the wire format;
@@ -129,7 +126,7 @@ class ConfigSyncTest {
         // (e.g. adding a field the backend
         // doesn't expect) slipping through.
         assertEquals(
-            """{"provider":"anthropic","model":"claude-sonnet-4-5","api_key":"sk-test-1234","ports":{"backend":8888,"flask":9999}}""",
+            """{"provider":"anthropic","model":"claude-sonnet-4-5","ports":{"backend":8888,"flask":9999}}""",
             recorded.body.readUtf8(),
         )
     }

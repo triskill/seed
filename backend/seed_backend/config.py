@@ -28,9 +28,9 @@ class Config:
     Attributes:
         provider: LLM provider name (e.g., "anthropic", "openai").
         model:    Model identifier (e.g., "claude-sonnet-4").
-        api_key:  API key for the provider. Empty by default; the user
-                  sets it via the Android Settings screen (mirrored to
-                  this file by the sync logic in a later task).
+        api_key:  Legacy host-side API-key field. Android deliberately never
+                  writes its encrypted credential here; embedded credentials
+                  enter through provider-specific process environment vars.
         ports:    Mapping of service name -> TCP port. Currently
                   "backend" (FastAPI) and "flask" (webapp).
     """

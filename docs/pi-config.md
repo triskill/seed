@@ -73,6 +73,11 @@ default, and the CLI flags override whatever's in there.
 A misconfigured local file can't silently route to a
 different model.
 
+The Android runtime uses Alpine 3.22.5 so its packaged Node is version 22.
+This is required by pi 0.80.3's undici dependency; Alpine 3.20's Node 20
+failed at startup with `webidl.util.markAsUncloneable is not a function`.
+The runtime Docker build executes `pi --version` as a compatibility smoke test.
+
 ## Overriding for a single run
 
 Three env vars let you swap the model/provider without
@@ -112,6 +117,21 @@ automatically by pi (e.g. `ANTHROPIC_API_KEY` for
 `OPENCODE_API_KEY` for both `opencode` and
 `opencode-go`). See the `env-api-keys` table in
 `@earendil-works/pi-ai` for the full list.
+
+### Android credential startup
+
+On Android, provider and model are read from DataStore and the API key is read
+from EncryptedSharedPreferences/Android Keystore whenever `RuntimeService`
+creates a new PRoot process. The service injects `SEED_PI_PROVIDER`,
+`SEED_PI_MODEL`, and one explicitly allowlisted provider credential variable
+into uvicorn's environment; `pi_env_for_role()` passes them to both pi children.
+The key is never placed in argv, loopback `PUT /config`, or the guest's plaintext
+`config.json`. A fresh install with no saved form keeps the packaged
+`opencode-go` / `deepseek-v4-flash` defaults.
+
+Settings saved while PRoot is already alive take effect on the next real runtime
+process generation (service cold start or crash replacement). A deliberate live
+restart/apply control remains Phase 10 work.
 
 ## Why no `auth.json` in the project?
 

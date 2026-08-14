@@ -26,17 +26,17 @@ x86_64 on 2026-08-12._
 |---|---|---|
 | 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
 | 1 | Shell endpoint | ✅ done (5/5); `shell.py` uses `subprocess.Popen` with merged pipes so it works inside proot |
-| 2 | pi runner (PTY wrapper, ANSI strip, tool filter) | ⚠️ host-complete (6/6); `PiRunner` still uses PTY + `fork`, so it cannot start inside Android proot |
-| 3 | Middle-man + worker orchestration | ⚠️ host-complete (7/7); fake/real host flows work, but the embedded agent processes do not start |
+| 2 | pi runner (pipe wrapper, ANSI strip, tool filter) | ✅ done (6/6); Android-compatible `subprocess.Popen` launcher accepted on x86_64 emulator 2026-08-14 |
+| 3 | Middle-man + worker orchestration | ⚠️ embedded processes start and accept RPC; encrypted Android credential startup is wired, but a real provider-backed turn is not yet accepted |
 | 4 | System prompts + first real agent loop | ⚠️ host demo done (4/4); not reproduced inside the standalone APK |
 | 5 | Android shell (4 screens, nav, WebView) | ✅ done (9/9); verified on emulator 2026-08-12 |
 | 6 | Android ↔ backend wiring | ✅ done (5/5) |
 | 7 | Native proot packaging + rootfs extraction | ✅ done (5/5); verified on emulator |
 | 8 | Foreground service | ✅ done (4/4); verified on emulator |
 | 9 | First-run runtime startup gate | ✅ done (4/4); verified on emulator |
-| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; Android-compatible agent launch is the release blocker, followed by reload, security, cancellation, recovery, and UX work |
+| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; agent launch and encrypted credential startup are wired, with provider-backed acceptance, live settings apply, reload, security, cancellation, recovery, and UX remaining |
 
-**Embedded runtime shell verified on `seed_dev` x86_64 (2026-08-12; the agent loop is not end-to-end):**
+**Embedded runtime verified on `seed_dev` x86_64 (shell on 2026-08-12; agent process/RPC startup on 2026-08-14):**
 
 * APK installs and launches without a host backend.
 * `BootController` extracts the Alpine rootfs and version data to
@@ -52,23 +52,26 @@ x86_64 on 2026-08-12._
 * `/health` returns `{"status":"ok","flask":"up"}`; `/api/ping` returns
   `{"pong": true}`; `/` returns the Seed placeholder card.
 * The App tab WebView loads the placeholder card.
-* The Chat tab opens a WebSocket to `/chat` and forwards user
-  messages; the orchestrator reports `"orchestrator not running"` for
-  the agent stream because the pi subprocess spawn hits the same
-  fork problem (next phase).
+* The Chat tab opens a WebSocket to `/chat` and forwards user messages.
+  Both real `pi --mode rpc` Node processes now remain live inside Android PRoot.
+  An RPC prompt reaches the middle-man; without a configured provider key the
+  expected `No API key found for opencode-go` response is surfaced to Chat as
+  an `error` event instead of failing silently.
 * The Shell tab runs Alpine commands; `echo hello` shows
   `$ echo hello` / `hello` / `[exit 0]`.
 
-Verification on 2026-08-14: **124/124 backend tests** and **2/2 webapp
-tests** pass, including the combined **126/126** Python run; **175/175 Android
+Verification on 2026-08-14: **131/131 backend tests** and **2/2 webapp
+tests** pass, including the combined **133/133** Python run; **182/182 Android
 JVM tests** pass. The Flask environment test is isolated from fixed port 7778,
 removing its prior order-dependent readiness race. The runtime tooling shell
-suite passes **30/30**. Android
+suite passes **31/31**. Android
 `lintDebug` and
 `assembleDebug` pass (0 lint errors, 27 warnings), and the instrumentation APK
 compiles. The current instrumentation source contains **2 classes / 6 test
-methods** (`StartRuntimeScreenTest` and `NativeProotSmokeTest`); these were not
-run on a device during this verification.
+methods**. The expanded `NativeProotSmokeTest` was run successfully on x86_64
+on 2026-08-14, proving the allowlisted Settings environment reaches guest
+Python plus a real pipe-backed pi launch/RPC response inside the Android
+app-domain PRoot; the other five methods were not rerun.
 
 > The phase tables below are an implementation history. Their per-task APK
 > sizes, test counts, URLs, and "new/modified" annotations describe the state at
@@ -113,15 +116,15 @@ that field.
 
 ---
 
-## ✅ Phase 2 — pi runner (PTY wrapper, ANSI strip, tool filter)
+## ✅ Phase 2 — pi runner (pipe wrapper, ANSI strip, tool filter)
 
 | # | Task | Files | Notes |
 |---|---|---|---|
 | 2.1 | Fake pi for testing | `backend/tests/fixtures/fake_pi.py` | Python script that reads stdin, writes 3 JSONL progress events + "done", exits 0. |
-| 2.2 | PTY spawn + read loop | `backend/seed_backend/pi_runner.py` | `PiRunner.__init__(cmd, role, ...)`, `start()`, `send()`, `read_lines()` async generator. Uses `pty.openpty()` + `os.fork()` + `os.execvp`; unlike the Shell executor, this has not yet been converted to an Android-compatible process launcher. Per-runner `ThreadPoolExecutor` (avoids default-executor fragility under multi-threaded pytest). Child reports its post-setsid pgid through a pipe; stop() uses that for killpg (with a fallback to `os.kill(pid, ...)` if setsid failed). Only one `os.waitpid` call site, in `stop()`. |
+| 2.2 | Pipe spawn + read loop | `backend/seed_backend/pi_runner.py` | `PiRunner.__init__(cmd, role, ...)`, `start()`, `send()`, `read_lines()` async generator. Phase 10 replaced `pty.openpty()` + Python `os.fork()` with the Android-compatible `subprocess.Popen`/pipe pattern already proven by Shell. `pi --mode rpc` does not require a TTY. The runner keeps merged output, serialized full writes, incremental UTF-8 decoding, bounded line backpressure, new-session process-group TERM/KILL, Popen-owned reaping, and cleanup across restart/failure. Accepted with two live real pi processes on the x86_64 emulator 2026-08-14. |
 | 2.3 | Output ANSI strip | `backend/seed_backend/pi_runner.py`, `backend/tests/test_ansi_strip.py` | `PiRunner(strip_ansi=True)` (default on). Two module-level regexes — CSI (`ESC [`) and OSC (`ESC ]`) — applied on every line in the read loop. |
-| 2.4 | Tool-call filter capability | `backend/seed_backend/pi_runner.py`, `backend/tests/test_tool_filter.py` | `PiRunner(read_only_tools={read,grep,find,ls})` can block disallowed `tool_execution_start` events, abort the child, and raise `ToolCallBlocked`. PTY EOF handling treats `EIO` as EOF. A Phase 10 follow-up now enables both pi's `--tools read,grep,find,ls` allowlist and the matching `PiRunner.read_only_tools` filter for the middle-man; the worker remains unrestricted. |
-| 2.5 | System prompt preload | `backend/seed_backend/pi_runner.py`, `backend/tests/test_system_prompt.py` | `PiRunner(system_prompt=...)`. After fork but before `start()` returns, the runner writes the prompt + blank line to the child's stdin. Extracted into `_do_preload()` so auto-restart reuses it. |
+| 2.4 | Tool-call filter capability | `backend/seed_backend/pi_runner.py`, `backend/tests/test_tool_filter.py` | `PiRunner(read_only_tools={read,grep,find,ls})` can block disallowed `tool_execution_start` events, abort the child, and raise `ToolCallBlocked`. Pipe EOF, including an unterminated final JSON event, passes through the same filter. A Phase 10 follow-up now enables both pi's `--tools read,grep,find,ls` allowlist and the matching `PiRunner.read_only_tools` filter for the middle-man; the worker remains unrestricted. |
+| 2.5 | System prompt preload | `backend/seed_backend/pi_runner.py`, `backend/tests/test_system_prompt.py` | `PiRunner(system_prompt=...)` writes the prompt + blank line to stdin. The stdout drainer starts first so large startup output and large preloads cannot deadlock; every auto-restarted generation is preloaded before accepting sends. |
 | 2.6 | Auto-restart on crash | `backend/seed_backend/pi_runner.py`, `backend/tests/test_auto_restart.py` | `PiRunner(auto_restart=False, max_restarts=5)` can restart from the reader's EOF path up to the configured limit. The default is off, and current production wiring also leaves it off; crash supervision remains Phase 10 work. |
 
 **Module shape after Phase 2:**
@@ -137,7 +140,7 @@ that field.
 
 | # | Task | Files | Notes |
 |---|---|---|---|
-| 3.1 | Service spawns both pi instances on startup | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/service.py`, `backend/tests/test_service_lifecycle.py` | `Orchestrator` lives in its own module (not `service.py`) to avoid the `service.py <-> chat.py` import cycle that would otherwise need a `TYPE_CHECKING` workaround. The class is a thin container for the middle-man + worker `PiRunner`s: `start()` forks+execs both, `stop()` reaps both, plus a per-subscriber pub-sub queue (`subscribe` / `unsubscribe` / `_broadcast`) for the chat route. Lifespan brings the orchestrator up on app start, down on shutdown, and is tolerant of `pi` not being installed (the spawn failure is swallowed and `/health` still works; the orchestrator's pids get set so `stop()` can reap the dead child). |
+| 3.1 | Service spawns both pi instances on startup | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/service.py`, `backend/tests/test_service_lifecycle.py` | `Orchestrator` lives in its own module (not `service.py`) to avoid the `service.py <-> chat.py` import cycle that would otherwise need a `TYPE_CHECKING` workaround. The class is a thin container for the middle-man + worker `PiRunner`s: `start()` launches both, `stop()` reaps both, plus a per-subscriber pub-sub queue (`subscribe` / `unsubscribe` / `_broadcast`) for the chat route. Lifespan brings the orchestrator up on app start, down on shutdown, and is tolerant of `pi` not being installed (the synchronous spawn failure is logged and `/health` still works). |
 | 3.2 | WebSocket `/chat` endpoint | `backend/seed_backend/chat.py`, `backend/seed_backend/service.py`, `backend/tests/fixtures/fake_pi_log.py`, `backend/tests/test_chat_ws.py` | `@app.websocket("/chat")` route delegates to `chat.handle_chat`. The handler accepts the upgrade, loops on `receive_text` for `{"type": "user_message", "text": ...}` frames, and forwards each to `orchestrator.send_to_middleman`. Non-JSON / unknown-type frames are logged + dropped (forward-compat for new message kinds in later phases). A `fake_pi_log.py` fixture writes the received prompt to a log file so the test can verify the round-trip without reaching into the runner's internal queue from a different event loop. |
 | 3.3 | Stream middle-man output to chat WS | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/chat.py`, `backend/tests/test_middleman_stream.py` | `Orchestrator.start()` spawns a background read loop that consumes `middleman.read_lines()` and broadcasts each line as `{"type": "middleman_line", "line": <raw>}` to every subscriber queue. `chat.handle_chat` subscribes a private queue on accept, spawns a forwarder task that pumps `queue -> ws.send_text(json)`, and unsubscribes in a `finally` block on disconnect. Per-subscriber queue is capped at 256 — slow clients drop events rather than backpressure the reader. |
 | 3.4 | Dispatch JSON detection | `backend/seed_backend/middleman.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi_dispatch.py`, `backend/tests/test_dispatch.py`, `backend/tests/test_middleman_dispatch.py` | New module `middleman.py` owns the regex `r'```json\n(.*?)\n```'` (per the plan spec) and the parse step. The middle-man read loop keeps a rolling scan buffer (capped at 64 KiB as a safety net) and, on a match, calls `worker.send(json.dumps(dispatch) + "\n")`. The dispatch block is *also* broadcast as `middleman_line` events so the chat UI can render it as a card. Worker send failures are logged + swallowed; the chat stream must not die because the worker is unhealthy. |
@@ -211,16 +214,16 @@ that field.
 - Phase 5.9 visual verification is complete; the emulator results are recorded below.
 - Phase 6 backend wiring is complete.
 - Phase 7 now builds arm64 or x86_64 runtime bundles, packages the selected four-library native PRoot bundle through `jniLibs`, and extracts only rootfs/version data from assets.
-- Native embedded-runtime startup was accepted on the x86_64 emulator on 2026-08-12; the agent loop remained blocked by `fork(2)`.
+- Native embedded-runtime startup was accepted on x86_64 on 2026-08-12; both real pipe-backed pi RPC processes were accepted on the emulator on 2026-08-14.
 
 **Verification:**
 - ✅ `assembleDebug` produces a runtime-bearing debug APK (~370.6 MB decimal / 353.4 MiB for the current x86_64 build)
 - ✅ AAPT confirms manifest, resources, and version codes
 - ✅ `lintDebug` completes with 0 errors (27 warnings on 2026-08-13)
-- ✅ Backend and webapp pass separately; Android JVM suite passes 173/173
-- ✅ Current instrumentation suite (2 classes / 6 methods) compiles
+- ✅ Backend and webapp pass separately; Android JVM suite passes 182/182
+- ✅ Current instrumentation suite (2 classes / 6 methods) compiles; the native PRoot + real pi RPC smoke method passes on x86_64
 - ✅ Native PRoot/rootfs, uvicorn, WebView, and Shell startup were accepted on the x86_64 emulator on 2026-08-12
-- ❌ The embedded `pi` processes still cannot start because `PiRunner` requires `fork(2)`
+- ✅ Both embedded `pi` processes start and remain live; a missing provider key is returned through Chat as an explicit error
 
 ## ✅ Phase 6 — Android ↔ backend wiring (5/5)
 
@@ -290,17 +293,20 @@ activity is backgrounded.
 | 9.3 | Service lifecycle wiring + retry | `MainActivity.kt`, `runtime/{RuntimeSupervisor,RuntimeService,RuntimeBinder}.kt` | ✅ `MainActivity` starts and binds the foreground service after extraction, mirrors binder health, requests Android 13+ notification permission once, gates navigation until healthy, retains the service in the background, and unbinds on destroy. Retry re-polls a live process or replaces a dead one. Extraction is single-flight across activity recreation. |
 | 9.4 | Embedded endpoint defaults + host persistence | `app/build.gradle.kts`, `data/{ApiModule,AndroidSettingsRepo}.kt`, `ui/{app,settings}/*`, related tests | ✅ Active HTTP, WebSocket, and WebView clients use `127.0.0.1:7777`; Flask is WSGI-mounted on the FastAPI port in the embedded runtime. Cleartext/navigation allowlists retain loopback plus `10.0.2.2`. `SettingsForm.host` persists `127.0.0.1`; its legacy `webappPort=7778` field and other saved endpoint values do not currently rebuild clients or reconfigure/restart the backend. That operational wiring and host UI remain Phase 10 work. |
 
-**Module shape after Phase 9:** `RuntimeSupervisor` owns retryable process/health startup, `RuntimeStartup` owns pure UI gating, and `MainActivity` is the Android lifecycle adapter. The Android JVM suite passes; the current 2-class / 6-method instrumentation suite compiles but was not run during the latest verification.
+**Module shape after Phase 9:** `RuntimeSupervisor` owns retryable process/health startup, `RuntimeStartup` owns pure UI gating, and `MainActivity` is the Android lifecycle adapter. The Android JVM suite passes; the current 2-class / 6-method instrumentation suite compiles, and the native PRoot/real-pi RPC smoke method passed on x86_64 on 2026-08-14.
 
 ## ⬜ Phase 10 — Embedded agent loop + end-to-end readiness
 
-The first item is a release blocker; the remaining items turn the working
-runtime shell into a safe, recoverable product flow.
+The original process-launch release blocker is resolved; the remaining items
+turn the now-running embedded agent processes into a complete, safe product flow.
 
-1. **Replace the fork-based `PiRunner` process model.** Android proot returns
-   ENOSYS for `fork(2)`, so neither embedded `pi` process currently starts.
-   Preserve RPC streaming, process-group termination, tool filtering, and tests
-   using an Android-compatible launcher.
+1. **Android-compatible `PiRunner` process model — completed 2026-08-14.**
+   Replaced PTY + Python `os.fork()` with direct-argv `subprocess.Popen`, merged
+   pipes, and `start_new_session=True`, preserving RPC streaming, process-group
+   termination, tool filtering, prompt preload, bounded restart, and cleanup.
+   Host tests, a real host pi startup, and two live real pi processes plus an RPC
+   error round-trip were accepted on the x86_64 Android emulator. A provider-key
+   backed model/tool turn and arm64 device run remain release verification work.
 2. **Make worker edits take effect in embedded mode.** Worker verification now
    uses the mode-aware `SEED_APP_URL` (completed 2026-08-14), but the in-process
    WSGI fallback has no Flask reloader. Define a safe app reload/restart
@@ -308,19 +314,23 @@ runtime shell into a safe, recoverable product flow.
    adding a Chat banner.
 3. **Secure the loopback control plane.** The middle-man now has a matching
    pi CLI tool allowlist and runtime event filter (completed 2026-08-14).
-   Remaining work: authenticate HTTP/WS requests, verify backend identity,
-   separate or authenticate mutable web content versus privileged control
-   routes, protect API-key transfer/storage, and constrain worker mutation to
-   the app workspace.
+   Android credentials now stay in encrypted storage and are injected into a
+   newly created PRoot environment rather than crossing `PUT /config` or being
+   copied to plaintext JSON (completed 2026-08-14). Remaining work: authenticate
+   HTTP/WS requests, verify backend identity, separate or authenticate mutable
+   web content versus privileged control routes, prevent same-UID/process-env
+   credential exposure, and constrain worker mutation to the app workspace.
 4. **Finish Shell and Chat behavior.** Android now renders a distinct warning
    when the backend reports truncated shell output (completed 2026-08-14).
    Remaining work: add a real backend cancellation protocol, wire Android Cancel
    to it, surface connection/sync failures, avoid silently dropping offline
    sends, and bound or persist long histories.
-5. **Make Settings operational.** Load saved provider/model/key/ports at backend
-   startup, rebuild clients or restart services when endpoints change, expose
-   the persisted host where appropriate, and remove or migrate the legacy
-   two-port fields.
+5. **Make Settings operational.** Saved provider/model/key are now loaded from
+   DataStore/Keystore storage for each real PRoot process generation and mapped
+   to explicit pi environment variables (completed 2026-08-14); Android no
+   longer sends the key through loopback config sync. Remaining work: deliberately
+   restart/apply after Save, load or migrate ports, rebuild clients when endpoints
+   change, and expose the persisted host where appropriate.
 6. **Harden runtime recovery.** Detect process death after initial health,
    handle bind timeouts and extraction failures, add explicit stop/restart/wipe
    controls, and enable bounded crash supervision.
@@ -380,21 +390,24 @@ Android tooling only; Python dependencies come from
 
 ## Known v0.1 limitations (carry-forward TODOs)
 
-- **The defining embedded agent loop is blocked.** `PiRunner` uses PTY +
-  `os.fork()`, while Android proot returns ENOSYS for `fork(2)`. The shell,
-  embedded backend, and WebView work, but Chat cannot run the two `pi` agents.
-  On Python 3.12+, the same code also warns that forking a multithreaded host
-  process can deadlock.
+- **The embedded agents and credential startup are wired, but a provider-backed
+  turn is not yet accepted.** Pipe-backed `PiRunner` starts both real pi RPC
+  processes inside Android PRoot, and Chat surfaces the expected missing-key
+  response. Saved Android provider/model/key settings now enter new PRoot
+  generations through an allowlisted environment mapping. No operational key
+  was available for this verification, and Settings Save still needs an explicit
+  live restart/apply path before the change affects an already-running runtime.
 - **Embedded worker edits cannot hot-reload yet.** Flask falls back to an
   in-process WSGI mount on Android, which has no code reloader. The current
   `app_reload` event only renders a Chat banner and does not refresh the App
   WebView.
 - **Prototype security: the loopback backend is unauthenticated.** Android
   localhost is shared with other apps, and the surface includes arbitrary
-  `/shell/exec`, `/config`, `/chat`, and mutable Flask routes. API keys cross
-  this cleartext channel, are written to backend JSON, and can appear in
-  debug-build OkHttp BODY logs. Add authenticated
-  transport and server-identity protection before distribution. Embedded
+  `/shell/exec`, `/config`, `/chat`, and mutable Flask routes. Android no longer
+  sends API keys over loopback config sync or writes them to backend JSON, but
+  the unauthenticated shell and same-UID process inspection can still expose a
+  key inherited by uvicorn/pi. Add authenticated transport and server-identity
+  protection before distribution. Embedded
   Flask content and the privileged FastAPI routes currently share the same
   `http://127.0.0.1:7777` origin while WebView JavaScript is enabled, so mutable
   web content can call control routes unless they are separated/authenticated.
@@ -425,8 +438,9 @@ Android tooling only; Python dependencies come from
   conversations and receive one another's events; queues may drop old events,
   offline sends can be lost, and there is no replay/history persistence.
 - **Verification automation is incomplete.** There is no CI and no Python
-  lint/type-check configuration. Android instrumentation compiles but was not
-  run during the latest verification.
+  lint/type-check configuration. The native PRoot/real-pi RPC instrumentation
+  method passed on x86_64, but the remaining instrumentation methods and arm64
+  device coverage were not run during the latest verification.
 - **Distribution is unfinished.** Generated rootfs/native artifacts are
   Git-ignored and architecture-specific; a fresh checkout must run
   `make runtime`. The current x86_64 debug APK is ~370.6 MB decimal, release
@@ -457,11 +471,11 @@ curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json
 
 **Run tests:**
 ```bash
-.venv/bin/python -m pytest backend/ webapp/ -v  # 126 passed on 2026-08-14
-./scripts/tests/runtime-tools-test.sh           # 30 passed
+.venv/bin/python -m pytest backend/ webapp/ -v  # 133 passed on 2026-08-14
+./scripts/tests/runtime-tools-test.sh           # 31 passed
 
 cd android
-./gradlew --no-daemon :app:testDebugUnitTest  # 175 passed
+./gradlew --no-daemon :app:testDebugUnitTest  # 182 passed
 ./gradlew --no-daemon :app:lintDebug :app:assembleDebug
 ./gradlew --no-daemon :app:assembleDebugAndroidTest
 # Run connected instrumentation separately with a matching emulator/device.

@@ -44,8 +44,8 @@ import java.util.concurrent.TimeUnit
  *   - **Debug-only logging.** [HttpLoggingInterceptor]
  *     dumps full request/response bodies to logcat
  *     — useful for development, but a privacy leak
- *     in production (the API key is in the body of
- *     `PUT /config`). The interceptor is only
+ *     in production. Provider credentials are no longer sent through
+ *     `PUT /config`; the interceptor is only
  *     installed when [BuildConfig.DEBUG] is true;
  *     release builds get a silent OkHttp stack.
  *
