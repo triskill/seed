@@ -474,11 +474,10 @@ class Orchestrator:
         one; the cap is just a safety net.
 
         The loop is a long-lived background task; it is
-        cancelled by `stop()`. Exceptions (other than
-        `CancelledError`) are logged and the loop
-        continues on the next iteration, so a transient
-        error in one iteration doesn't take down the
-        whole stream.
+        cancelled by `stop()`. Malformed dispatch JSON is
+        logged and discarded so later middle-man output can
+        still be streamed and scanned. Unexpected reader or
+        translation failures are logged before the loop exits.
         """
         buffer = ""
         try:
@@ -502,7 +501,17 @@ class Orchestrator:
                     # and start fresh.
                     buffer = ""
                     continue
-                dispatch = extract_dispatch(buffer)
+                try:
+                    dispatch = extract_dispatch(buffer)
+                except json.JSONDecodeError as exc:
+                    log.warning(
+                        "ignoring malformed middle-man dispatch: %s",
+                        exc,
+                    )
+                    # Drop the completed malformed block. Keeping it would
+                    # make every later scan fail on the same first match.
+                    buffer = ""
+                    continue
                 if dispatch is not None:
                     await self._send_dispatch_to_worker(dispatch)
                     # Clear the buffer past the match so a
