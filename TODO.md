@@ -61,7 +61,7 @@ x86_64 on 2026-08-12._
   `$ echo hello` / `hello` / `[exit 0]`.
 
 Verification on 2026-08-14: **131/131 backend tests** and **2/2 webapp
-tests** pass, including the combined **133/133** Python run; **182/182 Android
+tests** pass, including the combined **133/133** Python run; **183/183 Android
 JVM tests** pass. The Flask environment test is isolated from fixed port 7778,
 removing its prior order-dependent readiness race. The runtime tooling shell
 suite passes **31/31**. Android
@@ -220,7 +220,7 @@ that field.
 - ✅ `assembleDebug` produces a runtime-bearing debug APK (~370.6 MB decimal / 353.4 MiB for the current x86_64 build)
 - ✅ AAPT confirms manifest, resources, and version codes
 - ✅ `lintDebug` completes with 0 errors (27 warnings on 2026-08-13)
-- ✅ Backend and webapp pass separately; Android JVM suite passes 182/182
+- ✅ Backend and webapp pass separately; Android JVM suite passes 183/183
 - ✅ Current instrumentation suite (2 classes / 6 methods) compiles; the native PRoot + real pi RPC smoke method passes on x86_64
 - ✅ Native PRoot/rootfs, uvicorn, WebView, and Shell startup were accepted on the x86_64 emulator on 2026-08-12
 - ✅ Both embedded `pi` processes start and remain live; a missing provider key is returned through Chat as an explicit error
@@ -331,9 +331,11 @@ turn the now-running embedded agent processes into a complete, safe product flow
    longer sends the key through loopback config sync. Remaining work: deliberately
    restart/apply after Save, load or migrate ports, rebuild clients when endpoints
    change, and expose the persisted host where appropriate.
-6. **Harden runtime recovery.** Detect process death after initial health,
-   handle bind timeouts and extraction failures, add explicit stop/restart/wipe
-   controls, and enable bounded crash supervision.
+6. **Harden runtime recovery.** Startup now waits for both the backend and the
+   embedded Flask app to report ready instead of accepting `flask: "down"`.
+   Remaining work: detect process death after initial health, handle bind timeouts
+   and extraction failures, add explicit stop/restart/wipe controls, and enable
+   bounded crash supervision.
 7. **Run the product demo and release checks.** Complete the "Add a habit
    tracker" standalone-APK demo, run instrumentation on x86_64 and arm64,
    resolve lint/release-signing/licensing items, and add CI plus static checks.
@@ -425,8 +427,8 @@ Android tooling only; Python dependencies come from
   leave health at `Unknown`; an accepted service binding has no callback
   timeout; extraction failures are not translated into retryable UI; and
   health is not continuously monitored after the first success. A wedged but
-  still-alive process is re-polled rather than restarted, and any successful
-  `/health` response is treated as ready even when its `flask` field is down.
+  still-alive process is re-polled rather than restarted. Startup readiness now
+  requires `/health` to report `flask: "up"`.
 - **Shell cancellation and output semantics are incomplete.** The library can
   cancel a subprocess, but the HTTP/Android protocol does not expose it.
   `subprocess.Popen` merges stderr into stdout, so `stderr` remains empty.
@@ -475,7 +477,7 @@ curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json
 ./scripts/tests/runtime-tools-test.sh           # 31 passed
 
 cd android
-./gradlew --no-daemon :app:testDebugUnitTest  # 182 passed
+./gradlew --no-daemon :app:testDebugUnitTest  # 183 passed
 ./gradlew --no-daemon :app:lintDebug :app:assembleDebug
 ./gradlew --no-daemon :app:assembleDebugAndroidTest
 # Run connected instrumentation separately with a matching emulator/device.

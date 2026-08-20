@@ -45,16 +45,51 @@ class HealthMonitorTest {
     }
 
     @Test
-    fun flaskDownStillCountsAsHealthyWhenBackendResponds() = runTest {
+    fun flaskDownIsRetriedUntilTheAppIsReady() = runTest {
+        val api = FakeBackendApi(
+            responses = ArrayDeque(
+                listOf(
+                    Result.success(HealthResponse(status = "ok", flask = "down")),
+                    Result.success(HealthResponse(status = "ok", flask = "up")),
+                ),
+            ),
+        )
+
+        val states = HealthMonitor(
+            api = api,
+            intervalMs = 500,
+            maxAttempts = 2,
+            nowMs = { testScheduler.currentTime },
+        ).states().toList()
+
+        assertEquals(
+            listOf(
+                HealthState.Unknown,
+                HealthState.Polling(attempt = 1),
+                HealthState.Polling(attempt = 2),
+                HealthState.Healthy(flask = "up"),
+            ),
+            states,
+        )
+        assertEquals(2, api.healthCalls)
+        assertEquals(500, testScheduler.currentTime)
+    }
+
+    @Test
+    fun flaskDownAfterFinalAttemptIsUnhealthy() = runTest {
         val api = FakeBackendApi(
             responses = ArrayDeque(
                 listOf(Result.success(HealthResponse(status = "ok", flask = "down"))),
             ),
         )
 
-        val states = HealthMonitor(api).states().toList()
+        val states = HealthMonitor(api, maxAttempts = 1).states().toList()
 
-        assertEquals(HealthState.Healthy(flask = "down"), states.last())
+        assertEquals(
+            HealthState.Unhealthy(message = "Flask app is not ready: down"),
+            states.last(),
+        )
+        assertEquals(1, api.healthCalls)
     }
 
     @Test

@@ -19,11 +19,11 @@ sealed class HealthState {
 /**
  * Polls the embedded backend until it responds or the attempt budget is exhausted.
  *
- * A successful `/health` response means the orchestrator is ready even when Flask
- * still reports `"down"`; callers can display that detail through [HealthState.Healthy].
- * Each request is bounded by [intervalMs], and failed requests retry on that fixed
- * start-to-start cadence. The returned flow is cold, so each collector starts a fresh
- * probe run.
+ * The runtime is ready only when `/health` responds and its `flask` field is `"up"`.
+ * A reachable backend can report `"down"` briefly while the embedded app is still
+ * starting, so that response is retried just like a failed request. Each request is
+ * bounded by [intervalMs], and unsuccessful probes retry on that fixed start-to-start
+ * cadence. The returned flow is cold, so each collector starts a fresh probe run.
  */
 class HealthMonitor(
     private val api: BackendApi,
@@ -62,6 +62,19 @@ class HealthMonitor(
                 continue
             }
 
+            if (response.flask != FLASK_READY_STATUS) {
+                if (attempt == maxAttempts) {
+                    emit(
+                        HealthState.Unhealthy(
+                            "Flask app is not ready: ${response.flask}",
+                        ),
+                    )
+                    return@flow
+                }
+                delayUntilNextProbe(startedAt)
+                continue
+            }
+
             emit(HealthState.Healthy(response.flask))
             return@flow
         }
@@ -71,5 +84,9 @@ class HealthMonitor(
         val elapsed = (nowMs() - startedAt).coerceAtLeast(0)
         val remaining = intervalMs - elapsed
         if (remaining > 0) delay(remaining)
+    }
+
+    private companion object {
+        const val FLASK_READY_STATUS = "up"
     }
 }
