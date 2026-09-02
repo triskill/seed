@@ -9,13 +9,13 @@ configure_runtime_target() {
     case "$target" in
         arm64)
             RUNTIME_ARCH="arm64"
-            PROOT_PACKAGE_URL="$termux_base/pool/main/p/proot/proot_5.1.107.89_aarch64.deb"
-            PROOT_PACKAGE_SHA="ec9fe38c50cfd49dd31fe360ffbcc3124a945dc1ea16293a8a769303dd724f46"
+            PROOT_PACKAGE_URL="$termux_base/pool/main/p/proot/proot_5.1.107.92_aarch64.deb"
+            PROOT_PACKAGE_SHA="1f1c983509701f6826f568482c70673ee453a9ba38c9f5fa445a472d6b7524e9"
             TALLOC_PACKAGE_URL="$termux_base/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb"
             TALLOC_PACKAGE_SHA="ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da"
             ANDROID_SHMEM_PACKAGE_URL="$termux_base/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb"
             ANDROID_SHMEM_PACKAGE_SHA="0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6"
-            PROOT_SHA="7da118895e971ea9fba4bb250b28af0f8db2edcbfdbaa8075cc645a0d7cf16fe"
+            PROOT_SHA="41b4ae7f8aa2eac38678c97b5bdb6a0503903aafa92eb8b377d377d4103d57cb"
             PROOT_LOADER_SHA="44ef39c1e1a18c09f6e4c4b5d6f8bba82d30596598bd155ec162d05c5122ff04"
             TALLOC_SHA="3c9b207c0a6ea2896b7523e03f55d9ab0d9e88baa115d4c32b84058ff4246fbb"
             ANDROID_SHMEM_SHA="84475798e07c8174dbbfaec70a827fdb02f19ffa69a589380c13e7507fd0e731"
@@ -29,8 +29,8 @@ configure_runtime_target() {
             ;;
         x86_64)
             RUNTIME_ARCH="x86_64"
-            PROOT_PACKAGE_URL="$termux_base/pool/main/p/proot/proot_5.1.107.89_x86_64.deb"
-            PROOT_PACKAGE_SHA="0d76da0515f38dfb2217f647b0d79fcd61b38f80e25cbf2d39237697b02dd016"
+            PROOT_PACKAGE_URL="$termux_base/pool/main/p/proot/proot_5.1.107.92_x86_64.deb"
+            PROOT_PACKAGE_SHA="70236632826c30ec0245082b633bbc7ef1e9fa5531bd51bd4f20231bfcdc999b"
             TALLOC_PACKAGE_URL="$termux_base/pool/main/libt/libtalloc/libtalloc_2.4.3_x86_64.deb"
             TALLOC_PACKAGE_SHA="7ca2eaae2e53b28228a01301bc410b62845403d6317c25b8e0a7f40681de0628"
             ANDROID_SHMEM_PACKAGE_URL="$termux_base/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_x86_64.deb"

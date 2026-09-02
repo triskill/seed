@@ -179,6 +179,54 @@ run: check-deps check-runtime-arch  ## start emulator, install APK, launch app
 	@$(ADB) shell am start -n $(APP_ID)/$(APP_ACTIVITY)
 	@echo ">> App launched. Attach: \`adb shell\` or \`adb logcat\`."
 
+# `run-phone-test` targets a real phone connected via USB.
+# It builds the arm64 runtime (required for every phone), builds the APK,
+# installs it on the connected device, and launches the app.
+# Requires: USB phone with developer mode on, adb authorized.
+# To switch to a specific device: make run-phone-test DEVICE_ID=<serial>
+.PHONY: run-phone-test
+run-phone-test: ANDROID_ABI ?= arm64-v8a
+run-phone-test: check-deps  ## build arm64 runtime, APK, install + launch on USB phone
+	@if [ -d android/app/src/main/jniLibs/ARM64-V8A ] || [ -d android/app/src/main/jniLibs/arm64-v8a ]; then \
+		echo ">> arm64 libs already present."; \
+	else \
+		echo ">> Building arm64 runtime (this takes a few minutes on first run)..."; \
+		if command -v docker >/dev/null && command -v uv >/dev/null; then \
+			RUNTIME_ARCH=arm64 ./scripts/build-runtime.sh || { echo "!! runtime build failed."; exit 1; }; \
+		else \
+			echo "!! Need docker + uv to build runtime. Run: sudo apt install docker.io pipx && pipx install uv"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo ">> Building debug APK..."
+	@cd android && ./gradlew :app:assembleDebug
+	@echo ">> Checking for connected device..."
+	@DEVICES=$$($(ADB) devices -l 2>/dev/null | grep -E '\(device\)' | awk -F'[ ,:]+' '{for(i=1;i<=NF;i++) if($$i=="device" && i<9) {gsub(/[^a-fA-F0-9]/,"",$$i); if($$i!="" && !seen[$$i]++) print $$i}}' || true); \
+	if [ -z "$$DEVICES" ] && [ -z "$(DEVICE_ID)" ]; then \
+		echo "!! No USB device connected. Connect a phone via USB with developer mode enabled and try again."; \
+		echo "" >&2; \
+		echo "Connected devices (from adb):" >&2; \
+		$(ADB) devices >&2; \
+		echo "Or try: make run-phone-test DEVICE_ID=<serial>" >&2; \
+		exit 1; \
+	fi; \
+	if [ -n "$(DEVICE_ID)" ]; then \
+		DEVICE="$$DEVICE_ID"; \
+		echo ">> Using specified device: $$DEVICE"; \
+	else \
+		DEVICE=$$(echo "$$DEVICES" | head -1); \
+		echo ">> Found $$DEVICES device(s), using: $$DEVICE"; \
+	fi
+	@if [ -z "$$DEVICE" ]; then \
+		echo "!! Could not determine device serial."; \
+		exit 1; \
+	fi
+	@echo ">> Installing APK on $$DEVICE..."
+	@$(ADB) -s $$DEVICE install -r $(APK)
+	@echo ">> Launching $(APP_ID)/$(APP_ACTIVITY) on $$DEVICE..."
+	@$(ADB) -s $$DEVICE shell am start -n $(APP_ID)/$(APP_ACTIVITY)
+	@echo ">> App launched on $$DEVICE. Attach: \`adb -s $$DEVICE shell\` or \`adb -s $$DEVICE logcat\`."
+
 .PHONY: backend
 backend:  ## start dev backend in background (logs: backend.log, pid: backend.pid)
 	@if [ -f $(BACKEND_PID) ] && kill -0 $$(cat $(BACKEND_PID)) 2>/dev/null; then \

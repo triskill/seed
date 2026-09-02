@@ -34,7 +34,7 @@ x86_64 on 2026-08-12._
 | 7 | Native proot packaging + rootfs extraction | ✅ done (5/5); verified on emulator |
 | 8 | Foreground service | ✅ done (4/4); verified on emulator |
 | 9 | First-run runtime startup gate | ✅ done (4/4); verified on emulator |
-| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; agent launch and encrypted credential startup are wired, with provider-backed acceptance, live settings apply, reload, security, cancellation, recovery, and UX remaining |
+| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; agent launch and encrypted credential startup are wired; `make run-phone-test` now builds arm64 runtime + APK, installs & launches on USB phone (Phase 10 readiness gate resolved); provider-backed acceptance, live settings apply, reload, security, cancellation, recovery, and UX remaining |
 
 **Embedded runtime verified on `seed_dev` x86_64 (shell on 2026-08-12; agent process/RPC startup on 2026-08-14):**
 
