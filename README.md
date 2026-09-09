@@ -99,9 +99,11 @@ make install
 make runtime RUNTIME_ARCH=x86_64
 make run
 
-# arm64 physical device
-make runtime RUNTIME_ARCH=arm64
-make build
+# arm64 physical device (native ARM64 guest)
+make run-phone-test
+
+# arm64 physical device with an x86_64 Alpine guest under QEMU user-mode
+make run-phone-x86-test
 ```
 
 `make runtime` defaults to arm64 when no architecture is supplied. `make run`

@@ -16,6 +16,26 @@ Only one ABI's complete four-file native bundle is retained at a time. A fresh
 checkout therefore contains the marker, but neither generated native files nor
 `rootfs.tar.gz`.
 
+## QEMU x86_64 phone compatibility mode
+
+`make runtime-qemu-x86` creates a deliberately different runtime layout for an
+ARM64 physical phone: ARM64 Android-native PRoot and `qemu-x86_64` execute an
+x86_64 Alpine guest rootfs. The native QEMU binary and its Android/ARM64
+Termux dependency closure are generated in `jniLibs/arm64-v8a/`; the marker
+contains `"guest_arch":"x86_64"`, so the app selects PRoot's `-q` option and
+re-extracts the guest when switching modes.
+
+Run it on an authorized ARM64 phone with:
+
+```bash
+make run-phone-x86-test
+```
+
+This mode is for compatibility testing. It is substantially slower than the
+normal `make run-phone-test` ARM64 guest; V8 JIT is disabled (`NODE_OPTIONS=--jitless`)
+because its generated x86 code crashes under QEMU user-mode on the validated
+Moto G32 device. Running native ARM64 remains the supported default.
+
 ## Why proot is a native library
 
 Android 10 and later forbid an app targeting API 29 or later from executing
@@ -76,7 +96,7 @@ With the direct entry point, use
 
 ## Native bundle provenance
 
-`scripts/runtime-target.sh` pins Termux packages for PRoot 5.1.107.89,
+`scripts/runtime-target.sh` pins Termux packages for PRoot 5.1.107.92,
 libtalloc 2.4.3, and libandroid-shmem 0.7 separately for each architecture.
 Generation verifies package checksums before extraction and final artifact
 checksums afterward. It rewrites PRoot's `libtalloc.so.2` dependency to the
@@ -85,7 +105,7 @@ dependencies with `readelf`.
 
 PRoot is GPL-2.0 software. Corresponding upstream source for the packaged
 version is the Termux PRoot tag
-[`v5.1.107.89`](https://github.com/termux/proot/tree/v5.1.107.89); the Termux
+[`v5.1.107.92`](https://github.com/termux/proot/tree/v5.1.107.92); the Termux
 package recipe is in
 [`termux-packages/packages/proot`](https://github.com/termux/termux-packages/tree/master/packages/proot).
 Distributors of an APK containing these generated binaries must satisfy the

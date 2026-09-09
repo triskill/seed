@@ -24,6 +24,27 @@ class NativeProotTest {
     }
 
     @Test
+    fun resolveQemuX86_64ReturnsPackagedNativeExecutable() {
+        val nativeLibraryDir = tempFolder.newFolder("qemu-native-libs")
+        val expected = File(nativeLibraryDir, "libqemu-x86-64.so").apply { writeText("qemu") }
+
+        assertEquals(expected, NativeProot.resolveQemuX86_64(nativeLibraryDir.absolutePath))
+    }
+
+    @Test
+    fun resolveQemuX86_64RejectsMissingExecutableWithClearPath() {
+        val nativeLibraryDir = tempFolder.newFolder("missing-qemu-native-libs")
+        val expected = File(nativeLibraryDir, "libqemu-x86-64.so")
+
+        val failure = assertThrows(IllegalStateException::class.java) {
+            NativeProot.resolveQemuX86_64(nativeLibraryDir.absolutePath)
+        }
+
+        assertTrue(failure.message.orEmpty().contains("qemu-x86_64 executable"))
+        assertTrue(failure.message.orEmpty().contains(expected.absolutePath))
+    }
+
+    @Test
     fun resolveRejectsMissingNativeExecutableWithClearPath() {
         assertMissingRejected("libproot.so")
     }

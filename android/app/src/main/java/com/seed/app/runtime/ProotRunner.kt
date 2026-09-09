@@ -50,6 +50,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ProotRunner(
     private val prootExecutable: File,
     private val rootfsDir: File,
+    /** Native ARM64 QEMU user-mode binary for an x86_64 guest, if selected. */
+    private val qemuX86_64Executable: File? = null,
     private val workDir: File = rootfsDir,
     private val env: Map<String, String> = System.getenv(),
     private val factory: ProcessFactory = JvmProcessFactory,
@@ -59,6 +61,12 @@ class ProotRunner(
     fun start(scope: CoroutineScope): ProotHandle {
         val command = buildList {
             add(prootExecutable.absolutePath)
+            // PRoot executes QEMU whenever it launches a foreign guest binary.
+            // QEMU itself remains a native ARM64 executable from nativeLibraryDir.
+            qemuX86_64Executable?.let { qemu ->
+                add("-q")
+                add(qemu.absolutePath)
+            }
             add("-r")
             add(rootfsDir.absolutePath)
             // Bind /dev and /proc so PTY-backed /shell/exec works

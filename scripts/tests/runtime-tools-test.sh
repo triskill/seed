@@ -165,13 +165,13 @@ fi
 test_arm64_target() (
     configure_runtime_target arm64
     assert_eq "arm64" "$RUNTIME_ARCH" "arm64 runtime architecture"
-    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.89_aarch64.deb" "$PROOT_PACKAGE_URL" "arm64 proot package URL"
-    assert_eq "ec9fe38c50cfd49dd31fe360ffbcc3124a945dc1ea16293a8a769303dd724f46" "$PROOT_PACKAGE_SHA" "arm64 proot package SHA"
+    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.92_aarch64.deb" "$PROOT_PACKAGE_URL" "arm64 proot package URL"
+    assert_eq "1f1c983509701f6826f568482c70673ee453a9ba38c9f5fa445a472d6b7524e9" "$PROOT_PACKAGE_SHA" "arm64 proot package SHA"
     assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb" "$TALLOC_PACKAGE_URL" "arm64 talloc package URL"
     assert_eq "ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da" "$TALLOC_PACKAGE_SHA" "arm64 talloc package SHA"
     assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb" "$ANDROID_SHMEM_PACKAGE_URL" "arm64 shmem package URL"
     assert_eq "0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6" "$ANDROID_SHMEM_PACKAGE_SHA" "arm64 shmem package SHA"
-    assert_eq "7da118895e971ea9fba4bb250b28af0f8db2edcbfdbaa8075cc645a0d7cf16fe" "$PROOT_SHA" "arm64 proot SHA"
+    assert_eq "41b4ae7f8aa2eac38678c97b5bdb6a0503903aafa92eb8b377d377d4103d57cb" "$PROOT_SHA" "arm64 proot SHA"
     assert_eq "44ef39c1e1a18c09f6e4c4b5d6f8bba82d30596598bd155ec162d05c5122ff04" "$PROOT_LOADER_SHA" "arm64 loader SHA"
     assert_eq "3c9b207c0a6ea2896b7523e03f55d9ab0d9e88baa115d4c32b84058ff4246fbb" "$TALLOC_SHA" "arm64 talloc SHA"
     assert_eq "84475798e07c8174dbbfaec70a827fdb02f19ffa69a589380c13e7507fd0e731" "$ANDROID_SHMEM_SHA" "arm64 shmem SHA"
@@ -192,13 +192,13 @@ test_arm64_target() (
 test_x86_64_target() (
     configure_runtime_target x86_64
     assert_eq "x86_64" "$RUNTIME_ARCH" "x86_64 runtime architecture"
-    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.89_x86_64.deb" "$PROOT_PACKAGE_URL" "x86_64 proot package URL"
-    assert_eq "0d76da0515f38dfb2217f647b0d79fcd61b38f80e25cbf2d39237697b02dd016" "$PROOT_PACKAGE_SHA" "x86_64 proot package SHA"
+    assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.92_x86_64.deb" "$PROOT_PACKAGE_URL" "x86_64 proot package URL"
+    assert_eq "70236632826c30ec0245082b633bbc7ef1e9fa5531bd51bd4f20231bfcdc999b" "$PROOT_PACKAGE_SHA" "x86_64 proot package SHA"
     assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_x86_64.deb" "$TALLOC_PACKAGE_URL" "x86_64 talloc package URL"
     assert_eq "7ca2eaae2e53b28228a01301bc410b62845403d6317c25b8e0a7f40681de0628" "$TALLOC_PACKAGE_SHA" "x86_64 talloc package SHA"
     assert_eq "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_x86_64.deb" "$ANDROID_SHMEM_PACKAGE_URL" "x86_64 shmem package URL"
     assert_eq "ffa9e4c87467b158b148d0ff92dda796aa038276c2075af3269cdcdb06f25797" "$ANDROID_SHMEM_PACKAGE_SHA" "x86_64 shmem package SHA"
-    assert_eq "d87c0bd62dfbd456826e8c3f968d4e9b264e6a912417e40a883900142d867051" "$PROOT_SHA" "x86_64 proot SHA"
+    assert_eq "1feacb102cd43578d3dd14a3bb5eda368e7d00d1322535665e8ea23821aa21b0" "$PROOT_SHA" "x86_64 proot SHA"
     assert_eq "914564ea1c66f50b38f18cac857fcf814c6b1ab027789178880fca1d530599b3" "$PROOT_LOADER_SHA" "x86_64 loader SHA"
     assert_eq "77be445f4ec245fff9c19e9874ebcf99618244cf48737f5fca938316daaa70da" "$TALLOC_SHA" "x86_64 talloc SHA"
     assert_eq "092926060298acd3778e6239033d7aef1280dcb59aebe021a3719612e6a3465f" "$ANDROID_SHMEM_SHA" "x86_64 shmem SHA"
@@ -236,7 +236,7 @@ test_target_can_be_reconfigured() (
     assert_eq "x86_64/libproot-loader.so" "$PROOT_LOADER_JNI_RELATIVE_PATH" "reconfigured native loader path"
     assert_eq "x86_64/libtalloc.so" "$TALLOC_JNI_RELATIVE_PATH" "reconfigured talloc path"
     assert_eq "x86_64/libandroid-shmem.so" "$ANDROID_SHMEM_JNI_RELATIVE_PATH" "reconfigured shmem path"
-    assert_eq "d87c0bd62dfbd456826e8c3f968d4e9b264e6a912417e40a883900142d867051" "$PROOT_SHA" "reconfigured proot SHA"
+    assert_eq "1feacb102cd43578d3dd14a3bb5eda368e7d00d1322535665e8ea23821aa21b0" "$PROOT_SHA" "reconfigured proot SHA"
     assert_eq "914564ea1c66f50b38f18cac857fcf814c6b1ab027789178880fca1d530599b3" "$PROOT_LOADER_SHA" "reconfigured loader SHA"
     assert_exported
 )

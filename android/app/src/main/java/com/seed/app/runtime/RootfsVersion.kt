@@ -1,35 +1,45 @@
 package com.seed.app.runtime
 
+/** Architecture of programs inside the extracted Alpine rootfs. */
+enum class RootfsArchitecture(val wireValue: String) {
+    ARM64("arm64"),
+    X86_64("x86_64"),
+    ;
+
+    companion object {
+        fun parse(value: String): RootfsArchitecture = entries.firstOrNull {
+            it.wireValue == value
+        } ?: throw IllegalArgumentException("unsupported guest_arch: $value")
+    }
+}
+
 /**
- * The runtime version baked into the APK at
- * `assets/linux/seed_version.json`. Compared against
- * `filesDir/linux/.version` to decide whether re-extraction is
- * needed on app start.
+ * The runtime version baked into the APK at `assets/linux/seed_version.json`.
+ * It is compared against `filesDir/linux/.version` to decide whether
+ * re-extraction is needed on app start.
  *
- * `seedVersion` is the human-meaningful app version (matches
- * `BuildConfig.VERSION_NAME`); `buildId` is a per-build identifier
- * (timestamp + build-script hash from `scripts/build-runtime.sh`)
- * that changes every time the runtime is rebuilt.
+ * [guestArchitecture] is part of the marker so switching between native ARM64
+ * and QEMU x86_64 runtime assets always triggers a clean re-extraction.
  */
 data class RootfsVersion(
     val seedVersion: String,
     val buildId: String,
+    val guestArchitecture: RootfsArchitecture = RootfsArchitecture.ARM64,
 ) {
     companion object {
         /**
-         * Parse a `seed_version.json` string. Tolerant of unknown
-         * extra fields (forward-compat with future schema additions).
-         * Throws [IllegalArgumentException] on malformed input.
+         * Parse a `seed_version.json` string. Old markers without `guest_arch`
+         * remain ARM64-compatible; unknown future fields are ignored.
          */
         fun parse(json: String): RootfsVersion {
-            // We use a tiny hand-rolled parser instead of pulling in
-            // Moshi/JSON for two fields — keeps the runtime module
-            // dependency-free and the test trivial.
             val seed = stringField(json, "seed_version")
                 ?: throw IllegalArgumentException("missing seed_version")
             val build = stringField(json, "build_id")
                 ?: throw IllegalArgumentException("missing build_id")
-            return RootfsVersion(seed, build)
+            val guestArchitecture = stringField(json, "guest_arch")
+                ?.let(RootfsArchitecture::parse)
+                ?: RootfsArchitecture.ARM64
+            return RootfsVersion(seed, build, guestArchitecture)
         }
 
         private val STRING_FIELD = Regex(""""(\w+)"\s*:\s*"([^"\\]*)"""")

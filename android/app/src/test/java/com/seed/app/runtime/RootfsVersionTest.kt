@@ -13,6 +13,30 @@ class RootfsVersionTest {
     }
 
     @Test
+    fun defaultsMissingGuestArchitectureToArm64ForOldMarkers() {
+        val version = RootfsVersion.parse("""{"seed_version":"0.1.0","build_id":"X"}""")
+        assertEquals(RootfsArchitecture.ARM64, version.guestArchitecture)
+    }
+
+    @Test
+    fun parsesX86_64GuestArchitecture() {
+        val version = RootfsVersion.parse(
+            """{"seed_version":"0.1.0","build_id":"X","guest_arch":"x86_64"}""",
+        )
+        assertEquals(RootfsArchitecture.X86_64, version.guestArchitecture)
+    }
+
+    @Test
+    fun rejectsUnsupportedGuestArchitecture() {
+        try {
+            RootfsVersion.parse("""{"seed_version":"0.1.0","build_id":"X","guest_arch":"mips"}""")
+            throw AssertionError("expected unsupported architecture to fail")
+        } catch (failure: IllegalArgumentException) {
+            assertEquals("unsupported guest_arch: mips", failure.message)
+        }
+    }
+
+    @Test
     fun equalityIsStructural() {
         val a = RootfsVersion("0.1.0", "X")
         val b = RootfsVersion("0.1.0", "X")

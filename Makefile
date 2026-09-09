@@ -81,7 +81,7 @@ CMDLINE_TOOLS_URL := https://dl.google.com/android/repository/commandlinetools-l
 .PHONY: help
 help:  ## show this help (auto-generated)
 	@awk 'BEGIN {printf "Seed v0.1 dev Makefile\n\nUsage: make <target>\n\nTargets:\n"} \
-		/^[a-zA-Z_-]+:.*##/ { \
+		/^[a-zA-Z0-9_-]+:.*##/ { \
 			target = $$1; sub(/:$$/, "", target); \
 			desc = $$0; sub(/^[^#]*##[ \t]*/, "", desc); \
 			printf "  \033[36m%-12s\033[0m %s\n", target, desc; \
@@ -179,53 +179,125 @@ run: check-deps check-runtime-arch  ## start emulator, install APK, launch app
 	@$(ADB) shell am start -n $(APP_ID)/$(APP_ACTIVITY)
 	@echo ">> App launched. Attach: \`adb shell\` or \`adb logcat\`."
 
-# `run-phone-test` targets a real phone connected via USB.
-# It builds the arm64 runtime (required for every phone), builds the APK,
-# installs it on the connected device, and launches the app.
-# Requires: USB phone with developer mode on, adb authorized.
-# To switch to a specific device: make run-phone-test DEVICE_ID=<serial>
-.PHONY: run-phone-test
-run-phone-test: ANDROID_ABI ?= arm64-v8a
-run-phone-test: check-deps  ## build arm64 runtime, APK, install + launch on USB phone
-	@if [ -d android/app/src/main/jniLibs/ARM64-V8A ] || [ -d android/app/src/main/jniLibs/arm64-v8a ]; then \
-		echo ">> arm64 libs already present."; \
-	else \
-		echo ">> Building arm64 runtime (this takes a few minutes on first run)..."; \
-		if command -v docker >/dev/null && command -v uv >/dev/null; then \
-			RUNTIME_ARCH=arm64 ./scripts/build-runtime.sh || { echo "!! runtime build failed."; exit 1; }; \
-		else \
-			echo "!! Need docker + uv to build runtime. Run: sudo apt install docker.io pipx && pipx install uv"; \
-			exit 1; \
-		fi; \
-	fi
-	@echo ">> Building debug APK..."
-	@cd android && ./gradlew :app:assembleDebug
-	@echo ">> Checking for connected device..."
-	@DEVICES=$$($(ADB) devices -l 2>/dev/null | grep -E '\(device\)' | awk -F'[ ,:]+' '{for(i=1;i<=NF;i++) if($$i=="device" && i<9) {gsub(/[^a-fA-F0-9]/,"",$$i); if($$i!="" && !seen[$$i]++) print $$i}}' || true); \
-	if [ -z "$$DEVICES" ] && [ -z "$(DEVICE_ID)" ]; then \
-		echo "!! No USB device connected. Connect a phone via USB with developer mode enabled and try again."; \
-		echo "" >&2; \
-		echo "Connected devices (from adb):" >&2; \
-		$(ADB) devices >&2; \
-		echo "Or try: make run-phone-test DEVICE_ID=<serial>" >&2; \
-		exit 1; \
+# `run-phone-test` targets a real arm64 phone connected via USB.  Its
+# runtime preflight deliberately differs from `make run`: a phone does not
+# need KVM, but it must have an ARM64 PRoot *and* an ARM64 guest rootfs.
+# Requires USB debugging to be enabled and the computer's adb RSA key approved.
+# To select one of several authorized phones: make run-phone-test DEVICE_ID=<serial>
+.PHONY: check-phone-deps
+check-phone-deps:
+	@command -v java >/dev/null || { \
+		echo "!! java not found. Install: sudo apt install openjdk-17-jdk"; exit 1; }
+	@command -v file >/dev/null || { \
+		echo "!! file not found. Install: sudo apt install file"; exit 1; }
+	@command -v tar >/dev/null || { \
+		echo "!! tar not found. Install: sudo apt install tar"; exit 1; }
+	@[ -x "$(ADB)" ] || { \
+		echo "!! adb not found at $(ADB). Run `make install` or set ANDROID_HOME."; exit 1; }
+
+# Rebuild only when the published bundle is missing or not arm64.  Checking
+# busybox inside the compressed rootfs catches an x86_64 rootfs paired with
+# otherwise-valid arm64 native libraries.
+.PHONY: ensure-phone-runtime
+ensure-phone-runtime:
+	@set -e; \
+	runtime_ok=1; \
+	for lib in libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so; do \
+		./scripts/check-runtime-arch.sh arm64-v8a "android/app/src/main/jniLibs/arm64-v8a/$$lib" >/dev/null 2>&1 || runtime_ok=0; \
+	done; \
+	if [ ! -f android/app/src/main/assets/linux/rootfs.tar.gz ] || \
+		! tar -xOzf android/app/src/main/assets/linux/rootfs.tar.gz bin/busybox 2>/dev/null | \
+			file - | grep -q 'ARM aarch64'; then \
+		runtime_ok=0; \
 	fi; \
-	if [ -n "$(DEVICE_ID)" ]; then \
-		DEVICE="$$DEVICE_ID"; \
-		echo ">> Using specified device: $$DEVICE"; \
+	if [ "$$runtime_ok" -eq 1 ]; then \
+		echo ">> Verified existing arm64 PRoot + Alpine runtime."; \
 	else \
-		DEVICE=$$(echo "$$DEVICES" | head -1); \
-		echo ">> Found $$DEVICES device(s), using: $$DEVICE"; \
+		echo ">> Building arm64 PRoot + Alpine runtime (first run takes a few minutes)..."; \
+		$(MAKE) --no-print-directory RUNTIME_ARCH=arm64 runtime; \
 	fi
-	@if [ -z "$$DEVICE" ]; then \
-		echo "!! Could not determine device serial."; \
-		exit 1; \
+	@for lib in libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so; do \
+		./scripts/check-runtime-arch.sh arm64-v8a "android/app/src/main/jniLibs/arm64-v8a/$$lib" || exit 1; \
+	done
+	@tar -xOzf android/app/src/main/assets/linux/rootfs.tar.gz bin/busybox 2>/dev/null | \
+		file - | grep -q 'ARM aarch64' || { \
+		echo "!! rootfs is not an ARM64 Alpine runtime; rebuild with RUNTIME_ARCH=arm64." >&2; exit 1; \
+	}
+
+.PHONY: phone-install
+phone-install:
+	@set -eu; \
+	adb="$(ADB)"; requested="$(DEVICE_ID)"; \
+	if [ -n "$$requested" ]; then \
+		state=$$($$adb -s "$$requested" get-state 2>/dev/null || true); \
+		if [ "$$state" != "device" ]; then \
+			echo "!! DEVICE_ID=$$requested is not an authorized adb device (state: $${state:-missing})." >&2; \
+			$$adb devices -l >&2; exit 1; \
+		fi; \
+		serial="$$requested"; \
+	else \
+		serials=$$($$adb devices | awk 'NR > 1 && $$2 == "device" { print $$1 }'); \
+		count=$$(printf '%s\n' "$$serials" | sed '/^$$/d' | wc -l | tr -d ' '); \
+		if [ "$$count" -eq 0 ]; then \
+			echo "!! No authorized USB device. Enable USB debugging, accept the RSA prompt, then retry." >&2; \
+			$$adb devices -l >&2; exit 1; \
+		fi; \
+		if [ "$$count" -gt 1 ]; then \
+			echo "!! More than one authorized device is connected; choose one:" >&2; \
+			printf '%s\n' "$$serials" >&2; \
+			echo "   make run-phone-test DEVICE_ID=<serial>" >&2; exit 1; \
+		fi; \
+		serial="$$serials"; \
+	fi; \
+	abi=$$($$adb -s "$$serial" shell getprop ro.product.cpu.abi | tr -d '\r'); \
+	if [ "$$abi" != "arm64-v8a" ]; then \
+		echo "!! $$serial reports ABI '$$abi'; this APK embeds only arm64-v8a host executables." >&2; exit 1; \
+	fi; \
+	echo ">> Installing APK on $$serial (ABI $$abi)..."; \
+	$$adb -s "$$serial" install -r "$(APK)"; \
+	echo ">> Launching $(APP_ID)/$(APP_ACTIVITY)..."; \
+	$$adb -s "$$serial" shell am start -W -n "$(APP_ID)/$(APP_ACTIVITY)"; \
+	echo ">> App launched. Runtime extraction and PRoot backend startup continue in-app."
+
+.PHONY: run-phone-test
+run-phone-test: check-phone-deps ensure-phone-runtime  ## build native ARM64 APK, install + launch on USB phone
+	@$(MAKE) --no-print-directory build
+	@$(MAKE) --no-print-directory phone-install
+
+# QEMU mode uses ARM64 Android host executables and an x86_64 Alpine guest.
+# It intentionally replaces the single packaged rootfs asset; rerun
+# `make run-phone-test` to restore the native ARM64 guest afterwards.
+.PHONY: runtime-qemu-x86
+runtime-qemu-x86:  ## explicitly build ARM64 PRoot/QEMU + x86_64 Alpine runtime
+	@./scripts/build-qemu-x86-runtime.sh
+
+.PHONY: ensure-phone-qemu-x86-runtime
+ensure-phone-qemu-x86-runtime:
+	@set -e; \
+	ready=1; \
+	for lib in libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so libqemu-x86-64.so; do \
+		./scripts/check-runtime-arch.sh arm64-v8a "android/app/src/main/jniLibs/arm64-v8a/$$lib" >/dev/null 2>&1 || ready=0; \
+	done; \
+	if [ ! -f android/app/src/main/assets/linux/rootfs.tar.gz ] || \
+		! tar -xOzf android/app/src/main/assets/linux/rootfs.tar.gz bin/busybox 2>/dev/null | \
+			file - | grep -q 'x86-64'; then ready=0; fi; \
+	if ! grep -q '"guest_arch"[[:space:]]*:[[:space:]]*"x86_64"' android/app/src/main/assets/linux/seed_version.json 2>/dev/null; then ready=0; fi; \
+	if [ "$$ready" -eq 1 ]; then \
+		echo ">> Verified ARM64 PRoot/QEMU + x86_64 Alpine guest runtime."; \
+	else \
+		echo ">> Building ARM64 PRoot/QEMU + x86_64 Alpine guest runtime..."; \
+		$(MAKE) --no-print-directory runtime-qemu-x86; \
 	fi
-	@echo ">> Installing APK on $$DEVICE..."
-	@$(ADB) -s $$DEVICE install -r $(APK)
-	@echo ">> Launching $(APP_ID)/$(APP_ACTIVITY) on $$DEVICE..."
-	@$(ADB) -s $$DEVICE shell am start -n $(APP_ID)/$(APP_ACTIVITY)
-	@echo ">> App launched on $$DEVICE. Attach: \`adb -s $$DEVICE shell\` or \`adb -s $$DEVICE logcat\`."
+	@tar -xOzf android/app/src/main/assets/linux/rootfs.tar.gz bin/busybox 2>/dev/null | \
+		file - | grep -q 'x86-64' || { echo "!! rootfs is not x86_64." >&2; exit 1; }
+	@grep -q '"guest_arch"[[:space:]]*:[[:space:]]*"x86_64"' android/app/src/main/assets/linux/seed_version.json || { \
+		echo "!! rootfs marker does not select x86_64 QEMU mode." >&2; exit 1; \
+	}
+
+.PHONY: run-phone-x86-test
+run-phone-x86-test: check-phone-deps ensure-phone-qemu-x86-runtime  ## build x86_64-QEMU APK, install + launch on USB phone
+	@$(MAKE) --no-print-directory build
+	@$(MAKE) --no-print-directory phone-install
 
 .PHONY: backend
 backend:  ## start dev backend in background (logs: backend.log, pid: backend.pid)

@@ -44,13 +44,37 @@ class RuntimeService : Service() {
                     .load()
                     .toPiRuntimeEnvironment()
                 val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
+                val runtimeDir = File(filesDir, LINUX_DIRECTORY)
+                val rootfsVersion = RootfsVersion.parse(
+                    File(runtimeDir, ROOTFS_VERSION_FILE).readText(),
+                )
+                val qemuX86_64 = when (rootfsVersion.guestArchitecture) {
+                    RootfsArchitecture.ARM64 -> null
+                    RootfsArchitecture.X86_64 ->
+                        NativeProot.resolveQemuX86_64(applicationInfo.nativeLibraryDir)
+                }
                 val environment = ProotEnvironment.create(
                     tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
                     installation = nativeProot,
-                ) + piEnvironment
+                ) + piEnvironment + if (qemuX86_64 != null) {
+                    // Expose every x86 feature implemented by QEMU. V8 still
+                    // cannot safely use its generated-code JIT below, but this
+                    // gives non-JIT guest programs the broadest CPU model.
+                    mapOf(
+                        "QEMU_CPU" to "max",
+                        // QEMU user-mode cannot safely run V8's generated x86
+                        // machine code on this device. Disabling V8 JIT is slow,
+                        // but makes the bundled pi CLI complete instead of
+                        // crashing with QEMU's target SIGSEGV.
+                        "NODE_OPTIONS" to "--jitless",
+                    )
+                } else {
+                    emptyMap()
+                }
                 val runner = ProotRunner(
                     prootExecutable = nativeProot.executable,
-                    rootfsDir = File(File(filesDir, LINUX_DIRECTORY), ROOTFS_DIRECTORY),
+                    rootfsDir = File(runtimeDir, ROOTFS_DIRECTORY),
+                    qemuX86_64Executable = qemuX86_64,
                     env = environment,
                 )
                 runner.start(serviceScope).also(::collectRuntimeLogs)
@@ -105,6 +129,7 @@ class RuntimeService : Service() {
         private const val TAG = "SeedRuntime"
         private const val LINUX_DIRECTORY = "linux"
         private const val ROOTFS_DIRECTORY = "rootfs"
+        private const val ROOTFS_VERSION_FILE = ".version"
         private const val PROOT_TEMP_DIRECTORY = "proot"
     }
 }
