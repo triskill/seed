@@ -1,224 +1,89 @@
 package com.seed.app.ui.shell
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.testTag
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.viewinterop.AndroidView
+import com.seed.app.runtime.SeedTerminalManager
 
 /**
- * Shell tab — interactive shell into the Seed
- * runtime.
+ * Shell tab — an interactive terminal session powered by Termux's
+ * terminal-view and terminal-emulator libraries, running a secondary
+ * PRoot instance (`/bin/sh -l`) inside the shared Alpine rootfs.
  *
- * Phase 5.5 replaces the 5.2 placeholder with:
- *   - a top input row (text field + Run button +
- *     Cancel button);
- *   - a `LazyColumn` of [OutputLineRow] rows below
- *     ([ShellViewModel.output] is the source of
- *     truth);
- *   - auto-scroll to the bottom whenever a new line
- *     is appended;
- *   - `imePadding()` so the input bar is pushed up
- *     above the soft keyboard.
+ * The layout is simple: a full-screen [TerminalView] inside an
+ * [AndroidView] wrapper. No input bar, no scrollable log — the
+ * terminal emulator itself handles display, input routing, and
+ * PTY I/O.
  *
- * **Layout note** — the input is at the *top* and
- * the output is at the *bottom*. This is the
- * opposite of a desktop terminal (where the prompt
- * is at the bottom and history scrolls up above
- * it), but it matches a CI-log / "form + log"
- * pattern: the input is always visible, easy to
- * reach with one hand, and the latest output
- * appears at the bottom of the scrollable area,
- * right above the keyboard.
+ * [attachView] / [detachView] lifecycle:
+ * - When the AndroidView is first inflated, [SeedTerminalManager.attachView]
+ *   connects the [TerminalView] to the session. This is where the PTY
+ *   subprocess actually starts (Termux waits for the view to have a
+ *   size before creating the subprocess).
+ * - When the view is about to be destroyed (navigation away, activity
+ *   destroy), [detachView] releases the UI connection. The shell
+ *   process continues running in the background.
+ * - The [TerminalSession] is owned by [SeedTerminalManager], which is
+ *   owned by [RuntimeService], so it outlives activity destruction
+ *   and nav graph re-creation. Only [SeedTerminalManager.close()]
+ *   terminates the session.
  *
- * **Phase 6.4** wires the screen to the backend
- * via [ShellViewModel.backend]. The Cancel
- * button — permanently disabled in 5.5 — is now
- * enabled while a `POST /shell/exec` is in
- * flight (the ViewModel's [ShellViewModel.isExecuting]
- * flow drives it). The cancel action itself
- * is a v0.1 no-op (see [ShellViewModel.cancel]):
- * tapping it doesn't actually abort the HTTP
- * call, the response still lands in the
- * output. A future task (Phase 10) will add
- * a real cancel.
+ * Architecture note:
+ * The old ShellScreen used ShellViewModel + BackedApi.shellExec() to
+ * run commands via POST /shell/exec and display responses in a LazyColumn.
+ * This composable replaces that entirely — the terminal emulator handles
+ * both input and output directly through the PTY, with ANSI color support
+ * and proper terminal semantics (resize, scrollback, etc.).
  */
 @Composable
 fun ShellScreen(
+    terminalManager: SeedTerminalManager,
     modifier: Modifier = Modifier,
-    viewModel: ShellViewModel = viewModel(),
 ) {
-    val output by viewModel.output.collectAsState()
-    val input by viewModel.input.collectAsState()
-    val isExecuting by viewModel.isExecuting.collectAsState()
-    val listState = rememberLazyListState()
-
-    // Auto-scroll to the bottom whenever the list
-    // grows. Keyed on `output.size` so this only
-    // fires when a new line is appended (not on
-    // every recomposition triggered by the input
-    // field).
-    LaunchedEffect(output.size) {
-        if (output.isNotEmpty()) {
-            listState.animateScrollToItem(output.lastIndex)
-        }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .imePadding(),
+    Box(
+        modifier = modifier.fillMaxSize(),
     ) {
-        ShellInputBar(
-            value = input,
-            onValueChange = viewModel::onInputChange,
-            onRun = viewModel::submit,
-            onCancel = viewModel::cancel,
-            isExecuting = isExecuting,
+        // Create the TerminalView and wire it to the session.
+        // AndroidView recreates the view on config changes, but
+        // the session itself survives because it's owned by the service.
+        TerminalViewConnection(
+            terminalManager = terminalManager,
         )
-
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .semantics { testTag = "shell-output-list" },
-            state = listState,
-            contentPadding = PaddingValues(vertical = 8.dp),
-        ) {
-            items(
-                items = output,
-                key = { it.id },
-            ) { line ->
-                OutputLineRow(line = line)
-            }
-        }
     }
 }
 
 /**
- * The top input row: a monospaced text field, a
- * Run (send) button, and a Cancel button. The
- * field and the buttons sit in a `Surface` with
- * a slight elevation so it visually separates
- * from the output area below.
+ * Creates a [TerminalView] inside an [AndroidView] and connects it
+ * to the terminal session.
+ *
+ * **setTextSize is required.** Termux's [TerminalView] keeps its
+ * renderer null until [setTextSize] is called. If the view goes
+ * through [onSizeChanged] layout without a renderer,
+ * [TerminalView.updateSize] NPEs. Calling [setTextSize] before the
+ * initial layout guarantees a valid renderer.
+ *
+ * **One-time setup in factory.** The factory lambda is the correct
+ * place for one-time setup (setTextSize, focus flags, attach). The
+ * trailing update lambda of [AndroidView] is NOT called on creation
+ * — it is called on every recomposition, so attaching the view
+ * inside it would re-attach on every update. All setup belongs in
+ * [factory].
  */
 @Composable
-private fun ShellInputBar(
-    value: String,
-    onValueChange: (String) -> Unit,
-    onRun: () -> Unit,
-    onCancel: () -> Unit,
-    isExecuting: Boolean,
+private fun TerminalViewConnection(
+    terminalManager: SeedTerminalManager,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .semantics { testTag = "shell-input" },
-                placeholder = { Text("Type a command") },
-                singleLine = true,
-                // IME "Send" action triggers run
-                // too, so the user can submit
-                // without tapping the button.
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onRun() }),
-                // The text in a shell is monospaced
-                // so the prompt and the command line
-                // up visually. (We're not rendering
-                // the prompt inside the field — the
-                // `$ ` lives in the output row —
-                // but a monospaced field matches
-                // the monospaced output below.)
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                ),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            FilledIconButton(
-                onClick = onRun,
-                // Disabled when the input is empty
-                // or whitespace-only so the user
-                // can't submit a blank command. We
-                // mirror the `submit()` policy
-                // here. Also disabled while a
-                // command is in flight (the
-                // ViewModel guards this too, but
-                // the visual feedback helps).
-                enabled = value.isNotBlank() && !isExecuting,
-                modifier = Modifier.semantics { testTag = "shell-run" },
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Run",
-                )
+    AndroidView(
+        factory = { context ->
+            TerminalSurface(context).apply {
+                // Connect the input-owning Termux child to its session. The
+                // surface renders that child's emulator after Compose lays it out.
+                terminalManager.attachView(terminalView)
+                requestKeyboard()
             }
-            Spacer(modifier = Modifier.width(4.dp))
-            // Phase 6.4: enabled while a command
-            // is in flight. The cancel action is
-            // a v0.1 no-op (see ShellViewModel.cancel
-            // kdoc) — Phase 10 will add a real
-            // cancel.
-            IconButton(
-                onClick = onCancel,
-                enabled = isExecuting,
-                modifier = Modifier.semantics { testTag = "shell-cancel" },
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Block,
-                    contentDescription = "Cancel running command",
-                )
-            }
-        }
-    }
-}
-
-@Preview(showBackground = true, name = "Shell tab empty")
-@Composable
-private fun ShellScreenEmptyPreview() {
-    MaterialTheme {
-        ShellScreen()
-    }
+        },
+        modifier = Modifier.fillMaxSize(),
+    )
 }

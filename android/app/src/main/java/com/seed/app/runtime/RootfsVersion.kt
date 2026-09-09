@@ -6,6 +6,10 @@ enum class RootfsArchitecture(val wireValue: String) {
     X86_64("x86_64"),
     ;
 
+    /** Whether this guest needs ARM64-host QEMU user-mode emulation. */
+    fun requiresQemuX86_64(hostAbis: Array<String>): Boolean =
+        this == X86_64 && "arm64-v8a" in hostAbis
+
     companion object {
         fun parse(value: String): RootfsArchitecture = entries.firstOrNull {
             it.wireValue == value

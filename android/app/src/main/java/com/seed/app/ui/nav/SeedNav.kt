@@ -22,6 +22,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.seed.app.R
+import com.seed.app.runtime.SeedTerminalManager
 import com.seed.app.ui.app.AppScreen
 import com.seed.app.ui.chat.ChatScreen
 import com.seed.app.ui.settings.SettingsScreen
@@ -52,7 +53,9 @@ import com.seed.app.ui.shell.ShellScreen
  * bottom-nav pattern.
  */
 @Composable
-fun SeedNav() {
+fun SeedNav(
+    terminalManager: SeedTerminalManager,
+) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -99,7 +102,7 @@ fun SeedNav() {
         ) {
             composable(Routes.APP) { AppScreen() }
             composable(Routes.CHAT) { ChatScreen() }
-            composable(Routes.SHELL) { ShellScreen() }
+            composable(Routes.SHELL) { ShellScreen(terminalManager = terminalManager) }
             composable(Routes.SETTINGS) { SettingsScreen() }
         }
     }

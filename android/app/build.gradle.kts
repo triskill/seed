@@ -208,6 +208,12 @@ dependencies {
     // TAR entry parsing, including Alpine's symbolic and hard links.
     implementation("org.apache.commons:commons-compress:1.27.1")
 
+    // Termux terminal libraries (Apache 2.0 — see SKILL.md for licensing notes).
+    // terminal-view transitively depends on terminal-emulator via `api` dep.
+    // Do not replace androidx.concurrent's ListenableFuture API with Guava's
+    // deliberately empty conflict artifact: ProfileInstaller needs the real API.
+    implementation("com.github.termux.termux-app:terminal-view:0.118.3")
+
     // Debug / tooling (not packaged in release builds).
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

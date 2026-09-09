@@ -28,6 +28,7 @@ import com.seed.app.runtime.HealthState
 import com.seed.app.runtime.RootfsVersion
 import com.seed.app.runtime.RuntimeBinder
 import com.seed.app.runtime.RuntimeService
+import com.seed.app.runtime.SeedTerminalManager
 import com.seed.app.runtime.RuntimeStartupGate
 import com.seed.app.runtime.StartRuntimeScreen
 import com.seed.app.runtime.StartupDestination
@@ -51,6 +52,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val runtimeHealth = MutableStateFlow<HealthState>(HealthState.Unknown)
     private var runtimeBinder: RuntimeBinder? = null
+    private var terminalManager: SeedTerminalManager? = null
     private var binderHealthJob: Job? = null
     private var frameworkBindingRegistered = false
     private var acceptedBinding = false
@@ -80,6 +82,7 @@ class MainActivity : ComponentActivity() {
 
             clearRuntimeBinder()
             runtimeBinder = binder
+            terminalManager = binder.terminalManager
             binderHealthJob = lifecycleScope.launch {
                 binder.health.collect { health ->
                     if (!activityDestroyed && runtimeBinder === binder) {
@@ -154,7 +157,10 @@ class MainActivity : ComponentActivity() {
                         onRetry = ::retryRuntime,
                     )
 
-                    StartupDestination.Seed -> SeedNav()
+                    is StartupDestination.Seed -> SeedNav(
+                        terminalManager = terminalManager
+                            ?: throw IllegalStateException("Terminal manager not bound when navigating to Seed"),
+                    )
                 }
             }
         }
@@ -230,6 +236,7 @@ class MainActivity : ComponentActivity() {
 
     private fun clearRuntimeBinder() {
         runtimeBinder = null
+        terminalManager = null
         binderHealthJob?.cancel()
         binderHealthJob = null
     }

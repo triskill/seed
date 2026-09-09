@@ -27,6 +27,22 @@ class RootfsVersionTest {
     }
 
     @Test
+    fun x86GuestNeedsQemuOnlyOnArm64Host() {
+        assertEquals(
+            true,
+            RootfsArchitecture.X86_64.requiresQemuX86_64(arrayOf("arm64-v8a", "armeabi-v7a")),
+        )
+        assertEquals(
+            false,
+            RootfsArchitecture.X86_64.requiresQemuX86_64(arrayOf("x86_64", "x86")),
+        )
+        assertEquals(
+            false,
+            RootfsArchitecture.ARM64.requiresQemuX86_64(arrayOf("arm64-v8a")),
+        )
+    }
+
+    @Test
     fun rejectsUnsupportedGuestArchitecture() {
         try {
             RootfsVersion.parse("""{"seed_version":"0.1.0","build_id":"X","guest_arch":"mips"}""")

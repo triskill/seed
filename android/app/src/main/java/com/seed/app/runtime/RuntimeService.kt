@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import com.seed.app.MainActivity
@@ -21,9 +22,11 @@ import java.io.File
 class RuntimeService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var supervisor: RuntimeSupervisor
+    private lateinit var terminalManager: SeedTerminalManager
     private val binder by lazy {
         RuntimeBinder(
             supervisor = supervisor,
+            terminalManager = terminalManager,
             stopService = ::stopSelf,
         )
     }
@@ -32,6 +35,7 @@ class RuntimeService : Service() {
         super.onCreate()
         startForeground(NOTIFICATION_ID, runtimeNotification())
 
+        terminalManager = SeedTerminalManager(this)
         supervisor = RuntimeSupervisor(
             scope = serviceScope,
             startProcess = {
@@ -48,12 +52,16 @@ class RuntimeService : Service() {
                 val rootfsVersion = RootfsVersion.parse(
                     File(runtimeDir, ROOTFS_VERSION_FILE).readText(),
                 )
-                val qemuX86_64 = when (rootfsVersion.guestArchitecture) {
-                    RootfsArchitecture.ARM64 -> null
-                    RootfsArchitecture.X86_64 ->
-                        NativeProot.resolveQemuX86_64(applicationInfo.nativeLibraryDir)
+                // An x86_64 guest runs directly on the x86_64 emulator. Only
+                // an ARM64 Android host needs the packaged QEMU user-mode binary.
+                val qemuX86_64 = if (
+                    rootfsVersion.guestArchitecture.requiresQemuX86_64(Build.SUPPORTED_ABIS)
+                ) {
+                    NativeProot.resolveQemuX86_64(applicationInfo.nativeLibraryDir)
+                } else {
+                    null
                 }
-                val environment = ProotEnvironment.create(
+                val environment = ProotEnvironment.createBackend(
                     tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
                     installation = nativeProot,
                 ) + piEnvironment + if (qemuX86_64 != null) {
@@ -90,6 +98,7 @@ class RuntimeService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        terminalManager.close()
         if (::supervisor.isInitialized) supervisor.stop()
         serviceScope.cancel()
         super.onDestroy()

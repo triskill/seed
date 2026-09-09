@@ -18,7 +18,7 @@ class ProotEnvironmentTest {
         val tempDir = File(tempFolder.root, "missing/proot")
         val installation = createInstallation()
 
-        ProotEnvironment.create(tempDir, installation)
+        ProotEnvironment.createBackend(tempDir, installation)
 
         assertTrue(tempDir.isDirectory)
     }
@@ -29,7 +29,7 @@ class ProotEnvironmentTest {
         val installation = createInstallation()
         val nativeLibraryDir = installation.loader.parentFile!!.absolutePath
 
-        val environment = ProotEnvironment.create(tempDir, installation)
+        val environment = ProotEnvironment.createBackend(tempDir, installation)
 
         assertEquals(
             mapOf(
@@ -50,7 +50,7 @@ class ProotEnvironmentTest {
         val tempDir = tempFolder.newFolder("existing-proot")
         val installation = createInstallation()
 
-        val environment = ProotEnvironment.create(tempDir, installation)
+        val environment = ProotEnvironment.createBackend(tempDir, installation)
 
         assertEquals(tempDir.absolutePath, environment["PROOT_TMP_DIR"])
     }
@@ -61,7 +61,7 @@ class ProotEnvironmentTest {
         val installation = createInstallation()
 
         val failure = assertThrows(IllegalStateException::class.java) {
-            ProotEnvironment.create(tempDir, installation)
+            ProotEnvironment.createBackend(tempDir, installation)
         }
 
         assertTrue(failure.message.orEmpty().contains("temporary directory"))
@@ -75,7 +75,7 @@ class ProotEnvironmentTest {
         val mismatched = installation.copy(talloc = outsideTalloc)
 
         val failure = assertThrows(IllegalStateException::class.java) {
-            ProotEnvironment.create(File(tempFolder.root, "proot-mismatch"), mismatched)
+            ProotEnvironment.createBackend(File(tempFolder.root, "proot-mismatch"), mismatched)
         }
 
         assertTrue(failure.message.orEmpty().contains("native library directory"))

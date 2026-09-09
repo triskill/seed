@@ -59,30 +59,12 @@ class ProotRunner(
 ) {
 
     fun start(scope: CoroutineScope): ProotHandle {
-        val command = buildList {
-            add(prootExecutable.absolutePath)
-            // PRoot executes QEMU whenever it launches a foreign guest binary.
-            // QEMU itself remains a native ARM64 executable from nativeLibraryDir.
-            qemuX86_64Executable?.let { qemu ->
-                add("-q")
-                add(qemu.absolutePath)
-            }
-            add("-r")
-            add(rootfsDir.absolutePath)
-            // Bind /dev and /proc so PTY-backed /shell/exec works
-            // (proot needs /dev/pts to allocate ptys; the Android
-            // app process can only see its own mount namespace,
-            // so we bind the host's /dev in). Without this, any
-            // /shell/exec that needs a pty returns
-            // `OSError: out of pty devices`.
-            add("-b")
-            add("/dev")
-            add("-b")
-            add("/proc")
-            // Kill child + descendants when proot exits. Without
-            // this, killing the proot process leaves uvicorn (and
-            // the Flask subprocess it spawned) orphaned.
-            add("--kill-on-exit")
+        val baseArgs = ProotCommand.base(
+            prootExecutable,
+            rootfsDir,
+            qemuX86_64Executable,
+        )
+        val command = baseArgs.toMutableList().apply {
             add("/bin/sh")
             add("-c")
             add(LAUNCH_COMMAND)
