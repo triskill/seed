@@ -380,10 +380,10 @@ roughly by release risk rather than by the historical phase numbering.
    Android HTTP command form and persists a lazy secondary-PRoot session across
    navigation. Validate it on x86_64, native ARM64, and QEMU mode; add focused
    tests for command construction/environment, lifecycle, IME/resize, clipboard,
-   session exit/recreation, and failure UI. Wire an actual detach callback when
-   the Compose `AndroidView` leaves composition; current comments promise
-   `detachView`, but `ShellScreen` never calls it. Document that the Python bridge
-   preserves cwd but runs external commands in fresh shells (it is not yet full
+   session exit/recreation, and failure UI. ✅ `ShellScreen` now calls
+   `detachView` from `AndroidView.onRelease`, releasing the UI connection while
+   retaining the service-owned session. Document that the Python bridge preserves
+   cwd but runs external commands in fresh shells (it is not yet full
    persistent-shell semantics). Remove or clearly label the now-unused
    `ShellViewModel`/form UI, and decide whether `/shell/exec` remains supported;
    if it does, add job IDs/cancellation and isolation. For Chat, surface

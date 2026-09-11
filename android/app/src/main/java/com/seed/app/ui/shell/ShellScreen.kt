@@ -85,5 +85,11 @@ private fun TerminalViewConnection(
             }
         },
         modifier = Modifier.fillMaxSize(),
+        // AndroidView invokes this exactly once when the composable leaves
+        // composition. Keep the service-owned shell alive, but release this
+        // activity view and its input/client connection.
+        onRelease = { surface ->
+            terminalManager.detachView(surface.terminalView)
+        },
     )
 }
