@@ -76,11 +76,11 @@ class SeedTerminalManager(
         SeedTerminalClient(applicationContext)
     }
 
-    /** Whether the Shell extra-keys Ctrl button is currently sticky/active. */
+    /** Whether the Shell extra-keys Ctrl button is armed for one terminal key. */
     val controlKeyActive: StateFlow<Boolean>
         get() = terminalClient.controlKeyActive
 
-    /** Toggle the sticky Ctrl modifier used with the software keyboard. */
+    /** Arm or disarm the one-shot Ctrl modifier used with the software keyboard. */
     fun toggleControlKey(): Boolean = terminalClient.toggleControlKey()
 
     // -- Lifecycle --

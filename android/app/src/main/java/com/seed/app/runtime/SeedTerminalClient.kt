@@ -54,7 +54,7 @@ class SeedTerminalClient(
     private var terminalView: WeakReference<com.termux.view.TerminalView> =
         WeakReference(null)
 
-    /** Sticky Ctrl state exposed to the Compose extra-keys row. */
+    /** One-shot Ctrl state exposed to the Compose extra-keys row. */
     private val _controlKeyActive = MutableStateFlow(false)
     val controlKeyActive: StateFlow<Boolean> = _controlKeyActive.asStateFlow()
 
@@ -156,21 +156,31 @@ class SeedTerminalClient(
         // No-op: the terminal emulator is set up internally
     }
 
-    // -- Modifier keys (sticky-key callbacks) --
+    // -- Modifier keys (one-shot callbacks) --
 
     /**
-     * Toggle the sticky Ctrl modifier used by the extra-keys row.
+     * Arm or disarm the next Ctrl-modified terminal key.
      *
-     * Characters sent by the IME while this is enabled are interpreted by
-     * Termux as Ctrl+<character>; tap Ctrl again to release it.
+     * Once Termux consumes this state while processing a character or key code,
+     * it is cleared immediately so Ctrl behaves like a one-shot modifier rather
+     * than a latched switch. A second tap before a key is entered still cancels
+     * the armed modifier.
      */
+    @Synchronized
     fun toggleControlKey(): Boolean {
         val active = !_controlKeyActive.value
         _controlKeyActive.value = active
         return active
     }
 
-    override fun readControlKey(): Boolean = _controlKeyActive.value
+    @Synchronized
+    private fun consumeControlKey(): Boolean {
+        val active = _controlKeyActive.value
+        if (active) _controlKeyActive.value = false
+        return active
+    }
+
+    override fun readControlKey(): Boolean = consumeControlKey()
     override fun readAltKey(): Boolean = false
     override fun readShiftKey(): Boolean = false
     override fun readFnKey(): Boolean = false
