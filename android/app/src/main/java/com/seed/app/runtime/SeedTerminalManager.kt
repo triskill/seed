@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.Log
 import java.io.File
 import com.termux.terminal.TerminalSession
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Owns the lifecycle of the interactive shell [TerminalSession].
@@ -74,6 +75,13 @@ class SeedTerminalManager(
     private val terminalClient by lazy {
         SeedTerminalClient(applicationContext)
     }
+
+    /** Whether the Shell extra-keys Ctrl button is currently sticky/active. */
+    val controlKeyActive: StateFlow<Boolean>
+        get() = terminalClient.controlKeyActive
+
+    /** Toggle the sticky Ctrl modifier used with the software keyboard. */
+    fun toggleControlKey(): Boolean = terminalClient.toggleControlKey()
 
     // -- Lifecycle --
 
@@ -247,14 +255,10 @@ class SeedTerminalManager(
         // native fork(2) is intentionally unavailable under PRoot.
         const val TERMINAL_REPL = """
 import os
+import readline
 import subprocess
-import sys
 
 cwd = "/home/seed"
-
-def show_prompt():
-    sys.stdout.write("seed:" + cwd + "# ")
-    sys.stdout.flush()
 
 def change_directory(argument):
     global cwd
@@ -270,11 +274,18 @@ def change_directory(argument):
 
 print("Seed terminal — " + cwd)
 while True:
-    show_prompt()
-    line = sys.stdin.readline()
-    if not line:
+    try:
+        # Alpine's Python readline module provides line editing and history,
+        # so the terminal's arrow-key escape sequences edit the command instead
+        # of being copied into the command text.
+        command = input("seed:" + cwd + "# ").strip()
+    except EOFError:
         break
-    command = line.strip()
+    except KeyboardInterrupt:
+        # Ctrl+C at the prompt should cancel the current line, not terminate
+        # this PRoot session (which would make the terminal appear to crash).
+        print()
+        continue
     if not command:
         continue
     if command in ("exit", "logout"):
@@ -287,6 +298,10 @@ while True:
         continue
     try:
         subprocess.run(["/bin/sh", "-c", command], cwd=cwd, check=False)
+    except KeyboardInterrupt:
+        # The foreground command was interrupted. Return to a fresh prompt
+        # while keeping the command bridge and its PRoot process alive.
+        print()
     except OSError as error:
         print("seed: " + str(error), file=sys.stderr)
 """

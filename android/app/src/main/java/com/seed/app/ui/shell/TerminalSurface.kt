@@ -46,6 +46,12 @@ internal class TerminalSurface(context: Context) : FrameLayout(context) {
         }
     }
 
+    /** Send a non-text terminal key (for example an arrow or Escape) and retain IME focus. */
+    fun sendKey(keyCode: Int) {
+        terminalView.requestFocus()
+        terminalView.handleKeyCode(keyCode, 0)
+    }
+
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas)
 

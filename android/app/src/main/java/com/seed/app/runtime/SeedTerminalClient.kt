@@ -10,6 +10,9 @@ import com.termux.view.TerminalViewClient
 import android.view.KeyEvent
 import android.view.MotionEvent
 import java.lang.ref.WeakReference
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Bridges Termux's [TerminalSessionClient] and [TerminalViewClient]
@@ -50,6 +53,10 @@ class SeedTerminalClient(
      */
     private var terminalView: WeakReference<com.termux.view.TerminalView> =
         WeakReference(null)
+
+    /** Sticky Ctrl state exposed to the Compose extra-keys row. */
+    private val _controlKeyActive = MutableStateFlow(false)
+    val controlKeyActive: StateFlow<Boolean> = _controlKeyActive.asStateFlow()
 
     /**
      * Called by [SeedTerminalManager] when a new view is attached.
@@ -150,10 +157,20 @@ class SeedTerminalClient(
     }
 
     // -- Modifier keys (sticky-key callbacks) --
-    // These are invoked by TerminalView when the user presses/sticky-modifier keys.
-    // All return false for now — a future extra-keys bar can toggle these.
 
-    override fun readControlKey(): Boolean = false
+    /**
+     * Toggle the sticky Ctrl modifier used by the extra-keys row.
+     *
+     * Characters sent by the IME while this is enabled are interpreted by
+     * Termux as Ctrl+<character>; tap Ctrl again to release it.
+     */
+    fun toggleControlKey(): Boolean {
+        val active = !_controlKeyActive.value
+        _controlKeyActive.value = active
+        return active
+    }
+
+    override fun readControlKey(): Boolean = _controlKeyActive.value
     override fun readAltKey(): Boolean = false
     override fun readShiftKey(): Boolean = false
     override fun readFnKey(): Boolean = false
