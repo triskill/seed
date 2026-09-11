@@ -64,13 +64,18 @@ Verification on 2026-09-11: the combined Python suite passes **134/134**
 had two transient failures (process-group cleanup and Flask readiness); both
 passed individually and the full rerun passed, so suite flakiness still needs
 investigation. `lintDebug` and `assembleDebug` pass (0 lint errors, 27 warnings).
-The instrumentation source still contains **2 classes / 6 test methods**, but
-`assembleDebugAndroidTest` currently **fails to compile** because
-`NativeProotSmokeTest` calls the removed `ProotEnvironment.create` API instead
-of `createBackend`. Consequently, no post-terminal/QEMU connected suite is
-accepted. A clean QEMU-mode build produces a **410,292,039-byte** debug APK
-(410.3 MB decimal / 391.3 MiB). An incremental build first left a stale ~793 MB
-APK until `gradlew clean`; investigate that packaging/bloat behavior.
+The instrumentation source still contains **2 classes / 6 test methods** and
+now compiles/packages after `NativeProotSmokeTest` switched from the removed
+`ProotEnvironment.create` API to `createBackend`. On the attached ARM64 Moto G32
+with the x86_64-QEMU asset set, the PRoot smoke extracts its rootfs and passes
+guest Python, but its real Pi RPC step does not emit the expected JSONL response
+before the 20-second smoke timeout. The subsequent Compose methods can then
+report `No compose hierarchies found` in that instrumentation session, so the
+connected suite has no current acceptance result. `make run-phone-x86-test` does build, install, and launch
+the QEMU APK; launch is not acceptance of the Pi/agent path. A clean QEMU-mode
+build produces a **410,292,039-byte** debug APK (410.3 MB decimal / 391.3 MiB).
+An incremental build first left a stale ~793 MB APK until `gradlew clean`;
+investigate that packaging/bloat behavior.
 
 > The phase tables below are an implementation history. Their per-task APK
 > sizes, test counts, URLs, and "new/modified" annotations describe the state at
@@ -227,9 +232,13 @@ and bounded line queue.
   reached ~793 MB before `gradlew clean`, which should be investigated.
 - ✅ `lintDebug` completes with 0 errors / 27 warnings.
 - ✅ Python passes 134/134, runtime tools 31/31, Android JVM 190/190.
-- ⚠️ `assembleDebugAndroidTest` does not compile at HEAD because
-  `NativeProotSmokeTest` still calls `ProotEnvironment.create`; fix it to use
-  the split backend API and then rerun all 6 connected methods.
+- ⚠️ `assembleDebugAndroidTest` now compiles. On the ARM64 Moto G32, the
+  QEMU smoke test extracts the rootfs and runs guest Python, but its real Pi
+  RPC step does not emit the expected JSONL response before the 20-second
+  smoke timeout. Subsequent Compose methods can report `No compose hierarchies
+  found` in that instrumentation session; the connected suite is unaccepted.
+  `make run-phone-x86-test` successfully installs and launches the APK, but
+  this is not agent-path acceptance.
 - ⚠️ The new terminal has no dedicated automated tests or recorded device
   acceptance. The previous x86_64 PRoot/pi smoke remains the last accepted
   instrumentation run.
@@ -506,13 +515,16 @@ Android tooling only; Python dependencies come from
 - **Chat and agent sessions are process-global.** Clients share the two agent
   conversations and receive one another's events; queues may drop old events,
   offline sends can be lost, and there is no replay/history persistence.
-- **Verification automation is incomplete and currently regressed.** There is
-  no CI or Python lint/type-check configuration. JVM tests pass 190/190, but the
-  2-class / 6-method instrumentation APK does not compile because its PRoot
-  smoke test calls a removed environment API. The latest Python suite passed on
-  rerun after two transient failures, so flake diagnosis is also pending. The
-  last accepted PRoot/real-pi RPC instrumentation method predates QEMU and the
-  terminal.
+- **Verification automation is incomplete and currently blocked on QEMU Pi.**
+  There is no CI or Python lint/type-check configuration. JVM tests pass 190/190,
+  and the 2-class / 6-method instrumentation APK compiles. On the ARM64 Moto G32,
+  the QEMU smoke test confirms extraction and guest Python, then Pi's real RPC
+  path does not emit its expected JSONL response before the 20-second smoke
+  timeout; subsequent Compose methods can report `No compose hierarchies found`.
+  Thus the connected suite has no current acceptance result. The latest Python suite passed
+  on rerun after two transient failures, so flake diagnosis is also pending.
+  The last accepted PRoot/real-pi RPC instrumentation method predates QEMU and
+  the terminal.
 - **Runtime-mode publication is not clean or transactional.** The native
   builder removes only the normal four-file bundle, so switching away from QEMU
   can retain its larger dependency closure or a stale ABI directory. The QEMU
@@ -561,9 +573,12 @@ curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json
 cd android
 ./gradlew --no-daemon :app:testDebugUnitTest  # 190 passed
 ./gradlew --no-daemon :app:lintDebug :app:assembleDebug
-# Currently fails: NativeProotSmokeTest uses removed ProotEnvironment.create.
-./gradlew --no-daemon :app:assembleDebugAndroidTest
-# After fixing compilation, run all connected tests on matching targets.
+./gradlew --no-daemon :app:assembleDebugAndroidTest  # passes
+./gradlew --no-daemon :app:connectedDebugAndroidTest
+# On Moto G32 with the QEMU x86_64 asset set: NativeProotSmokeTest extracts the
+# rootfs and runs guest Python, but Pi RPC times out; later Compose methods may
+# report `No compose hierarchies found`. The connected suite is unaccepted.
+make run-phone-x86-test  # build/install/launch succeeds; not Pi-path acceptance.
 ```
 
 **Run the Phase 3 manual demo (no real pi / API key needed):**
