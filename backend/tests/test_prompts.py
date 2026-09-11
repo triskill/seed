@@ -122,6 +122,14 @@ def test_prompts_use_mode_aware_app_url():
         assert "http://127.0.0.1:7777" not in text
 
 
+def test_worker_prompt_keeps_system_rootfs_immutable_but_allows_pip():
+    """Workers must not attempt unsupported system-package installs."""
+    text = _WORKER_PROMPT.read_text(encoding="utf-8")
+    assert "never use `apk`, `apt`, `dnf`, or another system package manager" in text.lower()
+    assert "Python dependency with `pip`" in text
+
+
+
 def test_worker_prompt_does_not_tell_agent_to_restart_webapp():
     """Process lifetime belongs to the orchestrator in both runtime modes."""
     text = _WORKER_PROMPT.read_text(encoding="utf-8")

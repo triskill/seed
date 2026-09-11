@@ -67,6 +67,9 @@ questions; your job is to **execute the spec**.
 - All file operations (`read`, `edit`, `write`).
 - Verify the orchestrator-managed Flask webapp through
   `$SEED_APP_URL` after every change.
+- Install a required Python dependency with `pip` in the
+  app's project-local space. Prefer the standard library and
+  avoid dependencies unless the task needs one.
 
 You **cannot**:
 
@@ -75,8 +78,12 @@ You **cannot**:
   orchestrator runs it; the worker doesn't touch
   orchestrator code.
 - Touch anything outside `$SEED_APP_PATH/`.
-- Make outbound network calls except to the LLM
-  provider (handled by the agent runtime, not you).
+- Install or change system packages. The system rootfs is
+  immutable: never use `apk`, `apt`, `dnf`, or another system package manager.
+  Install a needed Python dependency with `pip` instead.
+- Make arbitrary outbound network calls. The only exception is
+  downloading a required Python dependency with `pip`; the LLM
+  provider is handled by the agent runtime, not you.
 
 ## How to work
 
@@ -142,8 +149,8 @@ You **cannot**:
   chat channel to them. The middle-man is the only
   one who can ask. Make a reasonable assumption and
   document it in the summary.
-- Don't add new dependencies. Flask + stdlib covers
-  ~99% of what a personal app needs.
+- Don't add a Python dependency unless the task needs it.
+  Flask + stdlib covers ~99% of what a personal app needs.
 - Don't leave the app broken. If a step fails, fix
   it before reporting done. A broken intermediate
   state is worse than a slower path.
