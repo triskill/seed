@@ -1,14 +1,15 @@
 # Seed — TODO
 
 A self-improving Android app: the APK is an immutable shell with four screens
-(App, Chat, Shell, Settings); an embedded Linux runtime (proot + Alpine) is
-intended to host a Python orchestrator that drives two `pi` agent instances (a
-"middle-man" for intent and a "worker" for building). The current webapp is a
-minimal Flask mutation seed; SQLite-backed features are planned but not yet
-implemented. Host development can run FastAPI on 7777 and Flask on 7778; the
-Android prototype instead WSGI-mounts Flask into FastAPI on 7777. The App
-screen shows the webapp, but the on-device two-agent loop remains blocked as
-described below.
+(App, Chat, Shell, Settings); an embedded Linux runtime (PRoot + Alpine) hosts
+a Python orchestrator that drives two `pi` agent instances (a "middle-man" for
+intent and a "worker" for building). The current webapp is still a minimal
+Flask mutation seed; SQLite-backed features are planned but not implemented.
+Host development runs FastAPI on 7777 and Flask on 7778; Android WSGI-mounts
+Flask into FastAPI on 7777. The Shell tab now contains a Termux terminal view
+backed by a second PRoot process and a no-fork Python command bridge. Embedded
+process bring-up works, but a provider-backed end-to-end build is still not
+accepted and the release blockers below remain.
 
 **Original design:** [`docs/plans/2026-06-30-seed-app-design.md`](docs/plans/2026-06-30-seed-app-design.md) (vision, architecture, and risks; some runtime details are superseded here).
 **Original phased plan:** [`docs/plans/2026-06-30-seed-v0.1-bootstrap.md`](docs/plans/2026-06-30-seed-v0.1-bootstrap.md) (historical task-by-task specification; current status lives in this TODO).
@@ -18,60 +19,58 @@ described below.
 
 ## Status at a glance
 
-_Status updated 2026-08-14 in the working tree based on `main` commit
-`f54e771`. The embedded runtime bring-up itself was performed on `seed_dev`
-x86_64 on 2026-08-12._
+_Status updated 2026-09-11 against `main` / `origin/main` commit `e2abf98`.
+The only pre-existing working-tree change is the staged
+`TODO_sugestion_from_local_qwen.md`; it was reviewed below but is not
+implemented._
 
 | Phase | What | Status |
 |---|---|---|
 | 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
-| 1 | Shell endpoint | ✅ done (5/5); `shell.py` uses `subprocess.Popen` with merged pipes so it works inside proot |
+| 1 | Shell endpoint | ✅ backend endpoint done (5/5); the Android Shell tab now uses a separate interactive terminal instead |
 | 2 | pi runner (pipe wrapper, ANSI strip, tool filter) | ✅ done (6/6); Android-compatible `subprocess.Popen` launcher accepted on x86_64 emulator 2026-08-14 |
 | 3 | Middle-man + worker orchestration | ⚠️ embedded processes start and accept RPC; encrypted Android credential startup is wired, but a real provider-backed turn is not yet accepted |
 | 4 | System prompts + first real agent loop | ⚠️ host demo done (4/4); not reproduced inside the standalone APK |
-| 5 | Android shell (4 screens, nav, WebView) | ✅ done (9/9); verified on emulator 2026-08-12 |
-| 6 | Android ↔ backend wiring | ✅ done (5/5) |
-| 7 | Native proot packaging + rootfs extraction | ✅ done (5/5); verified on emulator |
-| 8 | Foreground service | ✅ done (4/4); verified on emulator |
-| 9 | First-run runtime startup gate | ✅ done (4/4); verified on emulator |
-| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; agent launch and encrypted credential startup are wired; `make run-phone-test` now builds arm64 runtime + APK, installs & launches on USB phone (Phase 10 readiness gate resolved); provider-backed acceptance, live settings apply, reload, security, cancellation, recovery, and UX remaining |
+| 5 | Android shell (4 screens, nav, WebView) | ✅ original UI phase done (9/9); Shell was subsequently replaced by the terminal implementation |
+| 6 | Android ↔ backend wiring | ✅ original wiring done (5/5); `/shell/exec` is no longer the active Android Shell UI path |
+| 7 | Native PRoot packaging + rootfs extraction | ✅ native arm64/x86_64 layouts done; QEMU x86_64-guest compatibility mode added and accepted on an ARM64 Moto G32 |
+| 8 | Foreground service | ✅ done (4/4); now also owns the lazy terminal session manager |
+| 9 | First-run runtime startup gate | ✅ done (4/4); phone build/install/launch targets are available |
+| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; QEMU phone mode and a Termux-based Shell landed, but terminal/device acceptance, provider-backed E2E, live settings apply, reload, security, cancellation/recovery, and release QA remain |
 
-**Embedded runtime verified on `seed_dev` x86_64 (shell on 2026-08-12; agent process/RPC startup on 2026-08-14):**
+**Embedded runtime acceptance recorded so far:**
 
-* APK installs and launches without a host backend.
-* `BootController` extracts the Alpine rootfs and version data to
-  `filesDir/linux/`; PackageManager installs the selected
-  Termux-Android-native PRoot executable, loader, and shared libraries under
-  `applicationInfo.nativeLibraryDir`.
-* `RuntimeService` runs proot, which launches uvicorn on
-  `127.0.0.1:7777` inside the embedded Linux runtime.
-* The Flask app is mounted **inside the FastAPI process** via
-  `a2wsgi.WSGIMiddleware` (the Flask subprocess path returns `OSError
-  38 (ENOSYS)` because `proot` on Android does not implement
-  `fork(2)`; the WSGI mount is the v0.1 workaround).
-* `/health` returns `{"status":"ok","flask":"up"}`; `/api/ping` returns
-  `{"pong": true}`; `/` returns the Seed placeholder card.
-* The App tab WebView loads the placeholder card.
-* The Chat tab opens a WebSocket to `/chat` and forwards user messages.
-  Both real `pi --mode rpc` Node processes now remain live inside Android PRoot.
-  An RPC prompt reaches the middle-man; without a configured provider key the
-  expected `No API key found for opencode-go` response is surfaced to Chat as
-  an `error` event instead of failing silently.
-* The Shell tab runs Alpine commands; `echo hello` shows
-  `$ echo hello` / `hello` / `[exit 0]`.
+* On `seed_dev` x86_64 (2026-08-12/14), the APK installs and launches without
+  a host backend. `BootController` extracts the Alpine rootfs and version data;
+  PackageManager supplies Android-native PRoot and its libraries; uvicorn serves
+  loopback port 7777; `/health`, `/api/ping`, the placeholder WebView, Chat WS,
+  and the original HTTP-backed Shell flow worked.
+* Both real `pi --mode rpc` processes remained live in that x86_64 PRoot. A
+  middle-man prompt produced the expected missing-provider-key error through
+  Chat. A successful provider-backed turn was not run.
+* On an ARM64 Moto G32 (2026-09-09), the new compatibility path was accepted far
+  enough to run ARM64 PRoot → `qemu-x86_64` → an x86_64 Alpine backend, report
+  `uname -m` as x86_64, and reach health. V8 requires `NODE_OPTIONS=--jitless`
+  in this mode and pi is substantially slower. Native ARM64 remains the
+  supported default.
+* The current Shell implementation is no longer the accepted HTTP form/log UI:
+  it is a Termux `TerminalView` backed by a service-owned, lazy secondary PRoot
+  session and a Python no-fork command REPL. The implementation builds, but no
+  device acceptance or dedicated terminal tests are recorded at current HEAD.
 
-Verification on 2026-08-14: **132/132 backend tests** and **2/2 webapp
-tests** pass, including the combined **134/134** Python run; **183/183 Android
-JVM tests** pass. The Flask environment test is isolated from fixed port 7778,
-removing its prior order-dependent readiness race. The runtime tooling shell
-suite passes **31/31**. Android
-`lintDebug` and
-`assembleDebug` pass (0 lint errors, 27 warnings), and the instrumentation APK
-compiles. The current instrumentation source contains **2 classes / 6 test
-methods**. The expanded `NativeProotSmokeTest` was run successfully on x86_64
-on 2026-08-14, proving the allowlisted Settings environment reaches guest
-Python plus a real pipe-backed pi launch/RPC response inside the Android
-app-domain PRoot; the other five methods were not rerun.
+Verification on 2026-09-11: the combined Python suite passes **134/134**
+(**132 backend + 2 webapp**) on rerun, the runtime tooling shell suite passes
+**31/31**, and Android JVM tests pass **190/190**. The first combined Python run
+had two transient failures (process-group cleanup and Flask readiness); both
+passed individually and the full rerun passed, so suite flakiness still needs
+investigation. `lintDebug` and `assembleDebug` pass (0 lint errors, 27 warnings).
+The instrumentation source still contains **2 classes / 6 test methods**, but
+`assembleDebugAndroidTest` currently **fails to compile** because
+`NativeProotSmokeTest` calls the removed `ProotEnvironment.create` API instead
+of `createBackend`. Consequently, no post-terminal/QEMU connected suite is
+accepted. A clean QEMU-mode build produces a **410,292,039-byte** debug APK
+(410.3 MB decimal / 391.3 MiB). An incremental build first left a stale ~793 MB
+APK until `gradlew clean`; investigate that packaging/bloat behavior.
 
 > The phase tables below are an implementation history. Their per-task APK
 > sizes, test counts, URLs, and "new/modified" annotations describe the state at
@@ -131,10 +130,12 @@ that field.
 - `pi_runner.py` — `PiRunner`, `PiRunnerNotRunning`, `ToolCallBlocked`, `_strip_ansi`, `_check_tool_call`, `_ANSI_CSI_RE`, `_ANSI_OSC_RE`.
 - `tests/fixtures/fake_pi*.py` — 4 siblings: basic progress emitter, ANSI-coloured progress emitter, tool-event emitter, crash-on-exit emitter.
 
-**Key design notes** (full rationales in the module docstrings):
-- Per-runner `ThreadPoolExecutor` so each runner owns its worker threads; shut down deterministically in `stop()`. The default asyncio executor is process-wide and gets fragile when multiple runners are torn down in sequence.
-- Only one `os.waitpid` call site, in `stop()`. Two threads in `waitpid` for the same pid is a footgun (kernel delivers exit to only one; the other blocks forever). EOF on the PTY master is the canonical "child is gone" signal.
-- Identity pipe: child reports its post-setsid pgid back to the parent. `os.getpgid(pid)` from the parent is unreliable in pytest's multi-threaded context (setsid can silently fail in the child, leaving it in the parent's pgid).
+**Current process-model notes** (the older PTY/`fork`/identity-pipe design is
+superseded): `subprocess.Popen` owns spawn and reaping; stdin/stdout are pipes,
+stderr is merged into stdout, an incremental UTF-8 decoder preserves split
+characters, writes are serialized, and `start_new_session=True` provides the
+process group used for TERM/KILL cleanup. Each runner still owns its executor
+and bounded line queue.
 
 ## ✅ Phase 3 — Middle-man + worker orchestration (7/7)
 
@@ -212,19 +213,26 @@ that field.
 - Gradle 8.7 bootstrap'd the wrapper; `gradle-wrapper.jar` + `gradlew` are committed
 
 **Current status:**
-- Phase 5.9 visual verification is complete; the emulator results are recorded below.
-- Phase 6 backend wiring is complete.
-- Phase 7 now builds arm64 or x86_64 runtime bundles, packages the selected four-library native PRoot bundle through `jniLibs`, and extracts only rootfs/version data from assets.
-- Native embedded-runtime startup was accepted on x86_64 on 2026-08-12; both real pipe-backed pi RPC processes were accepted on the emulator on 2026-08-14.
+- Phase 5.9's original host-backed UI verification is historical and complete.
+- The Android Shell tab has since moved from `POST /shell/exec` to a Termux
+  terminal session owned by `RuntimeService`; the old ViewModel and backend
+  endpoint remain in the tree but are no longer the active UI path.
+- Runtime tooling supports native arm64, native x86_64, and an ARM64-host /
+  x86_64-guest QEMU compatibility package. The QEMU backend reached health on a
+  Moto G32; native ARM64 remains the supported default.
 
-**Verification:**
-- ✅ `assembleDebug` produces a runtime-bearing debug APK (~370.6 MB decimal / 353.4 MiB for the current x86_64 build)
-- ✅ AAPT confirms manifest, resources, and version codes
-- ✅ `lintDebug` completes with 0 errors (27 warnings on 2026-08-13)
-- ✅ Backend and webapp pass separately; Android JVM suite passes 183/183
-- ✅ Current instrumentation suite (2 classes / 6 methods) compiles; the native PRoot + real pi RPC smoke method passes on x86_64
-- ✅ Native PRoot/rootfs, uvicorn, WebView, and Shell startup were accepted on the x86_64 emulator on 2026-08-12
-- ✅ Both embedded `pi` processes start and remain live; a missing provider key is returned through Chat as an explicit error
+**Current verification:**
+- ✅ A clean `assembleDebug` passes and produces a 410.3 MB decimal QEMU-mode
+  APK (the native x86_64 milestone build was ~370.6 MB). A stale incremental APK
+  reached ~793 MB before `gradlew clean`, which should be investigated.
+- ✅ `lintDebug` completes with 0 errors / 27 warnings.
+- ✅ Python passes 134/134, runtime tools 31/31, Android JVM 190/190.
+- ⚠️ `assembleDebugAndroidTest` does not compile at HEAD because
+  `NativeProotSmokeTest` still calls `ProotEnvironment.create`; fix it to use
+  the split backend API and then rerun all 6 connected methods.
+- ⚠️ The new terminal has no dedicated automated tests or recorded device
+  acceptance. The previous x86_64 PRoot/pi smoke remains the last accepted
+  instrumentation run.
 
 ## ✅ Phase 6 — Android ↔ backend wiring (5/5)
 
@@ -261,7 +269,15 @@ that field.
 | 7.4 | `RootfsVersion` + data-only `AndroidAssetSource` | `app/src/main/java/com/seed/app/runtime/{RootfsVersion,AndroidAssetSource}.kt` | `RootfsVersion(seedVersion, buildId)` parses the marker. `AndroidAssetSource` selects only merged `rootfs.tar` and `seed_version.json`; legacy asset proot entries are ignored because proot is installed through the selected `jniLibs` ABI. JVM tests cover marker parsing and the asset boundary. |
 | 7.5 | Boot controller + extraction UI + MainActivity wiring | `app/src/main/java/com/seed/app/runtime/{BootState,BootController,ExtractionScreen}.kt`, `app/src/main/java/com/seed/app/MainActivity.kt` | `BootController` owns a `StateFlow<BootState>` (`NeedsExtraction` → `Extracting(progress)` → `Ready`), compares `filesDir/linux/.version` to the asset version, drives the extraction flow, writes `.version` on success. Extraction is serialized across activity recreation. JVM tests cover the controller. |
 
-**Module shape after Phase 7:** `com.seed.app.runtime` owns the data-only asset boundary and rootfs installation. Proot is resolved separately from `applicationInfo.nativeLibraryDir/libproot.so`; it is never placed under writable app storage. The Android JVM suite passes.
+**Post-Phase-7 compatibility addition (2026-09-09):**
+`make runtime-qemu-x86` / `make run-phone-x86-test` package ARM64 PRoot plus
+`qemu-x86_64` and its Termux dependency closure with an x86_64 Alpine guest.
+`seed_version.json` now includes `guest_arch`; `RootfsVersion` selects PRoot's
+`-q` path only on an ARM64 host. This optional mode carries more than the normal
+four-file native bundle and requires Node `--jitless`; it is a slow compatibility
+test path, not the supported default.
+
+**Module shape after Phase 7:** `com.seed.app.runtime` owns the data-only asset boundary and rootfs installation. PRoot is resolved separately from `applicationInfo.nativeLibraryDir/libproot.so`; it is never placed under writable app storage. The Android JVM suite passes.
 
 **APK packaging:** the generated source file is gzip-compressed `assets/linux/rootfs.tar.gz`, but AGP expands it during asset merging and packages it as `assets/linux/rootfs.tar`. That merged TAR is listed in `noCompress` so `AssetManager.openFd` can stream it. The APK therefore carries the expanded TAR size, not a compressed runtime rootfs; splitting it into a separate delivery artifact remains a future optimization.
 
@@ -283,68 +299,115 @@ activity is backgrounded.
 | 8.3 | `RuntimeService` (foreground) | `app/src/main/java/com/seed/app/runtime/{RuntimeService,RuntimeBinder}.kt` (new), `data/ApiModule.kt` (modified) | ✅ `RuntimeService` promotes itself immediately, resolves a `NativeProotInstallation` (executable, loader, libtalloc, and libandroid-shmem) from `applicationInfo.nativeLibraryDir`, starts it with `HOME`, `LANG`, `PATH`, `TERM`, `PROOT_TMP_DIR`, `PROOT_LOADER`, and `LD_LIBRARY_PATH`, logs both output streams, and polls the loopback backend through `ApiModule.embedded`. `RuntimeBinder` exposes health, process liveness, and stop. `onDestroy` terminates proot and cancels the service scope. The x86_64 service wiring, embedded uvicorn, and health polling were accepted on the emulator on 2026-08-12. |
 | 8.4 | Manifest + permissions + notification channel | `app/src/main/AndroidManifest.xml`, `app/src/main/java/com/seed/app/SeedApp.kt`, `app/src/main/res/drawable/ic_stat_seed.xml`, `res/values/strings.xml` | ✅ Declares `FOREGROUND_SERVICE`, Android 14's `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, and the non-exported `dataSync` service. `SeedApp` creates the low-importance `seed_runtime` channel on API 26+, and the ongoing service notification uses a monochrome vector icon plus a `MainActivity` content intent. The API 33 notification prompt remains Phase 9 activity wiring. |
 
-**Module shape after Phase 8:** the runtime package owns installation (`RuntimeExtractor`), installed-native lookup (`NativeProot`), process launch/termination (`ProotRunner`), readiness polling (`HealthMonitor`), and Android lifetime (`RuntimeService` + `RuntimeBinder`). The Android JVM suite passes, and the x86_64 service/runtime path was accepted on the emulator on 2026-08-12.
+**Post-Phase-8 terminal addition (2026-09-10):** `RuntimeService` also owns a
+lazy `SeedTerminalManager`, exposed through `RuntimeBinder`. It shares
+`ProotCommand`/`ProotEnvironment` setup with the backend but launches a second
+PRoot into a Termux `TerminalSession` and runs a Python command REPL because
+native guest `fork(2)` is unavailable. The terminal session survives navigation
+and activity recreation and ends with the service. This path still needs tests
+and connected-device acceptance.
+
+**Module shape after Phase 8:** the runtime package owns installation (`RuntimeExtractor`), installed-native lookup (`NativeProot`), process launch/termination (`ProotRunner`), readiness polling (`HealthMonitor`), Android lifetime (`RuntimeService` + `RuntimeBinder`), and the new terminal session. The accepted x86_64 service/runtime run predates the terminal implementation.
 
 ## ✅ Phase 9 — First-run runtime startup gate (4/4)
 
 | # | Task | Files | Notes |
 |---|---|---|---|
 | 9.1 | Startup state resolver | `runtime/RuntimeStartup.kt`, `RuntimeStartupTest.kt` | ✅ Keeps extraction-owned `BootState` separate from service-owned `HealthState`. A pure resolver maps the pair to extraction UI, runtime UI, or `SeedNav`; a single-fire gate starts the service only after extraction is ready. This supersedes the older duplicate `BootState.Starting` / `RuntimeError` proposal. |
-| 9.2 | Runtime startup + retry UI | `runtime/StartRuntimeScreen.kt`, `androidTest/.../StartRuntimeScreenTest.kt`, `res/values/strings.xml` | ✅ Shows polling progress and attempt count, or an error banner and Retry action. The current instrumentation suite compiles; it was not run on a device during the 2026-08-13 verification. |
+| 9.2 | Runtime startup + retry UI | `runtime/StartRuntimeScreen.kt`, `androidTest/.../StartRuntimeScreenTest.kt`, `res/values/strings.xml` | ✅ Shows polling progress and attempt count, or an error banner and Retry action. At this milestone the instrumentation suite compiled; it was not run on a device during the 2026-08-13 verification. |
 | 9.3 | Service lifecycle wiring + retry | `MainActivity.kt`, `runtime/{RuntimeSupervisor,RuntimeService,RuntimeBinder}.kt` | ✅ `MainActivity` starts and binds the foreground service after extraction, mirrors binder health, requests Android 13+ notification permission once, gates navigation until healthy, retains the service in the background, and unbinds on destroy. Retry re-polls a live process or replaces a dead one. Extraction is single-flight across activity recreation. |
 | 9.4 | Embedded endpoint defaults + host persistence | `app/build.gradle.kts`, `data/{ApiModule,AndroidSettingsRepo}.kt`, `ui/{app,settings}/*`, related tests | ✅ Active HTTP, WebSocket, and WebView clients use `127.0.0.1:7777`; Flask is WSGI-mounted on the FastAPI port in the embedded runtime. Cleartext/navigation allowlists retain loopback plus `10.0.2.2`. `SettingsForm.host` persists `127.0.0.1`; its legacy `webappPort=7778` field and other saved endpoint values do not currently rebuild clients or reconfigure/restart the backend. That operational wiring and host UI remain Phase 10 work. |
 
-**Module shape after Phase 9:** `RuntimeSupervisor` owns retryable process/health startup, `RuntimeStartup` owns pure UI gating, and `MainActivity` is the Android lifecycle adapter. The Android JVM suite passes; the current 2-class / 6-method instrumentation suite compiles, and the native PRoot/real-pi RPC smoke method passed on x86_64 on 2026-08-14.
+**Module shape after Phase 9:** `RuntimeSupervisor` owns retryable process/health startup, `RuntimeStartup` owns pure UI gating, and `MainActivity` is the Android lifecycle adapter. At that milestone the 2-class / 6-method instrumentation suite compiled, and the native PRoot/real-pi RPC smoke method passed on x86_64 on 2026-08-14; see the current verification block for the later compile regression.
 
 ## ⬜ Phase 10 — Embedded agent loop + end-to-end readiness
 
-The original process-launch release blocker is resolved; the remaining items
-turn the now-running embedded agent processes into a complete, safe product flow.
+The original backend process-launch blocker is resolved. Work below is ordered
+roughly by release risk rather than by the historical phase numbering.
 
-1. **Android-compatible `PiRunner` process model — completed 2026-08-14.**
-   Replaced PTY + Python `os.fork()` with direct-argv `subprocess.Popen`, merged
-   pipes, and `start_new_session=True`, preserving RPC streaming, process-group
-   termination, tool filtering, prompt preload, bounded restart, and cleanup.
-   Host tests, a real host pi startup, and two live real pi processes plus an RPC
-   error round-trip were accepted on the x86_64 Android emulator. A provider-key
-   backed model/tool turn and arm64 device run remain release verification work.
-2. **Make worker edits take effect in embedded mode.** Worker verification now
-   uses the mode-aware `SEED_APP_URL` (completed 2026-08-14), but the in-process
-   WSGI fallback has no Flask reloader. Define a safe app reload/restart
-   mechanism, then make `app_reload` refresh the App WebView rather than only
-   adding a Chat banner.
-3. **Secure the loopback control plane.** The middle-man now has a matching
-   pi CLI tool allowlist and runtime event filter (completed 2026-08-14).
-   Android credentials now stay in encrypted storage and are injected into a
-   newly created PRoot environment rather than crossing `PUT /config` or being
-   copied to plaintext JSON (completed 2026-08-14). Remaining work: authenticate
-   HTTP/WS requests, verify backend identity, separate or authenticate mutable
-   web content versus privileged control routes, prevent same-UID/process-env
-   credential exposure, and constrain worker mutation to the app workspace.
-4. **Finish Shell and Chat behavior.** Android now renders a distinct warning
-   when the backend reports truncated shell output (completed 2026-08-14).
-   Remaining work: add a real backend cancellation protocol, wire Android Cancel
-   to it, surface connection/sync failures, avoid silently dropping offline
-   sends, and bound or persist long histories.
-5. **Make Settings operational.** Saved provider/model/key are now loaded from
-   DataStore/Keystore storage for each real PRoot process generation and mapped
-   to explicit pi environment variables (completed 2026-08-14); Android no
-   longer sends the key through loopback config sync. Remaining work: deliberately
-   restart/apply after Save, load or migrate ports, rebuild clients when endpoints
-   change, and expose the persisted host where appropriate.
-6. **Harden runtime recovery.** Startup now waits for both the backend and the
-   embedded Flask app to report ready instead of accepting `flask: "down"`.
-   Remaining work: detect process death after initial health, handle bind timeouts
-   and extraction failures, add explicit stop/restart/wipe controls, and enable
-   bounded crash supervision.
-7. **Run the product demo and release checks.** Complete the "Add a habit
-   tracker" standalone-APK demo, run instrumentation on x86_64 and arm64,
-   resolve lint/release-signing/licensing items, and add CI plus static checks.
+1. **P0 — revoke and remove the committed JitPack credential.**
+   `android/gradle.properties` contains a live-looking access token and is
+   tracked on `main`/`origin`. Treat it as compromised: revoke/rotate it, remove
+   it from tracked files, load credentials from a developer-local or CI secret
+   source, and decide whether repository-history cleanup is required. Add a
+   secret scan so this does not recur.
+2. **Restore a trustworthy verification baseline.** Fix
+   `NativeProotSmokeTest` to use `ProotEnvironment.createBackend` (or the correct
+   test-specific environment) so `assembleDebugAndroidTest` compiles, then run
+   all 6 connected methods on matching targets. Investigate the intermittent
+   process-group-cleanup and Flask-readiness failures seen on the first combined
+   Python run; remove `test_service.py`'s machine-specific checkout path,
+   global-default monkeypatch, and fixed-port coupling. Add a top-level `verify`
+   target, CI, and Python lint/type/static checks (`make test` currently means
+   only the Python suites).
+3. **Android-compatible `PiRunner` — completed 2026-08-14.** The direct-argv
+   `subprocess.Popen`/pipe implementation is accepted on x86_64, including two
+   live pi RPC processes and an error round-trip. A successful provider-backed
+   model/tool turn still needs acceptance.
+4. **Make worker edits live in embedded mode.** The mode-aware `SEED_APP_URL` is
+   complete, but Android's one-shot in-process WSGI mount retains old Python
+   code and `app_reload` still only adds a Chat banner. Add a concurrency-safe,
+   lifecycle-owned reload/restart mechanism that retains the last good app on
+   syntax/import failure, covers all mutable Python modules, handles repeated
+   edits, and makes templates reload correctly; then wire `app_reload` to the
+   App WebView and test the full mutation-to-visible-page path.
 
-Deferred distribution/UI work from the embedded-runtime design includes the
-notification/icon polish, App-bar health status, and moving the ~350 MB
-uncompressed rootfs out of the base APK (for example via an appropriate modern
-Android asset-delivery mechanism rather than assuming `.obb`).
+   The local Qwen suggestion identified this real gap and the rolling-callable /
+   mtime-watcher idea is a useful option, but its proposed patch is **not ready
+   to apply verbatim**: `FlaskRolling` is undefined, delete-from-`sys.modules`
+   conflicts with its `importlib.reload` wording, it reaches through private
+   manager state, lacks locking/debounce/error rollback, and incorrectly assumes
+   watching only `seed_app/app.py` covers cached templates and helper modules.
+   It also omits the Android WebView half of the task. Keep the finding; redesign
+   the implementation and acceptance tests, then remove/archive the misspelled
+   suggestion file so this document remains the canonical tracker.
+5. **Secure the control plane and build inputs.** The middle-man tool allowlist
+   and encrypted credential injection are complete. Authenticate HTTP/WS,
+   verify backend identity, separate mutable web content from privileged routes,
+   reduce same-UID/process-environment credential exposure, constrain worker
+   writes to the app workspace, and keep dependency-repository credentials out
+   of source control.
+6. **Finish Shell and Chat behavior.** The new Termux terminal replaces the
+   Android HTTP command form and persists a lazy secondary-PRoot session across
+   navigation. Validate it on x86_64, native ARM64, and QEMU mode; add focused
+   tests for command construction/environment, lifecycle, IME/resize, clipboard,
+   session exit/recreation, and failure UI. Wire an actual detach callback when
+   the Compose `AndroidView` leaves composition; current comments promise
+   `detachView`, but `ShellScreen` never calls it. Document that the Python bridge
+   preserves cwd but runs external commands in fresh shells (it is not yet full
+   persistent-shell semantics). Remove or clearly label the now-unused
+   `ShellViewModel`/form UI, and decide whether `/shell/exec` remains supported;
+   if it does, add job IDs/cancellation and isolation. For Chat, surface
+   connection failures, do not silently drop offline sends, and bound/persist
+   histories.
+7. **Make Settings operational.** Saved provider/model/key are loaded for each
+   new PRoot generation and secrets no longer cross loopback config sync.
+   Deliberately restart/apply after Save, load or migrate ports, rebuild clients
+   when endpoints change, expose the persisted host, and surface sync failures.
+8. **Harden runtime recovery.** Keep monitoring after initial health; detect
+   process death and wedged processes; add binding timeouts, retryable extraction
+   errors, explicit stop/restart/wipe controls, and bounded crash supervision.
+   Define how a live terminal session behaves when the backend/rootfs restarts.
+9. **Finish architecture/device acceptance.** `make run-phone-test` now builds,
+   installs, and launches the native ARM64 package. The optional
+   `make run-phone-x86-test` path reached health on a Moto G32 using ARM64 PRoot
+   plus QEMU x86_64 and `--jitless`, but its agent and terminal paths remain slow
+   and unaccepted. Make runtime-mode publication and switching transactional:
+   native builds currently remove only the four normal libraries and can leave
+   the QEMU dependency closure/stale ABI directory behind; QEMU publishes its
+   rootfs/marker before native packaging completes; and preflights do not verify
+   the full guest/native closure. Add failure/switch tests, then run the complete
+   standalone provider-backed flow on native ARM64 (supported), x86_64 emulator,
+   and only then the QEMU compatibility mode.
+10. **Run the product demo and release checks.** Complete the “Add a habit
+    tracker” standalone-APK demo; resolve the 27 lint warnings, release signing,
+    minification, dependency provenance/licensing (including PRoot and Termux),
+    notification/icon polish, and App-bar health status. Synchronize `README.md`,
+    `android/README.md`, and runtime docs with loopback port 7777 and the three
+    actual runtime modes (native x86_64, native ARM64, ARM64/QEMU x86_64). Move the very large
+    runtime out of the base APK using an appropriate modern delivery mechanism;
+    a clean QEMU-mode APK is ~410.3 MB and the earlier native x86_64 package was
+    ~370.6 MB. Also diagnose the stale incremental package that grew to ~793 MB.
 
 ---
 
@@ -430,30 +493,48 @@ Android tooling only; Python dependencies come from
   health is not continuously monitored after the first success. A wedged but
   still-alive process is re-polled rather than restarted. Startup readiness now
   requires `/health` to report `flask: "up"`.
-- **Shell cancellation and output semantics are incomplete.** The library can
-  cancel a subprocess, but the HTTP/Android protocol does not expose it.
-  `subprocess.Popen` merges stderr into stdout, so `stderr` remains empty.
-  Android now shows a warning row when the backend reports truncated output.
+- **The active Shell path changed and is not yet accepted.** The Android tab
+  now uses Termux `TerminalView` plus a service-owned second PRoot and Python
+  no-fork REPL; the former `ShellViewModel`/Cancel UI is unused. The bridge keeps
+  cwd and a few built-ins, but each external line runs in a fresh `sh -c`, so it
+  is not a fully persistent shell. It has no focused tests or recorded device
+  run. The legacy HTTP endpoint remains available; its library can cancel, but
+  the protocol cannot, and merged process pipes leave `stderr` empty.
 - **`ShellSession` cwd tracking is heuristic and process-global.** Only a
   leading `cd <path>` is recognized, concurrent callers share the same cwd,
   and every command still runs in a fresh shell.
 - **Chat and agent sessions are process-global.** Clients share the two agent
   conversations and receive one another's events; queues may drop old events,
   offline sends can be lost, and there is no replay/history persistence.
-- **Verification automation is incomplete.** There is no CI and no Python
-  lint/type-check configuration. The native PRoot/real-pi RPC instrumentation
-  method passed on x86_64, but the remaining instrumentation methods and arm64
-  device coverage were not run during the latest verification.
+- **Verification automation is incomplete and currently regressed.** There is
+  no CI or Python lint/type-check configuration. JVM tests pass 190/190, but the
+  2-class / 6-method instrumentation APK does not compile because its PRoot
+  smoke test calls a removed environment API. The latest Python suite passed on
+  rerun after two transient failures, so flake diagnosis is also pending. The
+  last accepted PRoot/real-pi RPC instrumentation method predates QEMU and the
+  terminal.
+- **Runtime-mode publication is not clean or transactional.** The native
+  builder removes only the normal four-file bundle, so switching away from QEMU
+  can retain its larger dependency closure or a stale ABI directory. The QEMU
+  script publishes rootfs/marker before native packaging finishes, and current
+  preflights do not validate the entire QEMU closure or all rootfs/native
+  pairings. Switching/failure tests are missing.
 - **Distribution is unfinished.** Generated rootfs/native artifacts are
-  Git-ignored and architecture-specific; a fresh checkout must run
-  `make runtime`. The current x86_64 debug APK is ~370.6 MB decimal, release
-  signing/minification are unfinished, the project license is TBD, and PRoot's
-  GPL/source-distribution obligations must be resolved.
+  Git-ignored and mode-specific; a fresh checkout must build them. A clean local
+  QEMU-mode APK is ~410.3 MB decimal (the earlier native x86_64 package was
+  ~370.6 MB); one stale incremental build grew to ~793 MB. Release
+  signing/minification are unfinished, the project license
+  is TBD, and PRoot/Termux/dependency license and source obligations must be
+  resolved.
 - **Pi uses `--no-session`.** Per-process pi session files are intentionally
   disabled, but orchestrator-level chat/task history and reconnect replay have
   not been implemented.
-- **Repository state:** `main` is synchronized with `origin/main`; the old
-  statement that the project had no remote was obsolete.
+- **A dependency-repository credential is committed.** The tracked Android
+  Gradle properties contain a live-looking JitPack token already present on
+  `origin/main`; revoke it and move authentication to local/CI secret storage.
+- **Repository state:** `main` is synchronized with `origin/main` at `e2abf98`.
+  The staged Qwen suggestion file is the only pre-existing working-tree change;
+  it is input to this audit, not implemented work.
 ---
 
 ## Quick reference
@@ -478,10 +559,11 @@ curl -X POST http://127.0.0.1:7777/shell/exec -H 'Content-Type: application/json
 ./scripts/tests/runtime-tools-test.sh           # 31 passed
 
 cd android
-./gradlew --no-daemon :app:testDebugUnitTest  # 183 passed
+./gradlew --no-daemon :app:testDebugUnitTest  # 190 passed
 ./gradlew --no-daemon :app:lintDebug :app:assembleDebug
+# Currently fails: NativeProotSmokeTest uses removed ProotEnvironment.create.
 ./gradlew --no-daemon :app:assembleDebugAndroidTest
-# Run connected instrumentation separately with a matching emulator/device.
+# After fixing compilation, run all connected tests on matching targets.
 ```
 
 **Run the Phase 3 manual demo (no real pi / API key needed):**
