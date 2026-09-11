@@ -1,5 +1,8 @@
 package com.seed.app.ui.nav
 
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
@@ -52,6 +55,7 @@ import com.seed.app.ui.shell.ShellScreen
  * copies. This is what users expect from Android's
  * bottom-nav pattern.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SeedNav(
     terminalManager: SeedTerminalManager,
@@ -59,10 +63,14 @@ fun SeedNav(
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    // Chat and Shell add imePadding() to their bottom controls. Keeping the
+    // Scaffold navigation bar while the IME is open would reserve its height
+    // *in addition* to the IME inset, leaving a blank strip above the keyboard.
+    val keyboardVisible = WindowInsets.isImeVisible
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
+            if (!keyboardVisible) NavigationBar {
                 Tabs.forEach { tab ->
                     val selected = currentRoute == tab.route
                     NavigationBarItem(

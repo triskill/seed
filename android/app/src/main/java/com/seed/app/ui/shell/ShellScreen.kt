@@ -133,8 +133,8 @@ private fun TerminalExtraKeys(
             onClick = onControlClick,
         )
         TerminalExtraKey("←", "Left arrow") { onKeyClick(KeyEvent.KEYCODE_DPAD_LEFT) }
-        TerminalExtraKey("↑", "Up arrow") { onKeyClick(KeyEvent.KEYCODE_DPAD_UP) }
         TerminalExtraKey("↓", "Down arrow") { onKeyClick(KeyEvent.KEYCODE_DPAD_DOWN) }
+        TerminalExtraKey("↑", "Up arrow") { onKeyClick(KeyEvent.KEYCODE_DPAD_UP) }
         TerminalExtraKey("→", "Right arrow") { onKeyClick(KeyEvent.KEYCODE_DPAD_RIGHT) }
     }
 }
