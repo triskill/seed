@@ -113,6 +113,26 @@ class RuntimeExtractorTest {
     }
 
     @Test
+    fun rootfsReplacementRemovesProotInaccessibleDirectory() = runTest {
+        val target = tempFolder.newFolder("linux")
+        val staleDirectory = target.resolve("rootfs/host-rootfs")
+        assertTrue(staleDirectory.mkdirs())
+        // PRoot can leave this synthetic mount point owned by the app but with
+        // mode 000. A version-triggered rootfs replacement must recover instead
+        // of crashing while trying to enumerate it.
+        assertTrue(staleDirectory.setReadable(false, false))
+        assertTrue(staleDirectory.setWritable(false, false))
+        assertTrue(staleDirectory.setExecutable(false, false))
+
+        RuntimeExtractor(
+            MapAssetSource("rootfs.tar" to rootfsTar()),
+        ).extract(target).toList()
+
+        assertFalse("stale PRoot directory should be removed", staleDirectory.exists())
+        assertEquals("runtime-tool", target.resolve("rootfs/bin/tool").readText())
+    }
+
+    @Test
     fun rootfsTarRejectsEntriesOutsideTheRootfsDirectory() = runTest {
         val target = tempFolder.newFolder("linux")
         val escaped = requireNotNull(target.parentFile).resolve("escaped")

@@ -315,7 +315,7 @@ cat > "$BUILD_DIR/ctx/Dockerfile" <<'DOCKERFILE'
 # Full digest pinning is a v0.2 follow-up.
 ARG ALPINE_BASE_IMAGE=alpine:3.22.5
 FROM ${ALPINE_BASE_IMAGE}
-RUN apk add --no-cache --update python3 py3-pip nodejs npm git tmux
+RUN apk add --no-cache --update python3 py3-pip nodejs npm git tmux vim
 RUN npm install -g @earendil-works/pi-coding-agent@0.80.3
 # pi 0.80.3's undici dependency requires Node 22 APIs. Run the CLI during
 # image construction so an incompatible distro Node cannot ship silently.

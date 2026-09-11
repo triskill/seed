@@ -207,6 +207,18 @@ class RuntimeExtractor(
     private fun deleteTree(root: Path) {
         if (!Files.exists(root, NOFOLLOW_LINKS)) return
         if (Files.isDirectory(root, NOFOLLOW_LINKS)) {
+            // PRoot can leave its synthetic host-rootfs mount point with mode
+            // 000. It is still owned by this Android app, but newDirectoryStream
+            // cannot inspect it until we restore directory access. Do this only
+            // after the no-follow directory check so a hostile symlink is never
+            // chmodded outside the extracted rootfs.
+            val directory = root.toFile()
+            if (!directory.setReadable(true, false) ||
+                !directory.setWritable(true, false) ||
+                !directory.setExecutable(true, false)
+            ) {
+                throw IOException("Could not make directory deletable: $root")
+            }
             Files.newDirectoryStream(root).use { children ->
                 children.forEach(::deleteTree)
             }
