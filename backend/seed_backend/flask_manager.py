@@ -8,6 +8,12 @@ from pathlib import Path
 
 import httpx
 
+# The x86_64 guest runs under Android QEMU user-mode on physical ARM devices.
+# Flask's debug reloader starts a second Python interpreter there, so cold
+# imports are substantially slower than host development. Keep FastAPI's
+# lifespan from giving up while that child is still becoming ready.
+FLASK_STARTUP_TIMEOUT_SECONDS = 90.0
+
 
 class FlaskManager:
     """Start the generated Flask app separately from FastAPI on port 7778.
@@ -75,7 +81,7 @@ class FlaskManager:
             return False
 
         try:
-            await self.wait_ready(timeout=15)
+            await self.wait_ready(timeout=FLASK_STARTUP_TIMEOUT_SECONDS)
         except (TimeoutError, OSError):
             await self.stop()
             self.mode = "failed"

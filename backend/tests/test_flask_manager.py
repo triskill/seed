@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 
-from seed_backend.flask_manager import FlaskManager
+from seed_backend.flask_manager import FLASK_STARTUP_TIMEOUT_SECONDS, FlaskManager
 
 
 def test_flask_manager_starts_and_stops():
@@ -62,11 +62,15 @@ def test_flask_manager_uses_debug_reloader_without_debugger():
         captured["env"] = env
         return FakeProcess()
 
+    async def timed_out_wait_ready(*, timeout):
+        captured["readiness_timeout"] = timeout
+        raise TimeoutError
+
     async def scenario():
         manager = FlaskManager(port=7778)
         with (
             patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
-            patch.object(manager, "wait_ready", side_effect=TimeoutError),
+            patch.object(manager, "wait_ready", side_effect=timed_out_wait_ready),
         ):
             started = await manager.start()
             # This test pins subprocess environment construction, not socket
@@ -78,6 +82,7 @@ def test_flask_manager_uses_debug_reloader_without_debugger():
     assert captured["env"] is not None
     assert "--debug" in captured["args"]
     assert "--no-debugger" in captured["args"]
+    assert captured["readiness_timeout"] == FLASK_STARTUP_TIMEOUT_SECONDS
 
 
 def test_flask_manager_prefers_seed_app_path_environment(monkeypatch, tmp_path):
