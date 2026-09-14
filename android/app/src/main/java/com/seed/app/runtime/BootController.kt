@@ -95,10 +95,10 @@ class BootController(
     }
 
     private fun writeVersionFile() {
-        // Minimal hand-rolled JSON to keep this module dep-free.
-        File(targetDir, VERSION_FILE).writeText(
-            """{"seed_version":"${assetVersion.seedVersion}","build_id":"${assetVersion.buildId}","guest_arch":"${assetVersion.guestArchitecture.wireValue}"}""",
-        )
+        // Keep the marker format dependency-free and explicit.  In particular,
+        // native-only identity prevents an old QEMU/x86 install from being
+        // considered current during an upgrade.
+        File(targetDir, VERSION_FILE).writeText(assetVersion.toMarkerJson())
     }
 
     private companion object {

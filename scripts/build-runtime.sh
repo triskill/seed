@@ -2,15 +2,15 @@
 # scripts/build-runtime.sh — Build the Seed Android runtime.
 #
 # Produces:
-#   android/app/src/main/jniLibs/<abi>/libproot.so
-#   android/app/src/main/jniLibs/<abi>/libproot-loader.so
-#   android/app/src/main/jniLibs/<abi>/libtalloc.so
-#   android/app/src/main/jniLibs/<abi>/libandroid-shmem.so
+#   android/app/src/main/jniLibs/arm64-v8a/libproot.so
+#   android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so
+#   android/app/src/main/jniLibs/arm64-v8a/libtalloc.so
+#   android/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so
 #   android/app/src/main/assets/linux/rootfs.tar.gz   (~150 MB, Alpine + python + node + pi + backend + webapp)
 #   android/app/src/main/assets/linux/seed_version.json
 #
-# Set RUNTIME_ARCH=arm64 (default) or RUNTIME_ARCH=x86_64.
-# Requires: docker (with buildx support for the selected target), curl, ar,
+# Set RUNTIME_ARCH=arm64 (the only supported target).
+# Requires: docker (with buildx support for ARM64), curl, ar,
 # file, readelf, python3, sha256sum, tar with xz support.
 # Idempotent: re-running rebuilds from scratch in fresh temporary dirs.
 # Native and asset outputs use separate staging directories inside their
@@ -36,6 +36,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=runtime-target.sh
 source "$REPO_ROOT/scripts/runtime-target.sh"
 configure_runtime_target "${RUNTIME_ARCH:-arm64}"
+[[ "$RUNTIME_ARCH" == arm64 ]] || { echo "only native ARM64 runtime is supported" >&2; exit 2; }
 
 ASSETS_DIR="${ASSETS_DIR:-$REPO_ROOT/android/app/src/main/assets/linux}"
 JNI_LIBS_DIR="${JNI_LIBS_DIR:-$REPO_ROOT/android/app/src/main/jniLibs}"
@@ -43,14 +44,15 @@ SELECTED_PROOT="$JNI_LIBS_DIR/$PROOT_JNI_RELATIVE_PATH"
 SELECTED_PROOT_LOADER="$JNI_LIBS_DIR/$PROOT_LOADER_JNI_RELATIVE_PATH"
 SELECTED_TALLOC="$JNI_LIBS_DIR/$TALLOC_JNI_RELATIVE_PATH"
 SELECTED_ANDROID_SHMEM="$JNI_LIBS_DIR/$ANDROID_SHMEM_JNI_RELATIVE_PATH"
-case "$ANDROID_ABI" in
-    arm64-v8a) OPPOSITE_ANDROID_ABI="x86_64" ;;
-    x86_64) OPPOSITE_ANDROID_ABI="arm64-v8a" ;;
-esac
-OPPOSITE_PROOT="$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI/libproot.so"
-OPPOSITE_PROOT_LOADER="$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI/libproot-loader.so"
-OPPOSITE_TALLOC="$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI/libtalloc.so"
-OPPOSITE_ANDROID_SHMEM="$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI/libandroid-shmem.so"
+# Stale x86/QEMU artifacts are removed only after a new native build validates.
+STALE_X86_DIR="$JNI_LIBS_DIR/x86_64"
+QEMU_CLOSURE=(
+    libqemu-x86-64.so libandroid-support.so libargp.so libbz2.so libdw.so
+    libelf.so libffi.so libglib-2.0.so libgmodule-2.0.so libgmp.so
+    libgnutls.so libhogweed.so libiconv.so libidn2.so liblzma.so libnettle.so
+    libp11-kit.so libpcre2-8.so libpixman-1.so libtasn1.so libunistring.so
+    libz.so libzstd.so
+)
 DOCKER_IMAGE_TAG="seed-runtime:$(date +%s)"
 DOCKER_CONTAINER_NAME="seed-runtime-export-$$"
 BUILD_DIR=""
@@ -384,7 +386,10 @@ grep -qE '^(\./)?home/seed/app/seed_app/' "$TAR_LISTING" \
 cat > "$STAGING_DIR/seed_version.json" <<JSON
 {
   "seed_version": "0.1.0",
-  "build_id": "$BUILD_ID"
+  "build_id": "$BUILD_ID",
+  "runtime_format": "native-arm64",
+  "runtime_format_version": 2,
+  "native_arch": "arm64"
 }
 JSON
 
@@ -399,10 +404,11 @@ if [[ "$PUBLISH_NATIVE_BUNDLE" -eq 1 ]]; then
     mv "$NATIVE_STAGING_DIR/libtalloc.so" "$SELECTED_TALLOC"
     mv "$NATIVE_STAGING_DIR/libandroid-shmem.so" "$SELECTED_ANDROID_SHMEM"
 fi
-rm -f "$OPPOSITE_PROOT" "$OPPOSITE_PROOT_LOADER" \
-    "$OPPOSITE_TALLOC" "$OPPOSITE_ANDROID_SHMEM"
-# Remove only an empty generated ABI directory; preserve any future native files.
-rmdir "$JNI_LIBS_DIR/$OPPOSITE_ANDROID_ABI" 2>/dev/null || true
+# A native-only APK must never retain an old x86 ABI or QEMU closure.
+rm -rf "$STALE_X86_DIR"
+for qemu_file in "${QEMU_CLOSURE[@]}"; do
+    rm -f "$JNI_LIBS_DIR/arm64-v8a/$qemu_file"
+done
 rm -f "$ASSETS_DIR/proot"
 mv "$ROOTFS_TAR_OUT" "$ASSETS_DIR/rootfs.tar.gz"
 mv "$STAGING_DIR/seed_version.json" "$ASSETS_DIR/seed_version.json"

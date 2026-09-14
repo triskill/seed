@@ -50,8 +50,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ProotRunner(
     private val prootExecutable: File,
     private val rootfsDir: File,
-    /** Native ARM64 QEMU user-mode binary for an x86_64 guest, if selected. */
-    private val qemuX86_64Executable: File? = null,
     private val workDir: File = rootfsDir,
     private val env: Map<String, String> = System.getenv(),
     private val factory: ProcessFactory = JvmProcessFactory,
@@ -62,7 +60,6 @@ class ProotRunner(
         val baseArgs = ProotCommand.base(
             prootExecutable,
             rootfsDir,
-            qemuX86_64Executable,
         )
         val command = baseArgs.toMutableList().apply {
             add("/bin/sh")

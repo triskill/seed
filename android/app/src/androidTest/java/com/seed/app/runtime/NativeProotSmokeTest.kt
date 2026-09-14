@@ -29,32 +29,21 @@ class NativeProotSmokeTest {
         val rootfs = File(runtimeDir, "rootfs")
         val nativeProot = NativeProot.resolve(context.applicationInfo.nativeLibraryDir)
 
-        // Detect guest architecture from asset version marker so the test
-        // also works with the QEMU x86_64 runtime built by
-        // `make run-phone-x86-test`.
+        // The APK contract is native ARM64 only.  Keep this assertion in the
+        // app-domain smoke test so accidentally packaging a legacy marker is
+        // caught before attempting to start guest processes.
         val versionJson = context.assets.open("linux/seed_version.json").use {
             it.reader().readText()
         }
-        val guestArch = RootfsVersion.parse(versionJson).guestArchitecture
-        val qemuX86_64: File? = when (guestArch) {
-            RootfsArchitecture.ARM64 -> null
-            RootfsArchitecture.X86_64 ->
-                NativeProot.resolveQemuX86_64(context.applicationInfo.nativeLibraryDir)
-        }
+        val version = RootfsVersion.parse(versionJson)
+        assertEquals(RootfsVersion.NATIVE_RUNTIME_FORMAT, version.runtimeFormat)
+        assertEquals(RootfsVersion.NATIVE_RUNTIME_FORMAT_VERSION, version.runtimeFormatVersion)
+        assertEquals(RootfsVersion.NATIVE_ARCH, version.nativeArch)
 
         val environment = ProotEnvironment.createBackend(
             tempDir = File(context.cacheDir, "native-proot-smoke/tmp"),
             installation = nativeProot,
-        ) + if (qemuX86_64 != null) {
-            // Match RuntimeService: V8-generated x86 code crashes QEMU user-mode
-            // on this ARM64 device, while --jitless is slow but stable.
-            mapOf(
-                "QEMU_CPU" to "max",
-                "NODE_OPTIONS" to "--jitless",
-            )
-        } else {
-            emptyMap()
-        }
+        )
         val credentialEnvironment = environment + SettingsForm(
             provider = "opencode-go",
             model = "deepseek-v4-flash",
@@ -64,7 +53,6 @@ class NativeProotSmokeTest {
             domain = domain,
             rootfs = rootfs,
             nativeProot = nativeProot,
-            qemuX86_64 = qemuX86_64,
             environment = credentialEnvironment,
             command = listOf(
                 "/usr/bin/python3",
@@ -108,9 +96,8 @@ class NativeProotSmokeTest {
                                 event = json.loads(line)
                             except json.JSONDecodeError:
                                 # PiRunner merges child stderr into its line stream.
-                                # QEMU can emit Android-linker diagnostics before the
-                                # JSONL RPC response; production translates these as
-                                # ordinary text instead of treating them as protocol.
+                                # Linker diagnostics may precede JSONL; treat them as
+                                # ordinary text instead of protocol.
                                 diagnostics.append(line)
                                 continue
                             if event.get("type") == "response":
@@ -130,7 +117,6 @@ class NativeProotSmokeTest {
             domain = domain,
             rootfs = rootfs,
             nativeProot = nativeProot,
-            qemuX86_64 = qemuX86_64,
             environment = environment,
             command = listOf("/usr/bin/python3", "-c", piSmokeScript),
             timeoutSeconds = PI_PROCESS_TIMEOUT_SECONDS,
@@ -197,7 +183,6 @@ class NativeProotSmokeTest {
             domain = domain,
             rootfs = rootfs,
             nativeProot = nativeProot,
-            qemuX86_64 = qemuX86_64,
             environment = environment,
             command = listOf("/usr/bin/python3", "-c", flaskSmokeScript),
             timeoutSeconds = PI_PROCESS_TIMEOUT_SECONDS,
@@ -209,16 +194,14 @@ class NativeProotSmokeTest {
         domain: String,
         rootfs: File,
         nativeProot: NativeProotInstallation,
-        qemuX86_64: File?,
         environment: Map<String, String>,
         command: List<String>,
         timeoutSeconds: Long = PROCESS_TIMEOUT_SECONDS,
     ): String {
-        // Use the production prefix: in particular, QEMU requires the
-        // /proc bind for /proc/self/exe and PRoot needs /dev for its usual
-        // guest process setup.
+        // Use the production native-only prefix. PRoot needs /dev and /proc
+        // for its usual guest process setup.
         val process = ProcessBuilder(
-            ProotCommand.base(nativeProot.executable, rootfs, qemuX86_64).apply {
+            ProotCommand.base(nativeProot.executable, rootfs).apply {
                 addAll(command)
             },
         ).directory(rootfs).apply {

@@ -28,6 +28,12 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        // The embedded runtime and all bundled native code are ARM64-only.
+        // Refuse installation/build outputs for x86 devices rather than
+        // allowing a runtime failure after first launch.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
         // FastAPI and the generated Flask app are separate local services.
         // Flask owns port 7778 so its development reloader can make worker
         // edits live; FastAPI and the agent API remain on port 7777.

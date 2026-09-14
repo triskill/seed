@@ -8,11 +8,11 @@ from pathlib import Path
 
 import httpx
 
-# The x86_64 guest runs under Android QEMU user-mode on physical ARM devices.
-# Flask's debug reloader starts a second Python interpreter there, so cold
-# imports are substantially slower than host development. Keep FastAPI's
-# lifespan from giving up while that child is still becoming ready.
-FLASK_STARTUP_TIMEOUT_SECONDS = 90.0
+# Native ARM64 startup baseline: Flask's development reloader starts a second
+# interpreter, but does not require the former foreign-architecture grace period.
+# Keep enough room for first-import cost on a physical device without masking
+# a failed child process.
+FLASK_STARTUP_TIMEOUT_SECONDS = 45.0
 
 
 class FlaskManager:

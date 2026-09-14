@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -58,6 +59,10 @@ class BootControllerTest {
         assertTrue("expected Ready, got $last", last is BootState.Ready)
         val versionText = target.resolve(".version").readText()
         assertTrue("version file missing build_id: $versionText", versionText.contains("\"build_id\":\"B1\""))
+        assertTrue(versionText.contains("\"runtime_format\":\"native-arm64\""))
+        assertTrue(versionText.contains("\"runtime_format_version\":2"))
+        assertTrue(versionText.contains("\"native_arch\":\"arm64\""))
+        assertFalse(versionText.contains("guest_arch"))
     }
 
     @Test
@@ -259,9 +264,31 @@ class BootControllerTest {
     }
 
     @Test
+    fun legacyQemuMarkerIsNotUpToDate() = runTest(UnconfinedTestDispatcher()) {
+        val target = tempFolder.newFolder("legacy-qemu-marker")
+        target.resolve(".version").writeText(
+            """{"seed_version":"0.1.0","build_id":"B1","guest_arch":"x86_64"}""",
+        )
+        val controller = BootController(
+            targetDir = target,
+            source = MapAssetSource2(),
+            assetVersion = RootfsVersion("0.1.0", "B1"),
+            scope = this,
+            extractionFlow = { flowOf(ExtractionProgress.Finished) },
+        )
+        assertTrue(controller.states.value is BootState.NeedsExtraction)
+        controller.runExtraction()
+        controller.states.filter { it is BootState.Ready }.first()
+        assertEquals(
+            RootfsVersion("0.1.0", "B1"),
+            RootfsVersion.parse(target.resolve(".version").readText()),
+        )
+    }
+
+    @Test
     fun upToDateSkipsExtraction() = runTest(UnconfinedTestDispatcher()) {
         val target = tempFolder.newFolder("linux")
-        target.resolve(".version").writeText("""{"seed_version":"0.1.0","build_id":"B1"}""")
+        target.resolve(".version").writeText(RootfsVersion("0.1.0", "B1").toMarkerJson())
 
         val controller = BootController(
             targetDir = target,

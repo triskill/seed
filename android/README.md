@@ -23,34 +23,32 @@ development, but changing active clients at runtime is deferred to Phase 10.
 
 The Android SDK and generated runtime binaries are not committed.
 
-### Fresh x86_64 emulator setup (recommended)
+### Native ARM64 device/AVD setup (required)
 
-Run the complete setup from the repository root. It requires JDK 17 and Linux
-KVM access through `/dev/kvm`; install Docker with buildx plus the runtime host
-tools listed in [`../docs/build-runtime.md`](../docs/build-runtime.md).
+The embedded runtime is native ARM64 only. Use an authorized ARM64 physical
+phone for acceptance, or an ARM64 Android 34 AVD if your host supports one.
+The APK contains only the native ARM64 runtime and must run on an ARM64 phone or ARM64 AVD.
+emulation.
+
+For an ARM64 AVD, run from the repository root:
 
 ```bash
-# Installs the Android command-line tools, emulator, system image, and seed_dev AVD.
 make install
-
-# Generates the x86_64 Android-native PRoot bundle and matching rootfs.
-make runtime RUNTIME_ARCH=x86_64
-
-# Preflights the runtime, builds the APK, starts the AVD, installs, and launches.
+make runtime
 make run
 ```
 
-Keep that order on a fresh checkout: `make install`, then the explicit x86_64
-runtime build, then `make run`. `make install` fails if `/dev/kvm` is unavailable
-because the development emulator requires hardware virtualization. `make run`
-never starts the large runtime build automatically.
-
-For an arm64 physical device, generate and build that architecture explicitly:
+For a physical ARM64 phone with USB debugging enabled:
 
 ```bash
-make runtime RUNTIME_ARCH=arm64
-make build
+make runtime
+make run-phone-test DEVICE_ID=<serial>  # DEVICE_ID is optional if exactly one is connected
 ```
+
+`make run` and `make run-phone-test` validate the native ARM64 PRoot bundle
+before building. `make run` additionally requires Linux KVM for the Android
+removed.
+
 
 ### Direct Gradle APK-only setup
 
@@ -71,9 +69,9 @@ cd android
 
 A fresh checkout contains the tracked
 `app/src/main/assets/linux/seed_version.json`, but no generated rootfs or native
-bundle. The generated, Git-ignored ABI directory contains `libproot.so`,
-`libproot-loader.so`, `libtalloc.so`, and `libandroid-shmem.so`; only the
-selected ABI's complete bundle remains after a successful architecture switch.
+bundle. The generated, Git-ignored `arm64-v8a` directory contains `libproot.so`,
+`libproot-loader.so`, `libtalloc.so`, and `libandroid-shmem.so`. No alternate
+ABI or emulator closure is retained.
 The generated matching source asset is
 `app/src/main/assets/linux/rootfs.tar.gz`. During the Android build, AGP expands
 that gzip to merged `assets/linux/rootfs.tar`, which is stored with `noCompress`
@@ -86,7 +84,7 @@ uses AGP legacy JNI packaging. PackageManager extracts all four native files
 into the installed app's executable native-library directory. `RuntimeService`
 resolves the complete installation, sets `PROOT_LOADER` to its packaged loader,
 and sets `LD_LIBRARY_PATH` to the same directory. The Termux Android-native
-PRoot build is required because generic Linux x86_64 PRoot receives `SIGSYS`
+The packaged PRoot build is compiled for Android ARM64 and must be used instead of a generic host binary.
 under the Zygote application seccomp policy even though it works under an
 interactive `run-as` process. Writable first-launch
 extraction handles only rootfs data and the version marker under `filesDir`.
@@ -121,7 +119,7 @@ service and runtime.
 |---|---|---|
 | 5 | Four-screen Compose shell | ✅ complete |
 | 6 | Android ↔ backend clients | ✅ complete |
-| 7 | Native proot packaging and rootfs extraction | ✅ complete; x86_64 emulator accepted |
+| 7 | Native proot packaging and rootfs extraction | ✅ complete; native ARM64 device/AVD lane |
 | 8 | Foreground runtime service | ✅ complete; managed PRoot/Uvicorn health verified |
 | 9 | Startup, health gate, retry, loopback defaults | ✅ complete; app-domain instrumentation passed |
 | 10 | End-to-end polish and runtime controls | ⬜ next |

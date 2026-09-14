@@ -75,23 +75,19 @@ class ProotRunnerTest {
     }
 
     @Test
-    fun startAddsNativeQemuForX86_64GuestBeforeRootfs() = runTest(UnconfinedTestDispatcher()) {
-        val rootfs = tempFolder.newFolder("x86-rootfs")
+    fun startNeverAddsForeignArchitectureEmulationFlag() = runTest(UnconfinedTestDispatcher()) {
+        val rootfs = tempFolder.newFolder("rootfs-native")
         val proot = tempFolder.newFile("proot")
-        val qemu = tempFolder.newFile("qemu-x86-64")
         val fake = RecordingProcessFactory(FakeProcess(stdout = "", stderr = ""))
 
         ProotRunner(
             prootExecutable = proot,
             rootfsDir = rootfs,
-            qemuX86_64Executable = qemu,
             factory = fake,
         ).start(this)
 
-        assertEquals(
-            listOf(proot.absolutePath, "-q", qemu.absolutePath, "-r", rootfs.absolutePath),
-            fake.lastCommand!!.take(5),
-        )
+        assertFalse(fake.lastCommand.orEmpty().contains("-q"))
+        assertFalse(fake.lastCommand.orEmpty().any { it.contains("qemu", ignoreCase = true) })
     }
 
     @Test

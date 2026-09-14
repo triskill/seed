@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import com.seed.app.MainActivity
@@ -49,18 +48,6 @@ class RuntimeService : Service() {
                     .toPiRuntimeEnvironment()
                 val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
                 val runtimeDir = File(filesDir, LINUX_DIRECTORY)
-                val rootfsVersion = RootfsVersion.parse(
-                    File(runtimeDir, ROOTFS_VERSION_FILE).readText(),
-                )
-                // An x86_64 guest runs directly on the x86_64 emulator. Only
-                // an ARM64 Android host needs the packaged QEMU user-mode binary.
-                val qemuX86_64 = if (
-                    rootfsVersion.guestArchitecture.requiresQemuX86_64(Build.SUPPORTED_ABIS)
-                ) {
-                    NativeProot.resolveQemuX86_64(applicationInfo.nativeLibraryDir)
-                } else {
-                    null
-                }
                 val environment = ProotEnvironment.createBackend(
                     tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
                     installation = nativeProot,
@@ -68,25 +55,10 @@ class RuntimeService : Service() {
                     // The FastAPI service passes this to both agents for generated
                     // app verification; Flask itself is a separate :7778 process.
                     "SEED_APP_URL" to "http://127.0.0.1:7778",
-                ) + if (qemuX86_64 != null) {
-                    // Expose every x86 feature implemented by QEMU. V8 still
-                    // cannot safely use its generated-code JIT below, but this
-                    // gives non-JIT guest programs the broadest CPU model.
-                    mapOf(
-                        "QEMU_CPU" to "max",
-                        // QEMU user-mode cannot safely run V8's generated x86
-                        // machine code on this device. Disabling V8 JIT is slow,
-                        // but makes the bundled pi CLI complete instead of
-                        // crashing with QEMU's target SIGSEGV.
-                        "NODE_OPTIONS" to "--jitless",
-                    )
-                } else {
-                    emptyMap()
-                }
+                )
                 val runner = ProotRunner(
                     prootExecutable = nativeProot.executable,
                     rootfsDir = File(runtimeDir, ROOTFS_DIRECTORY),
-                    qemuX86_64Executable = qemuX86_64,
                     env = environment,
                 )
                 runner.start(serviceScope).also(::collectRuntimeLogs)
@@ -138,11 +110,9 @@ class RuntimeService : Service() {
     companion object {
         const val CHANNEL_ID = "seed_runtime"
         const val NOTIFICATION_ID = 1001
-
         private const val TAG = "SeedRuntime"
         private const val LINUX_DIRECTORY = "linux"
         private const val ROOTFS_DIRECTORY = "rootfs"
-        private const val ROOTFS_VERSION_FILE = ".version"
         private const val PROOT_TEMP_DIRECTORY = "proot"
     }
 }

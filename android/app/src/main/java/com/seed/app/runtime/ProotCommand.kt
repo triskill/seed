@@ -7,15 +7,15 @@ import java.io.File
  * launcher and the interactive shell subprocess.
  *
  * Produces the base flags that configure PRoot's userland-root
- * mode, mount bindings, guest architecture emulation, and the
- * `--kill-on-exit` termination policy common to both child processes.
+ * mode, mount bindings, and the `--kill-on-exit` termination policy
+ * common to both child processes. The packaged guest and host are both
+ * native ARM64; no foreign-architecture emulator is supported.
  *
  * This object is shared between:
  *  - [ProotRunner] which appends the backend launch command.
  *  - [SeedTerminalManager] which appends `/bin/sh -l`.
  *
- * Keeping it shared prevents the two from drifting apart on new
- * flags (e.g. `-q` for QEMU).
+ * Keeping it shared prevents the two from drifting apart on new flags.
  */
 internal object ProotCommand {
 
@@ -24,24 +24,13 @@ internal object ProotCommand {
      *
      * @param executable           Path to `libproot.so` (or the proot loader binary).
      * @param rootfsDir            Path to the extracted Alpine rootfs directory.
-     * @param qemuX86_64Executable Optional ARM64-host QEMU binary for foreign-arch PRoot.
-     *                             If the rootfs architecture matches the device host,
-     *                             pass `null` — no `-q` flag is needed.
      */
     fun base(
         executable: File,
         rootfsDir: File,
-        qemuX86_64Executable: File? = null,
     ): MutableList<String> = buildList {
         // The proot executable or shared library.
         add(executable.absolutePath)
-
-        // PRoot executes QEMU whenever it launches a foreign guest binary.
-        // QEMU remains a native ARM64 executable from nativeLibraryDir.
-        qemuX86_64Executable?.let { qemu ->
-            add("-q")
-            add(qemu.absolutePath)
-        }
 
         // Root filesystem to chroot into.
         add("-r")

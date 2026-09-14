@@ -16,11 +16,11 @@ end of day 1, the user has the web app they asked for.
 - `webapp/` — Flask app (`seed_app`) that the worker mutates.
 - `android/` — Compose shell that extracts the rootfs and starts the embedded
   runtime through a natively packaged proot.
-- `scripts/` — architecture-aware runtime build and validation tooling.
+- `scripts/` — native ARM64 runtime build and validation tooling.
 - `docs/plans/` — full design and phased implementation plans.
 
 The pipe-backed `PiRunner` and both real pi RPC processes were accepted inside
-the x86_64 Android PRoot runtime on 2026-08-14. Saved Android provider/model/key
+the native ARM64 Android PRoot runtime on 2026-08-14. Saved Android provider/model/key
 settings are loaded from DataStore/Keystore storage and injected on embedded
 runtime startup without copying the key to loopback HTTP or plaintext config.
 A successful provider-backed turn, live apply/restart after Save, embedded Python
@@ -72,47 +72,43 @@ overrides, why no `auth.json` in the repo).
 
 ## Android runtime workflow
 
-An APK bundles one runtime architecture at a time. Runtime generation writes
-proot as a generated native library at exactly one of these Git-ignored paths:
+The APK ships one **native ARM64** runtime: ARM64 Android, ARM64 PRoot,
+ARM64 Alpine, Node, and Pi. Other Android ABIs and foreign guest rootfs
+assets are not supported or packaged.
 
-- `android/app/src/main/jniLibs/x86_64/libproot.so`
+Runtime generation writes PRoot as generated native libraries at exactly these
+paths (all Git-ignored):
+
 - `android/app/src/main/jniLibs/arm64-v8a/libproot.so`
+- `android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so`
+- `android/app/src/main/jniLibs/arm64-v8a/libtalloc.so`
+- `android/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so`
 
-The matching source `rootfs.tar.gz` and tracked `seed_version.json` remain
-under `android/app/src/main/assets/linux/`. AGP expands the gzip source to
-merged `assets/linux/rootfs.tar` and stores it with `noCompress`; the app
-extracts that rootfs data and the marker to `filesDir`, but never copies proot
-there. Android 10+ forbids apps that target API 29+ from executing files in
-writable app home; changing mode
-bits with `chmod` does not bypass this W^X policy. AGP legacy JNI packaging
-instead lets PackageManager extract `libproot.so` read-only/executable, and the
-app resolves it as `applicationInfo.nativeLibraryDir/libproot.so`.
+The matching ARM64 Alpine `rootfs.tar.gz` and tracked `seed_version.json`
+remain under `android/app/src/main/assets/linux/`. AGP expands the gzip source
+to merged `assets/linux/rootfs.tar` and stores it with `noCompress`; the app
+extracts rootfs data and the marker to `filesDir`, but never copies PRoot there.
 
-A fresh checkout has the marker but neither generated binary. Install the
-Android and Docker/tooling prerequisites described in
-[`android/README.md`](android/README.md) and
-[`docs/build-runtime.md`](docs/build-runtime.md), then build explicitly:
+A fresh checkout has the marker but no generated runtime binaries or rootfs.
+Install Docker/tooling and an ARM64 Android target as described in
+[`android/README.md`](android/README.md) and [`docs/build-runtime.md`](docs/build-runtime.md),
+then build explicitly:
 
 ```bash
-# repository's x86_64 Android emulator (fresh setup)
-make install
-make runtime RUNTIME_ARCH=x86_64
-make run
-
-# arm64 physical device (native ARM64 guest)
+# ARM64 physical device (recommended acceptance target)
+make runtime
 make run-phone-test
 
-# arm64 physical device with an x86_64 Alpine guest under QEMU user-mode
-make run-phone-x86-test
+# ARM64 AVD, when available on your host
+make install
+make run
 ```
 
-`make runtime` defaults to arm64 when no architecture is supplied. `make run`
-never starts the large runtime build automatically: before Gradle or emulator
-startup it checks the exact `jniLibs` path selected by `SYSTEM_IMAGE` and, on a
-missing, invalid, or mismatched binary, prints the matching explicit x86_64 or
-arm64 `make runtime RUNTIME_ARCH=...` repair command. See
-[`docs/build-runtime.md`](docs/build-runtime.md) for architecture switching,
-prerequisites, and generated-artifact versioning.
+`make runtime` rejects every architecture other than ARM64. `make run` also
+rejects non-ARM64 system images before Gradle or emulator startup. Use a
+physical ARM64 device (`make run-phone-test DEVICE_ID=<serial>`) when an ARM64
+AVD is unavailable.
+
 
 ## Layout
 

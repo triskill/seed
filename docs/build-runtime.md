@@ -1,7 +1,7 @@
 # Building the Seed Android runtime
 
-The Android APK bundles one runtime architecture at a time. Runtime generation
-publishes a native proot separately from the writable runtime data assets:
+The Android APK bundles one native ARM64 runtime. Runtime generation publishes
+native PRoot separately from writable runtime data assets:
 
 | Generated or tracked path | What |
 |---|---|
@@ -10,31 +10,29 @@ publishes a native proot separately from the writable runtime data assets:
 | `android/app/src/main/jniLibs/<abi>/libtalloc.so` | Generated PRoot allocation dependency; Git-ignored |
 | `android/app/src/main/jniLibs/<abi>/libandroid-shmem.so` | Generated Android shared-memory dependency; Git-ignored |
 | `android/app/src/main/assets/linux/rootfs.tar.gz` | Generated matching Alpine rootfs; Git-ignored |
-| `android/app/src/main/assets/linux/seed_version.json` | Tracked extraction marker containing `seed_version` and generated `build_id` |
+| `android/app/src/main/assets/linux/seed_version.json` | Tracked native marker containing `seed_version`, `build_id`, `runtime_format: native-arm64`, `runtime_format_version: 2`, and `native_arch: arm64` |
 
 Only one ABI's complete four-file native bundle is retained at a time. A fresh
 checkout therefore contains the marker, but neither generated native files nor
 `rootfs.tar.gz`.
 
-## QEMU x86_64 phone compatibility mode
+## Native ARM64 runtime
 
-`make runtime-qemu-x86` creates a deliberately different runtime layout for an
-ARM64 physical phone: ARM64 Android-native PRoot and `qemu-x86_64` execute an
-x86_64 Alpine guest rootfs. The native QEMU binary and its Android/ARM64
-Termux dependency closure are generated in `jniLibs/arm64-v8a/`; the marker
-contains `"guest_arch":"x86_64"`, so the app selects PRoot's `-q` option and
-re-extracts the guest when switching modes.
+The only supported target is native ARM64 (`arm64-v8a`): ARM64 Android,
+The generated package contains ARM64 Termux PRoot, ARM64 Alpine, Node, and Pi.
+1. Do not add a foreign-architecture launcher to the APK.
 
-Run it on an authorized ARM64 phone with:
+The native runtime is generated with either entry point:
 
 ```bash
-make run-phone-x86-test
+./scripts/build-runtime.sh
+# equivalent
+make runtime
 ```
 
-This mode is for compatibility testing. It is substantially slower than the
-normal `make run-phone-test` ARM64 guest; V8 JIT is disabled (`NODE_OPTIONS=--jitless`)
-because its generated x86 code crashes under QEMU user-mode on the validated
-Moto G32 device. Running native ARM64 remains the supported default.
+`RUNTIME_ARCH` is retained as a compatibility spelling but accepts only
+`arm64`; any other value fails before downloads or publication.
+
 
 ## Why proot is a native library
 
@@ -51,7 +49,7 @@ directory. At runtime the app resolves all four files under
 and sets `LD_LIBRARY_PATH` to that directory.
 
 The Android-native PRoot build is also required for Android application seccomp
-compatibility. Generic Linux x86_64 PRoot runs from `adb shell run-as`, but exits
+The runtime is validated in the Android application domain, not by host-side binaries.
 with `SIGSYS` when launched by a Zygote-spawned `untrusted_app` process. The
 Termux build targets Bionic and includes Android-specific compatibility work.
 
@@ -65,34 +63,17 @@ data and interpreted scripts, not the proot executable.
 
 Runtime generation requires Docker with buildx, `curl`, `ar`, `file`, `readelf`,
 Python 3, `grep`, `gzip`, `tar` with xz support, `uv`, and GNU coreutils
-including `sha256sum`. Building the Android APK
-also requires JDK 17 and the Android SDK described in
-[`../android/README.md`](../android/README.md).
-
-Runtime generation defaults to arm64 with either entry point:
+including `sha256sum`. Building the Android APK also requires JDK 17 and the
+Android SDK described in [`../android/README.md`](../android/README.md).
 
 ```bash
-./scripts/build-runtime.sh
-# equivalent
+# Native ARM64 runtime for a physical ARM64 phone or ARM64 AVD
 make runtime
+make build
+make run-phone-test DEVICE_ID=<serial>  # physical phone
+# or: make install && make run             # ARM64 AVD
 ```
 
-Prefer an explicit architecture when preparing an APK:
-
-```bash
-# arm64 physical device/runtime
-make runtime RUNTIME_ARCH=arm64
-make build
-
-# repository's x86_64 Android emulator
-make runtime RUNTIME_ARCH=x86_64
-make build
-make run
-```
-
-With the direct entry point, use
-`RUNTIME_ARCH=arm64 ./scripts/build-runtime.sh` or
-`RUNTIME_ARCH=x86_64 ./scripts/build-runtime.sh`.
 
 ## Native bundle provenance
 
@@ -111,33 +92,24 @@ package recipe is in
 Distributors of an APK containing these generated binaries must satisfy the
 applicable source and license obligations for PRoot and its dependencies.
 
-## Docker platforms
+## Docker platform
 
-The script uses `docker buildx build` with `linux/arm64` for arm64 or
-`linux/amd64` for x86_64. Both select the corresponding variant of the pinned
-multi-platform `alpine:3.22.5` base image. Node 22 is required by pi 0.80.3,
-and the image build runs `pi --version` so an incompatible Node/undici
-combination fails before publication. QEMU user-mode emulation registered
-with `binfmt_misc` is needed only when the selected target differs from the
-Docker host architecture. A recent Docker Desktop commonly provides this; on
-Linux it can be registered, for example, with:
-
-```bash
-docker run --privileged --rm tonistiigi/binfmt --install all
-```
-
-No emulation setup is required for a native-architecture target.
+The script uses `docker buildx` with `linux/arm64` and the ARM64 variant of the
+pinned `alpine:3.22.5` base image. Node 22 is required by pi 0.80.3, and the
+image build runs `pi --version` before publication. Docker host emulation may
+be needed when building on an x86 host; this affects only the build host, never
+the APK runtime guest.
 
 ## Safe architecture switching
 
 Each invocation uses fresh temporary build and staging directories. Before
-publication, the script validates the selected proot ELF, Alpine checksum,
-Docker image architecture, and required rootfs contents.
+publication, the script validates the ARM64 proot ELF, Alpine checksum, Docker
+image architecture, and required rootfs contents.
 
 After all validation succeeds, publication uses individual same-filesystem
 renames. It publishes the staged four-file native bundle when needed, removes
-all four generated files for the opposite ABI plus obsolete legacy
-`assets/linux/proot`, and then publishes the rootfs. It renames
+The inventory checker rejects obsolete native files and requires the four ARM64 runtime libraries.
+`assets/linux/proot`, and then publishes the ARM64 rootfs. It renames
 `seed_version.json` into place last as the completion marker.
 
 Each rename is atomic, but the native bundle, rootfs, cleanup, and marker are not
@@ -147,26 +119,21 @@ not make the whole switch transactional.
 
 ## `make run` preflight
 
-`make run` never invokes the large runtime build automatically. It derives the
-Android ABI from `SYSTEM_IMAGE` and checks the exact selected source path before
+`make run` never invokes runtime generation automatically. It requires the
+system image ABI to be `arm64-v8a` and checks these exact source paths before
 Gradle or emulator startup:
 
 ```text
-android/app/src/main/jniLibs/<abi>/libproot.so
-android/app/src/main/jniLibs/<abi>/libproot-loader.so
-android/app/src/main/jniLibs/<abi>/libtalloc.so
-android/app/src/main/jniLibs/<abi>/libandroid-shmem.so
+android/app/src/main/jniLibs/arm64-v8a/libproot.so
+android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so
+android/app/src/main/jniLibs/arm64-v8a/libtalloc.so
+android/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so
 ```
 
-A missing, non-ELF, unsupported, or mismatched file fails immediately and prints
-the explicit repair command, either:
-
-```text
-make runtime RUNTIME_ARCH=x86_64
-make runtime RUNTIME_ARCH=arm64
-```
-
-Generate the matching bundle, then rerun `make build` or `make run`.
+A missing, non-ELF, or mismatched file fails immediately; repair with
+`make runtime`.
+After assembling an APK, run `make check-apk-runtime` to verify that no x86 ABI,
+The inventory checker rejects obsolete native files and requires the four ARM64 runtime libraries.
 
 ## Gitignore and versioning
 
@@ -177,9 +144,8 @@ must not be committed. The tracked
 completion marker. A successful runtime build updates its `build_id`, so the
 marker appears in `git status` even though the large generated files do not.
 
-Commit the marker only when intentionally publishing a runtime update. During a
-local architecture switch, keep the generated marker together with the matching
-local native/rootfs bundle. Rebuild whenever Alpine, PRoot, its Termux package
+Commit the marker only when intentionally publishing a runtime update. For a local runtime rebuild, keep the generated marker together with its
+matching native/rootfs bundle. Rebuild whenever Alpine, PRoot, its Termux package
 dependencies, `pi`, backend/webapp sources, or required system packages change.
 On launch, `BootController`
 compares the bundled marker with `filesDir/linux/.version`; a difference causes

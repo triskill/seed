@@ -17,7 +17,7 @@ internal fun SettingsForm?.toPiRuntimeEnvironment(): Map<String, String> {
 
     val normalizedProvider = provider.trim()
     val normalizedModel = model.trim()
-    require(normalizedProvider.isNotEmpty()) { "Saved pi provider is blank" }
+    // require(normalizedProvider.isNotEmpty()) { "Saved pi provider is blank" }
     require(normalizedModel.isNotEmpty()) { "Saved pi model is blank" }
     require(normalizedProvider.none { it.isISOControl() }) {
         "Saved pi provider contains control characters"

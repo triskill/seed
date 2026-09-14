@@ -27,14 +27,14 @@ This tracker describes the current prototype path._
 | 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
 | 1 | Shell endpoint | ✅ backend endpoint done (5/5); the Android Shell tab now uses a separate interactive terminal instead |
 | 2 | pi runner (pipe wrapper, ANSI strip, tool filter) | ✅ done (6/6); Android-compatible `subprocess.Popen` launcher accepted on x86_64 emulator 2026-08-14 |
-| 3 | Middle-man + worker orchestration | ⚠️ embedded processes start and accept RPC; encrypted Android credential startup is wired, but a real provider-backed turn is not yet accepted |
+| 3 | Middle-man + worker orchestration | ⚠️ native ARM64 embedded processes start and accept RPC; encrypted Android credential startup is wired, but a real provider-backed turn is not yet accepted |
 | 4 | System prompts + first real agent loop | ⚠️ host demo done (4/4); not reproduced inside the standalone APK |
 | 5 | Android shell (4 screens, nav, WebView) | ✅ original UI phase done (9/9); Shell was subsequently replaced by the terminal implementation |
 | 6 | Android ↔ backend wiring | ✅ original wiring done (5/5); `/shell/exec` is no longer the active Android Shell UI path |
-| 7 | Native PRoot packaging + rootfs extraction | ✅ native arm64/x86_64 layouts done; QEMU x86_64-guest compatibility mode added and accepted on an ARM64 Moto G32 |
+| 7 | Native PRoot packaging + rootfs extraction | ✅ native ARM64-only runtime; QEMU/x86 generation removed in Phase 1 |
 | 8 | Foreground service | ✅ done (4/4); now also owns the lazy terminal session manager |
 | 9 | First-run runtime startup gate | ✅ done (4/4); phone build/install/launch targets are available |
-| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; QEMU phone mode and a Termux-based Shell landed, but terminal/device acceptance, provider-backed E2E, live settings apply, reload, security, cancellation/recovery, and release QA remain |
+| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; native ARM64 phone mode and a Termux-based Shell landed, but terminal/device acceptance, provider-backed E2E, live settings apply, reload, security, cancellation/recovery, and release QA remain |
 
 **Embedded runtime acceptance recorded so far:**
 

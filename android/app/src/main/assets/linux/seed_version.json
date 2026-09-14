@@ -1,5 +1,7 @@
 {
   "seed_version": "0.1.0",
-  "build_id": "20260911T181457Z-8d69331f",
-  "guest_arch": "x86_64"
+  "build_id": "20260914T181052Z-aef0cdbe",
+  "runtime_format": "native-arm64",
+  "runtime_format_version": 2,
+  "native_arch": "arm64"
 }

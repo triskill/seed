@@ -1,56 +1,56 @@
 package com.seed.app.runtime
 
-/** Architecture of programs inside the extracted Alpine rootfs. */
-enum class RootfsArchitecture(val wireValue: String) {
-    ARM64("arm64"),
-    X86_64("x86_64"),
-    ;
-
-    /** Whether this guest needs ARM64-host QEMU user-mode emulation. */
-    fun requiresQemuX86_64(hostAbis: Array<String>): Boolean =
-        this == X86_64 && "arm64-v8a" in hostAbis
-
-    companion object {
-        fun parse(value: String): RootfsArchitecture = entries.firstOrNull {
-            it.wireValue == value
-        } ?: throw IllegalArgumentException("unsupported guest_arch: $value")
-    }
-}
-
-/**
- * The runtime version baked into the APK at `assets/linux/seed_version.json`.
- * It is compared against `filesDir/linux/.version` to decide whether
- * re-extraction is needed on app start.
- *
- * [guestArchitecture] is part of the marker so switching between native ARM64
- * and QEMU x86_64 runtime assets always triggers a clean re-extraction.
- */
+/** Version marker for the extracted native ARM64 runtime. */
 data class RootfsVersion(
     val seedVersion: String,
     val buildId: String,
-    val guestArchitecture: RootfsArchitecture = RootfsArchitecture.ARM64,
+    val runtimeFormat: String = NATIVE_RUNTIME_FORMAT,
+    val runtimeFormatVersion: Int = NATIVE_RUNTIME_FORMAT_VERSION,
+    val nativeArch: String = NATIVE_ARCH,
 ) {
+    fun toMarkerJson(): String =
+        """{"seed_version":"$seedVersion","build_id":"$buildId","runtime_format":"$runtimeFormat","runtime_format_version":$runtimeFormatVersion,"native_arch":"$nativeArch"}"""
+
     companion object {
-        /**
-         * Parse a `seed_version.json` string. Old markers without `guest_arch`
-         * remain ARM64-compatible; unknown future fields are ignored.
-         */
+        const val NATIVE_RUNTIME_FORMAT = "native-arm64"
+        /** @deprecated use [NATIVE_RUNTIME_FORMAT]. */
+        const val RUNTIME_FORMAT = NATIVE_RUNTIME_FORMAT
+        const val NATIVE_RUNTIME_FORMAT_VERSION = 2
+        /** @deprecated use [NATIVE_RUNTIME_FORMAT_VERSION]. */
+        const val RUNTIME_FORMAT_VERSION = NATIVE_RUNTIME_FORMAT_VERSION
+        const val NATIVE_ARCH = "arm64"
+
         fun parse(json: String): RootfsVersion {
             val seed = stringField(json, "seed_version")
                 ?: throw IllegalArgumentException("missing seed_version")
             val build = stringField(json, "build_id")
                 ?: throw IllegalArgumentException("missing build_id")
-            val guestArchitecture = stringField(json, "guest_arch")
-                ?.let(RootfsArchitecture::parse)
-                ?: RootfsArchitecture.ARM64
-            return RootfsVersion(seed, build, guestArchitecture)
+            // `guest_arch` identified the removed QEMU/native split. Reject
+            // it even when a caller also supplies the new fields so legacy
+            // metadata cannot silently pass as a native marker.
+            if (hasField(json, "guest_arch")) {
+                throw IllegalArgumentException("unsupported marker field: guest_arch")
+            }
+            val format = stringField(json, "runtime_format")
+                ?: throw IllegalArgumentException("missing runtime_format")
+            if (format != RUNTIME_FORMAT) throw IllegalArgumentException("unsupported runtime_format: $format")
+            val version = intField(json, "runtime_format_version")
+                ?: throw IllegalArgumentException("missing runtime_format_version")
+            if (version != RUNTIME_FORMAT_VERSION) throw IllegalArgumentException("unsupported runtime_format_version: $version")
+            val arch = stringField(json, "native_arch")
+                ?: throw IllegalArgumentException("missing native_arch")
+            if (arch != NATIVE_ARCH) throw IllegalArgumentException("unsupported native_arch: $arch")
+            return RootfsVersion(seed, build, format, version, arch)
         }
 
-        private val STRING_FIELD = Regex(""""(\w+)"\s*:\s*"([^"\\]*)"""")
+        private val STRING_FIELD = Regex("""\"(\w+)\"\s*:\s*\"([^\"\\]*)\"""")
+        private val INT_FIELD = Regex("""\"(\w+)\"\s*:\s*(-?\d+)""")
+        private fun hasField(json: String, name: String): Boolean =
+            STRING_FIELD.findAll(json).any { it.groupValues[1] == name }
 
         private fun stringField(json: String, name: String): String? =
-            STRING_FIELD.findAll(json)
-                .firstOrNull { it.groupValues[1] == name }
-                ?.groupValues?.get(2)
+            STRING_FIELD.findAll(json).firstOrNull { it.groupValues[1] == name }?.groupValues?.get(2)
+        private fun intField(json: String, name: String): Int? =
+            INT_FIELD.findAll(json).firstOrNull { it.groupValues[1] == name }?.groupValues?.get(2)?.toIntOrNull()
     }
 }

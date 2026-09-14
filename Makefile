@@ -3,7 +3,7 @@
 # Quick start for a new dev:
 #   make install    # one-time: install Android SDK, emulator, AVD
 #   make build      # build the debug APK
-#   make run        # start emulator, install APK, launch app
+#   make run        # start the ARM64 emulator, install APK, launch app
 #   make backend    # start dev backend in the background
 #   make stop       # stop the emulator and the backend
 #   make test       # run backend tests
@@ -27,7 +27,8 @@ export ANDROID_HOME
 # Versions pinned to match the app's build.gradle.kts.
 ANDROID_PLATFORM    := android-34
 ANDROID_BUILD_TOOLS := 34.0.0
-SYSTEM_IMAGE       := system-images;android-34;default;x86_64
+# The embedded runtime is native ARM64; use an ARM64 AVD or physical phone.
+SYSTEM_IMAGE       := system-images;android-34;default;arm64-v8a
 AVD_NAME           := seed_dev
 
 # Runtime generation is always explicit because it builds a large asset.
@@ -37,7 +38,7 @@ RUNTIME_ARCH ?= arm64
 # GPU mode for the emulator. The default `auto` resolves to
 # `host` (Vulkan passthrough) on systems with a discrete GPU,
 # which crashes silently on some dual-GPU setups (Intel +
-# NVIDIA, AMD + NVIDIA, etc.) — the qemu process dies a
+# NVIDIA, AMD + NVIDIA, etc.) — the emulator process dies a
 # few seconds after `Boot completed`, before adb ever
 # registers the device. `swiftshader` is pure software
 # rendering: slower, but stable across all GPU configs.
@@ -102,10 +103,10 @@ build:  ## build the debug APK
 
 .PHONY: runtime
 runtime: override export RUNTIME_ARCH := $(value RUNTIME_ARCH)
-runtime:  ## explicitly build arm64 or x86_64 runtime assets (set RUNTIME_ARCH)
+runtime:  ## explicitly build the native ARM64 runtime assets
 	@case "$$RUNTIME_ARCH" in \
-		arm64|x86_64) ;; \
-		*) echo "!! unsupported runtime architecture: $$RUNTIME_ARCH (expected arm64 or x86_64)" >&2; exit 2 ;; \
+		arm64) ;; \
+		*) echo "!! unsupported runtime architecture: $$RUNTIME_ARCH (only arm64 is supported)" >&2; exit 2 ;; \
 	esac
 	@./scripts/build-runtime.sh
 
@@ -113,14 +114,13 @@ runtime:  ## explicitly build arm64 or x86_64 runtime assets (set RUNTIME_ARCH)
 check-runtime-arch: override export SYSTEM_IMAGE := $(value SYSTEM_IMAGE)
 check-runtime-arch:
 	@emulator_abi="$${SYSTEM_IMAGE##*;}"; \
-	case "$$emulator_abi" in \
-		x86_64|arm64-v8a) ;; \
-		*) echo "!! unsupported emulator ABI: $$emulator_abi (expected x86_64 or arm64-v8a)" >&2; exit 2 ;; \
-	esac; \
-	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libproot.so" && \
-	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libproot-loader.so" && \
-	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libtalloc.so" && \
-	./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/libandroid-shmem.so"
+	if [ "$$emulator_abi" != "arm64-v8a" ]; then \
+		echo "!! unsupported emulator ABI: $$emulator_abi (Seed requires arm64-v8a)" >&2; \
+		echo "   Use an ARM64 AVD or a physical ARM64 device." >&2; exit 2; \
+	fi; \
+	for lib in libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so; do \
+		./scripts/check-runtime-arch.sh arm64-v8a "android/app/src/main/jniLibs/arm64-v8a/$$lib" || exit 1; \
+	done
 
 # `make run` performs lightweight preflights before recursively
 # invoking `make build`, so even parallel make cannot start Gradle for
@@ -196,8 +196,8 @@ check-phone-deps:
 		echo "!! adb not found at $(ADB). Run `make install` or set ANDROID_HOME."; exit 1; }
 
 # Rebuild only when the published bundle is missing or not arm64.  Checking
-# busybox inside the compressed rootfs catches an x86_64 rootfs paired with
-# otherwise-valid arm64 native libraries.
+# busybox inside the compressed rootfs catches a stale or wrong-architecture
+# rootfs paired with otherwise-valid ARM64 native libraries.
 .PHONY: ensure-phone-runtime
 ensure-phone-runtime:
 	@set -e; \
@@ -264,40 +264,9 @@ run-phone-test: check-phone-deps ensure-phone-runtime  ## build native ARM64 APK
 	@$(MAKE) --no-print-directory build
 	@$(MAKE) --no-print-directory phone-install
 
-# QEMU mode uses ARM64 Android host executables and an x86_64 Alpine guest.
-# It intentionally replaces the single packaged rootfs asset; rerun
-# `make run-phone-test` to restore the native ARM64 guest afterwards.
-.PHONY: runtime-qemu-x86
-runtime-qemu-x86:  ## explicitly build ARM64 PRoot/QEMU + x86_64 Alpine runtime
-	@./scripts/build-qemu-x86-runtime.sh
-
-.PHONY: ensure-phone-qemu-x86-runtime
-ensure-phone-qemu-x86-runtime:
-	@set -e; \
-	ready=1; \
-	for lib in libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so libqemu-x86-64.so; do \
-		./scripts/check-runtime-arch.sh arm64-v8a "android/app/src/main/jniLibs/arm64-v8a/$$lib" >/dev/null 2>&1 || ready=0; \
-	done; \
-	if [ ! -f android/app/src/main/assets/linux/rootfs.tar.gz ] || \
-		! tar -xOzf android/app/src/main/assets/linux/rootfs.tar.gz bin/busybox 2>/dev/null | \
-			file - | grep -q 'x86-64'; then ready=0; fi; \
-	if ! grep -q '"guest_arch"[[:space:]]*:[[:space:]]*"x86_64"' android/app/src/main/assets/linux/seed_version.json 2>/dev/null; then ready=0; fi; \
-	if [ "$$ready" -eq 1 ]; then \
-		echo ">> Verified ARM64 PRoot/QEMU + x86_64 Alpine guest runtime."; \
-	else \
-		echo ">> Building ARM64 PRoot/QEMU + x86_64 Alpine guest runtime..."; \
-		$(MAKE) --no-print-directory runtime-qemu-x86; \
-	fi
-	@tar -xOzf android/app/src/main/assets/linux/rootfs.tar.gz bin/busybox 2>/dev/null | \
-		file - | grep -q 'x86-64' || { echo "!! rootfs is not x86_64." >&2; exit 1; }
-	@grep -q '"guest_arch"[[:space:]]*:[[:space:]]*"x86_64"' android/app/src/main/assets/linux/seed_version.json || { \
-		echo "!! rootfs marker does not select x86_64 QEMU mode." >&2; exit 1; \
-	}
-
-.PHONY: run-phone-x86-test
-run-phone-x86-test: check-phone-deps ensure-phone-qemu-x86-runtime  ## build x86_64-QEMU APK, install + launch on USB phone
-	@$(MAKE) --no-print-directory build
-	@$(MAKE) --no-print-directory phone-install
+.PHONY: check-apk-runtime
+check-apk-runtime:  ## verify APK contains only the native ARM64 runtime bundle
+	@./scripts/check-apk-runtime.sh "$(APK)"
 
 .PHONY: backend
 backend:  ## start dev backend in background (logs: backend.log, pid: backend.pid)

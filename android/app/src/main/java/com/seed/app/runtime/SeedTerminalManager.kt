@@ -1,7 +1,6 @@
 package com.seed.app.runtime
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import java.io.File
 import com.termux.terminal.TerminalSession
@@ -11,7 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
  * Owns the lifecycle of the interactive shell [TerminalSession].
  *
  * **Thread-local session creation.** The constructor stores
- * configuration (rootfs, native libraries, architecture).
+ * configuration (rootfs and native libraries).
  * The actual [TerminalSession] is not created until the first
  * call to [getOrCreateSession] — which happens the first time
  * the Shell tab is entered (lazy initialization).
@@ -40,7 +39,7 @@ import kotlinx.coroutines.flow.StateFlow
  * [ProotRunner.backend] (via [ProotCommand.base]) plus its
  * own environment via [ProotEnvironment.createTerminal()],
  * ensuring both child processes start with identical rootfs
- * layout, mount bindings, and architecture emulation.
+ * layout and mount bindings.
  */
 class SeedTerminalManager(
     /** Application context (process-bound, survives navigation). */
@@ -171,34 +170,18 @@ class SeedTerminalManager(
      * - HOME=/root (standard root home)
      * - SHELL=/bin/sh (tells login shells what shell to start)
      *
-     * QEMU architecture emulation is configured identically to
-     * the backend PRoot process (via ProotCommand base).
+     * The native ARM64 architecture is configured identically to
+     * the backend PRoot process (via ProotCommand.base).
      */
     @Synchronized
     private fun createSession(): TerminalSession {
         // Resolve native proot installation
         val installation = NativeProot.resolve(nativeLibraryDir.absolutePath)
 
-        // Resolve QEMU if the rootfs architecture differs from the host
-        val qemuExecutable = try {
-            val version = RootfsVersion.parse(
-                File(rootfsDir.parent, VERSION_FILE).readText()
-            )
-            if (version.guestArchitecture.requiresQemuX86_64(Build.SUPPORTED_ABIS)) {
-                NativeProot.resolveQemuX86_64(nativeLibraryDir.absolutePath)
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not determine guest architecture for terminal QEMU, no QEMU: ${e.message}")
-            null
-        }
-
-        // Build command arguments using shared base
+        // Build command arguments using shared native-only base
         val baseArgs = ProotCommand.base(
             executable = installation.executable,
             rootfsDir = rootfsDir,
-            qemuX86_64Executable = qemuExecutable,
         )
         installTerminalRepl()
         val args = baseArgs.toMutableList().apply {
@@ -247,7 +230,6 @@ class SeedTerminalManager(
     }
 
     private companion object {
-        const val VERSION_FILE = ".version"
         const val CACHE_DIR_NAME = "proot"
 
         // This executes one command at a time through Python's Popen path,
