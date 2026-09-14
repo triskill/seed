@@ -39,6 +39,7 @@
     <string name="settings_field_webapp_port">Webapp port</string>
     <string name="settings_field_log_level">Log level</string>
     <string name="settings_action_save">Save</string>
+    <string name="settings_restart_required">Provider, model, and API key apply when you restart Seed. Ports and log level are saved for future configuration.</string>
     <string name="settings_status_modified">Modified</string>
     <string name="settings_status_saved">Saved</string>
 

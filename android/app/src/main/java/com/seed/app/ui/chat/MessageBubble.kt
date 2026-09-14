@@ -152,11 +152,6 @@ private fun SystemMessageBanner(
             MaterialTheme.colorScheme.tertiaryContainer,
             MaterialTheme.colorScheme.onTertiaryContainer,
         )
-        SystemEventKind.APP_RELOAD -> Triple(
-            "App reloading",
-            MaterialTheme.colorScheme.secondaryContainer,
-            MaterialTheme.colorScheme.onSecondaryContainer,
-        )
         SystemEventKind.ERROR -> Triple(
             "Error",
             MaterialTheme.colorScheme.errorContainer,

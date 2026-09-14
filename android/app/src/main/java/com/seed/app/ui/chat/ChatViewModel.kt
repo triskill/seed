@@ -67,7 +67,6 @@ import kotlinx.coroutines.launch
  *   ChatEvent.MiddlemanLine(s)  -> Agent(MIDDLEMAN, s)
  *   ChatEvent.WorkerLine(s)     -> Agent(WORKER, s)
  *   ChatEvent.Complete(summary) -> System(COMPLETE, summary)
- *   ChatEvent.AppReload         -> System(APP_RELOAD)
  *   ChatEvent.Error(message)    -> System(ERROR, message)
  *
  * Worker tool events (e.g. a
@@ -179,9 +178,6 @@ class ChatViewModel(
         is ChatEvent.Complete -> ChatMessage.System(
             kind = SystemEventKind.COMPLETE,
             summary = event.summary,
-        )
-        is ChatEvent.AppReload -> ChatMessage.System(
-            kind = SystemEventKind.APP_RELOAD,
         )
         is ChatEvent.Error -> ChatMessage.System(
             kind = SystemEventKind.ERROR,

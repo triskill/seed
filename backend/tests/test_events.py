@@ -101,7 +101,7 @@ def test_parse_task_done_rejects_malformed_quoting():
     doesn't match the expected shape. The orchestrator
     treats it as a non-marker line, so it gets broadcast
     as a regular `worker_line` (visible in the chat) but
-    does NOT trigger `complete` + `app_reload`. Better to
+    does NOT trigger `complete. Better to
     miss a done signal than to fire one on malformed input.
     """
     assert parse_task_done('<task:done summary="unclosed') is None
@@ -319,7 +319,7 @@ def test_translate_message_end_extracts_text_content():
     a single message, with no streaming chunks. Without
     this case, the orchestrator's worker read loop
     never sees `<task:done .../>` in the accumulated
-    text, and `complete` + `app_reload` never fire.
+    text, and `complete never fire.
     """
     line = json.dumps(
         {

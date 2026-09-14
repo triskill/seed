@@ -21,7 +21,7 @@ import com.seed.app.BuildConfig
  *
  * Phase 5.3 replaces the Phase 5.2 placeholder with
  * an `AndroidView` wrapping a `WebView` that loads
- * `BuildConfig.WEBAPP_DEV_URL` (the embedded webapp
+ * `BuildConfig.WEBAPP_DEV_URL` (the separately-run embedded Flask app
  * at `127.0.0.1:7778` by default). `10.0.2.2` remains
  * allowed for development against an emulator-hosted
  * webapp.
@@ -161,8 +161,6 @@ private fun WebSettings.applySafeSettings() {
     allowContentAccess = false
     mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
     // cacheMode defaults to LOAD_DEFAULT, which is
-    // what we want — the worker's edits to app.py
-    // are picked up because Flask is in debug mode
-    // (FLASK_DEBUG=1, added in Phase 4.4), and the
-    // browser will revalidate on reload.
+    // what we want — Flask's development reloader picks up worker edits,
+    // and the browser will revalidate on reload.
 }

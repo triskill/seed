@@ -5,8 +5,8 @@ A self-improving Android app: the APK is an immutable shell with four screens
 a Python orchestrator that drives two `pi` agent instances (a "middle-man" for
 intent and a "worker" for building). The current webapp is still a minimal
 Flask mutation seed; SQLite-backed features are planned but not implemented.
-Host development runs FastAPI on 7777 and Flask on 7778; Android WSGI-mounts
-Flask into FastAPI on 7777. The Shell tab now contains a Termux terminal view
+FastAPI runs on 7777 and the generated Flask app runs separately on 7778 in
+both host and Android runtimes; Flask's development reloader makes worker edits live. The Shell tab now contains a Termux terminal view
 backed by a second PRoot process and a no-fork Python command bridge. Embedded
 process bring-up works, but a provider-backed end-to-end build is still not
 accepted and the release blockers below remain.
@@ -20,9 +20,7 @@ accepted and the release blockers below remain.
 ## Status at a glance
 
 _Status updated 2026-09-11 against `main` / `origin/main` commit `e2abf98`.
-The only pre-existing working-tree change is the staged
-`TODO_sugestion_from_local_qwen.md`; it was reviewed below but is not
-implemented._
+This tracker describes the current prototype path._
 
 | Phase | What | Status |
 |---|---|---|
@@ -90,7 +88,7 @@ investigate that packaging/bloat behavior.
 |---|---|---|---|
 | 0.1 | Init repo structure | `backend/`, `webapp/` | Both packages use hatchling; minimal `pyproject.toml`. |
 | 0.2 | FastAPI service with `/health` | `backend/seed_backend/service.py` | Skeleton FastAPI app. |
-| 0.3 | Config loading from `config.json` | `backend/seed_backend/config.py` | Small `Config` dataclass; load/save JSON; default persisted/dev schema `{backend: 7777, flask: 7778}`. The embedded runtime currently serves both FastAPI and WSGI-mounted Flask on 7777, and startup does not consume this saved config. |
+| 0.3 | Config loading from `config.json` | `backend/seed_backend/config.py` | Small `Config` dataclass; load/save JSON; default persisted/dev schema `{backend: 7777, flask: 7778}`. The current prototype runs FastAPI on 7777 and Flask separately on 7778; startup does not consume this saved config. |
 | 0.4 | Web app `/api/ping` endpoint | `webapp/seed_app/app.py` | Flask app with `/` (placeholder card) and `/api/ping` (readiness signal). |
 | 0.5 | Wire Flask into backend | `backend/seed_backend/flask_manager.py` | `FlaskManager` spawns Flask via `asyncio.create_subprocess_exec`, polls `/api/ping` for readiness, terminates cleanly. FastAPI lifespan owns it. `/health` reports `{"status":"ok","flask":"up|down"}`. |
 | 0.6 | Dev startup script | `backend/scripts/dev.sh` | One command brings up the host stack. It now exports an absolute `SEED_APP_PATH`, runs uvicorn from `backend/`, and `FlaskManager` resolves the same webapp independently of the caller's CWD. |
@@ -151,11 +149,11 @@ and bounded line queue.
 | 3.3 | Stream middle-man output to chat WS | `backend/seed_backend/orchestrator.py`, `backend/seed_backend/chat.py`, `backend/tests/test_middleman_stream.py` | `Orchestrator.start()` spawns a background read loop that consumes `middleman.read_lines()` and broadcasts each line as `{"type": "middleman_line", "line": <raw>}` to every subscriber queue. `chat.handle_chat` subscribes a private queue on accept, spawns a forwarder task that pumps `queue -> ws.send_text(json)`, and unsubscribes in a `finally` block on disconnect. Per-subscriber queue is capped at 256 — slow clients drop events rather than backpressure the reader. |
 | 3.4 | Dispatch JSON detection | `backend/seed_backend/middleman.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi_dispatch.py`, `backend/tests/test_dispatch.py`, `backend/tests/test_middleman_dispatch.py`, `backend/tests/test_malformed_dispatch_recovery.py` | New module `middleman.py` owns the regex `r'```json\n(.*?)\n```'` (per the plan spec) and the parse step. The middle-man read loop keeps a rolling scan buffer (capped at 64 KiB as a safety net) and forwards a match to the worker as a pi RPC prompt containing the serialized dispatch. The dispatch block is *also* broadcast as `middleman_line` events so the chat UI can render it as a card. Worker send failures are logged + swallowed; malformed dispatch JSON is also logged and discarded so neither failure can kill the chat stream. |
 | 3.5 | Worker stream → chat stream | `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi_worker_response.py`, `backend/tests/test_worker_stream.py` | Replaces the no-op worker read loop stub with the real broadcast-each-line loop, tagged `{"type": "worker_line", "line": ...}` so the chat UI can render the two agents' output distinctly (thought vs build progress). |
-| 3.6 | Complete signal + app reload trigger | `backend/seed_backend/events.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi_worker_response.py`, `backend/tests/test_complete_signal.py` | New `events.py` module centralises the `<task:done/>` marker string and the WS `type` values (single source of truth for the orchestrator + chat layer + future prompt templates). Worker read loop watches for the marker; on detection, broadcasts two events to all subscribers — `{"type": "complete", "summary": "Task complete"}` and `{"type": "app_reload"}`. The marker line itself is *not* broadcast as a worker_line (it's a control signal, not user-facing content). The `summary` is a v0.1 placeholder string; Phase 4 will enrich it (the worker prompt will tell the agent to append a human-readable summary after the marker). |
+| 3.6 | Complete signal | `backend/seed_backend/events.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi_worker_response.py`, `backend/tests/test_complete_signal.py` | New `events.py` module centralises the `<task:done/>` marker string and the WS `type` values (single source of truth for the orchestrator + chat layer + future prompt templates). Worker read loop watches for the marker; on detection, broadcasts `{"type": "complete", "summary": "Task complete"}` to all subscribers. The marker line itself is *not* broadcast as a worker_line (it's a control signal, not user-facing content). The `summary` is a v0.1 placeholder string; Phase 4 will enrich it (the worker prompt will tell the agent to append a human-readable summary after the marker). |
 | 3.7 | Phase 3 demo | `backend/scripts/demo_phase3.py`, `backend/pyproject.toml` | `scripts/demo_phase3.py` is a self-contained manual demo: monkey-patches `pi_cmd_for_role` to use the fake fixtures, starts uvicorn on a free port in a daemon thread, opens a real WebSocket connection with `websocket-client`, sends one `user_message`, and prints every event the chat stream emits. Also added `uvicorn[standard]>=0.27` to the backend deps — the production server needs a real ASGI WS library to handle the `/chat` upgrade (the starlette TestClient uses its own transport, so tests don't need it). |
 
 **Module shape after Phase 3:**
-- `orchestrator.py` — `Orchestrator`, `pi_cmd_for_role`, pub-sub + per-role read loops. Middle-man loop scans for dispatch JSON and broadcasts `middleman_line` events. Worker loop broadcasts `worker_line` events and detects the `<task:done/>` marker for `complete` + `app_reload`.
+- `orchestrator.py` — `Orchestrator`, `pi_cmd_for_role`, pub-sub + per-role read loops. Middle-man loop scans for dispatch JSON and broadcasts `middleman_line` events. Worker loop broadcasts `worker_line` events and detects the `<task:done/>` marker for `complete`.
 - `chat.py` — `handle_chat`, `_forward_events`. WS handler + forwarder task.
 - `service.py` — lifespan creates the orchestrator + `/chat` route delegates to `handle_chat`.
 - `events.py` — `TASK_DONE_MARKER` (`<task:done/>`) + WS `type` constants. New in 3.6.
@@ -170,7 +168,7 @@ and bounded line queue.
 - `tests/test_middleman_dispatch.py` — 6 unit tests for `extract_dispatch` (no block, single-line, multi-line, multiple blocks, invalid JSON). New in 3.4.
 - `tests/test_malformed_dispatch_recovery.py` — regression coverage proving malformed dispatch JSON does not stop later streaming or valid dispatch forwarding.
 - `tests/test_worker_stream.py` — 2 tests (3 worker_line frames; worker + middleman distinguishable on the same WS). New in 3.5.
-- `tests/test_complete_signal.py` — 2 tests (complete + app_reload pair; multi-client fan-out). New in 3.6.
+- `tests/test_complete_signal.py` — 2 tests (complete; multi-client fan-out). New in 3.6.
 
 ## ✅ Phase 4 — System prompts + first real agent loop (4/4)
 
@@ -179,13 +177,12 @@ and bounded line queue.
 | 4.1 | `middleman.md` system prompt | `backend/prompts/middleman.md` (new), `backend/seed_backend/orchestrator.py` (wired via `--append-system-prompt`) | Defines the middle-man's role: read-only access to `/home/seed/app/`, ask 1–2 clarifying questions if ambiguous, emit a fenced JSON dispatch block when ready, answer questions directly (no JSON). Describes the wire format the orchestrator expects (`{"intent","feature","spec"}`). Updated `pi_cmd_for_role` to pass `--append-system-prompt <file>` so the role-specific prompt is injected at spawn time. |
 | 4.2 | `worker.md` system prompt | `backend/prompts/worker.md` (new), `backend/seed_backend/orchestrator.py` | Worker prompt: read state, plan, edit, verify (`curl` the new route, check the DB schema), emit `<task:done summary="..."/>` when done. Includes the `<task:done summary="..."/>` marker format the orchestrator's worker read loop watches for (Task 3.6 + Phase 4 enrichment). |
 | 4.3 | Orchestrator speaks pi's RPC protocol | `backend/seed_backend/events.py`, `backend/seed_backend/orchestrator.py`, `backend/tests/fixtures/fake_pi*.py`, `backend/tests/test_events.py`, `backend/tests/test_prompts.py` | The orchestrator was built assuming pi outputs plain text. Real `pi --mode rpc` expects JSON commands on stdin (`{"type":"prompt","message":"..."}`) and emits JSONL events on stdout (`message_update`, `tool_execution_start`, `turn_end`, etc.). Added `translate_pi_line` (in `events.py`) that unwraps pi's events back to plain text deltas / tool-call JSON / turn-boundary signals. `send_to_middleman` and the worker send now wrap messages in `{"type":"prompt",...}`. The fake pi fixtures were updated to parse the JSON wrapper and use the `message` field as the prompt, so the existing suite still passes without changes. New `scripts/demo_phase4_smoke.py` exercises the full stack with real `pi` (sends a question, gets a streamed text response). 13 new unit tests for the translator + 6 sanity tests for the prompt files. |
-| 4.4 | Real end-to-end build with live iteration | `backend/prompts/middleman.md`, `backend/prompts/worker.md`, `backend/seed_backend/flask_manager.py`, `backend/seed_backend/events.py` | Drove a real build (`Add a tiny /hello route`) with the local `opencode-go` / `deepseek-v4-flash` config. Observed the full chain: middle-man inspects state, emits a dispatch, worker edits `app.py` via the `edit` tool, verifies with `curl`, emits `<task:done summary="..."/>`, orchestrator broadcasts `complete` + `app_reload`. Three concrete issues found and fixed: (a) prompts hardcoded `/home/seed/app/` — replaced with `$SEED_APP_PATH` and threaded it through `pi_env_for_role` (env var, not argv); (b) the translator didn't handle `message_end` events, so the cheap deepseek model (which doesn't stream `text_delta` chunks) emitted the done marker only in `message_end` and the orchestrator's scan never saw it — added a `message_end` case that extracts the final text from `message.content` text blocks; (c) Flask wasn't in debug mode, so worker edits to `app.py` weren't picked up by the reloader and the worker had to manually `kill` + restart Flask (forbidden in production) — added `FLASK_DEBUG=1` to the subprocess env in `FlaskManager.start()`. After fixes, the worker verified the new route on the first `curl` attempt. The chat UI got `complete` + `app_reload` and the script exited cleanly. |
+| 4.4 | Real end-to-end build with live iteration | `backend/prompts/middleman.md`, `backend/prompts/worker.md`, `backend/seed_backend/flask_manager.py`, `backend/seed_backend/events.py` | The worker edits the Flask source, verifies through `$SEED_APP_URL`, then emits `<task:done summary="..."/>`; the orchestrator broadcasts the resulting `complete` summary. Flask runs independently on port 7778 with its development reloader, so edits become live without a bespoke WebSocket reload signal. |
 
-> **Embedded follow-up (2026-08-14):** verification is now mode-aware through
-> `SEED_APP_URL`: the service supplies port 7778 for the host Flask subprocess
-> and port 7777 for the Android WSGI mount. The remaining embedded mismatch is
-> reload behavior: Python route edits do not become live in the in-process WSGI
-> app until a safe runtime reload mechanism is implemented.
+> **Embedded follow-up:** host and Android both use the separate Flask process at
+> port 7778. `NativeProotSmokeTest` asserts that this exact PRoot path reaches
+> `/api/ping` and serves a Python source edit after a Flask development reload
+> when run on a device.
 
 **Module shape after Phase 4 (so far):**
 - `backend/prompts/middleman.md` (new) — role prompt for the intent agent.
@@ -247,24 +244,22 @@ and bounded line queue.
 
 | # | Task | Files | Notes |
 |---|---|---|---|
-| 6.1 | Retrofit + OkHttp + Moshi backend client | `android/app/src/main/java/com/seed/app/data/BackendApi.kt` (new), `android/app/src/main/java/com/seed/app/data/ApiModule.kt` (new), `android/app/src/test/java/com/seed/app/data/BackendApiTest.kt` (new), `android/app/build.gradle.kts` (modified) | Adds the HTTP layer the Android app uses to talk to the FastAPI orchestrator. Three endpoints: `GET /health`, `POST /shell/exec`, `PUT /config`. Snake-case JSON fields (`exit_code`, `api_key`) are mapped to camelCase Kotlin properties via Moshi's `@Json(name=...)`. Manual DI: `ApiModule.default` lazy-binds to `BuildConfig.BACKEND_DEV_URL`; `ApiModule.forTesting(url)` builds a fresh Retrofit with debug logging forced on. No Hilt — the app is too small for the annotation-processor tax. **Deps:** retrofit 2.11.0, converter-moshi 2.11.0, okhttp 4.12.0 (+ logging-interceptor), moshi 1.15.1 + moshi-kotlin + kotlin-reflect 1.9.24, testImplementation mockwebserver 4.12.0. **APK:** 17.9 MB → 18.8 MB (+890 KB). **9 unit tests** via MockWebServer — pin the wire format (snake_case ↔ camelCase), the suspend boundary, the 422 path, and the body shape the backend's Pydantic models expect. |
-| 6.2 | WebSocket chat client | `android/app/src/main/java/com/seed/app/data/ChatEvent.kt` (new), `android/app/src/main/java/com/seed/app/data/ChatWebSocket.kt` (new), `android/app/src/test/java/com/seed/app/data/ChatWebSocketTest.kt` (new) | OkHttp `WebSocket` (no extra dep) wrapped in a small lifecycle class. Public surface: `connect()` (idempotent, starts a long-running coroutine), `disconnect()` (cancels the loop + closes the WS cleanly with code 1000), `send(text)` (JSON-escapes via Moshi, returns `false` if not connected), `events: SharedFlow<ChatEvent>` (0 replay, 64-slot buffer, `DROP_OLDEST`, `tryEmit` for order-preservation across concurrent `onMessage` calls), `state: StateFlow<ConnectionState>`. **Reconnect with backoff:** `ReconnectBackoff` is 1s/2s/4s/8s/16s/30s (cap), no jitter, reset on successful `onOpen`. **ChatEvent** sealed class: MiddlemanLine / WorkerLine / Complete / AppReload / Error — gives the ChatViewModel's `when` a compile-time exhaustiveness check. **12 unit tests** + 3 `ReconnectBackoffTest` tests via MockWebServer's `WebSocketListener` (the 4.12.0 API — no `WebSocketHandler` class in 4.x). The `tearDown` catches `MockWebServer.shutdown()`'s "Gave up waiting for queue to shut down" — a known interop quirk with OkHttp 4.x WebSocket; the test body has already passed by then. |
-| 6.3 | Wire Chat screen | `android/app/src/main/java/com/seed/app/data/ChatTransport.kt` (new), `android/app/src/main/java/com/seed/app/data/ChatWebSocket.kt` (modified), `android/app/src/main/java/com/seed/app/ui/chat/ChatViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/ui/chat/ChatViewModelTest.kt` (modified) | `ChatTransport` interface (connect/send/events/close) is the testability seam — `ChatWebSocket` implements it; tests provide a `FakeChatTransport` that captures outbound `send` calls and emits canned `ChatEvent`s via `MutableSharedFlow.tryEmit`. The ViewModel's constructor takes `chat: ChatTransport = ChatWebSocket(BuildConfig.BACKEND_DEV_URL)`. `init` calls `chat.connect()` and launches a `viewModelScope` collector that translates each `ChatEvent` to a `ChatMessage` (MiddlemanLine → `Agent(MIDDLEMAN)`, WorkerLine → `Agent(WORKER)`, Complete → `System(COMPLETE)`, AppReload → `System(APP_RELOAD)`, Error → `System(ERROR)`). `send()` now also calls `chat.send(text)` after appending the local User bubble. `onCleared` calls `chat.close()` so the connection loop and scope don't outlive the screen. The Compose `ChatScreen.kt` doesn't change — the public API (`messages`, `inputText`, `onInputChange`, `send`) is the same shape as Phase 5.4. **10 new unit tests** (8 pre-existing local-only tests, updated to pass `FakeChatTransport`); the ChatViewModel test suite passes. `onCleared` coverage is omitted — `ViewModel.onCleared` is `protected` and the JVM unit test classpath can't easily trigger it; the close logic is exercised in `ChatWebSocketTest`. |
-| 6.4 | Wire Shell screen | `android/app/src/main/java/com/seed/app/ui/shell/ShellViewModel.kt` (modified), `android/app/src/main/java/com/seed/app/ui/shell/ShellScreen.kt` (modified), `android/app/src/test/java/com/seed/app/ui/shell/ShellViewModelTest.kt` (modified) | Constructor takes `backend: BackendApi = ApiModule.default`. `submit()` launches a `viewModelScope` coroutine that calls `POST /shell/exec`, then appends `Stdout` (if stdout non-empty) + `Stderr` (if stderr non-empty) + `Exit(exitCode)` lines. Network/HTTP failures surface as a sentinel `Exit(-1)` so the user sees something went wrong without crashing. New `isExecuting: StateFlow<Boolean>` (true while a call is in flight) drives the Shell screen's Cancel button. New `cancel()` is a no-op stub for v0.1 — the backend has no cancel endpoint, `isExecuting` remains true, and the HTTP call runs until it returns or times out. A future task (Phase 10) will add a real cancel. Guard against concurrent submits: a second `submit` while a call is in flight is a no-op (the Run button is also visually disabled in the screen via the same `isExecuting` flow). The Compose `ShellScreen.kt` reads `isExecuting` and passes it to the input bar; Run button enabled = `value.isNotBlank() && !isExecuting`. **7 new unit tests** + an `in-flight` test that holds the call open with a `CompletableDeferred`; the ShellViewModel test suite passes. `FakeBackendApi` (in the test file) captures every `shellExec` call; `health()` and `putConfig()` are `TODO()` because the Shell screen doesn't use them. |
-| 6.5 | Wire Settings screen + `PUT /config` route | `backend/seed_backend/service.py` (modified), `backend/tests/test_config_route.py` (new), `android/app/src/main/java/com/seed/app/data/ConfigSync.kt` (new), `android/app/src/main/java/com/seed/app/ui/settings/SettingsViewModel.kt` (modified), `android/app/src/test/java/com/seed/app/data/ConfigSyncTest.kt` (new), `android/app/src/test/java/com/seed/app/ui/settings/SettingsViewModelTest.kt` (modified) | **Backend:** new `ConfigPayload` (Pydantic, mirrors the Android `ConfigRequest`), new `ConfigResponse` (`{ok: bool}`), new `PUT /config` route that writes the payload via `Config.save(DEFAULT_CONFIG_PATH)` where `DEFAULT_CONFIG_PATH = Path("config.json")` (the uvicorn CWD). `backend/scripts/dev.sh` now changes into `backend/`, so host-dev writes resolve deterministically to `backend/config.json`; other launch methods remain CWD-relative. `min_length=1` on `provider` and `model`; `api_key` accepts the empty string (a fresh install's default). **5 backend tests** pin the wire format, the overwrite-not-append behaviour, the 422-on-empty-provider path, and non-default port handling. **Android:** new `ConfigSync` class (open, so tests can subclass) bridges `SettingsForm` → `ConfigRequest` and PUTs to the backend. Constructor takes `BackendApi`; `sync(form)` returns true on `ok=true`, false on any failure (network, HTTP 4xx/5xx, `ok=false`) — no exceptions leak. The `toRequest` mapping drops `logLevel` (the orchestrator has no log level concept yet; Phase 7+ will wire it). The SettingsViewModel's `save()` now: `repo.save(current)` → `sync.sync(current)` → `_lastSaved.value = current` — best-effort; a sync failure doesn't roll back the local save or block the status-pill flip (the local save is authoritative, the backend sync is a sink). **3 new SettingsViewModel tests** + **5 new ConfigSync tests** (the wire format — snake_case `api_key`, nested `ports`, the `logLevel` drop). The Android and backend suites passed after this task. |
+| 6.1 | Retrofit + OkHttp + Moshi backend client | `android/app/src/main/java/com/seed/app/data/BackendApi.kt`, `android/app/src/main/java/com/seed/app/data/ApiModule.kt`, related tests | The current typed HTTP layer exposes `GET /health` and `POST /shell/exec`. The former loopback `PUT /config` API was retired: Android persists credentials locally and injects them when it starts a new runtime generation. |
+| 6.2 | WebSocket chat client | `android/app/src/main/java/com/seed/app/data/ChatEvent.kt`, `ChatWebSocket.kt`, related tests | OkHttp WebSocket with reconnect backoff, typed `MiddlemanLine` / `WorkerLine` / `Complete` / `Error` events, and a bounded shared event flow. The retired `app_reload` event is not part of the protocol. |
+| 6.3 | Wire Chat screen | `ChatTransport.kt`, `ChatWebSocket.kt`, `ChatViewModel.kt`, related tests | `ChatTransport` is the test seam; the ViewModel connects, translates middle-man, worker, complete, and error events to chat messages, forwards user text, and closes the transport on teardown. |
+| 6.4 | Wire Shell screen | `ShellViewModel.kt`, `ShellScreen.kt`, related tests | Shell commands call `POST /shell/exec`, render stdout/stderr/exit status, and prevent concurrent submissions. Cancel remains a v0.1 no-op because the backend has no cancel route. |
+| 6.5 | Settings persistence (retired loopback config sync) | `android/app/src/main/java/com/seed/app/ui/settings/SettingsViewModel.kt`, `AndroidSettingsRepo.kt`, related tests | Settings save locally; provider, model, and API key are loaded by `RuntimeService` when it creates the next PRoot runtime generation. The `/config` route, DTOs, sync helper, and their tests were removed so credentials never traverse the loopback control plane or land in guest `config.json`. Ports and log level remain persisted UI fields for future operational configuration. |
 
 **Module shape after Phase 6:**
-- `data/BackendApi.kt` — Retrofit interface (`/health`, `/shell/exec`, `/config`) + DTOs (HealthResponse, ShellExecRequest, ShellExecResponse, ConfigRequest, ConfigPorts, ConfigResponse).
+- `data/BackendApi.kt` — Retrofit interface (`/health`, `/shell/exec`) + DTOs (HealthResponse, ShellExecRequest, ShellExecResponse).
 - `data/ApiModule.kt` — manual-DI factory (`default` lazy-bound to `BuildConfig.BACKEND_DEV_URL`; `forTesting(url)` for tests).
 - `data/ChatTransport.kt` — narrow interface (connect/send/events/close) the ChatViewModel needs.
 - `data/ChatWebSocket.kt` — OkHttp-based WebSocket client with reconnect + backoff. Implements `ChatTransport`.
-- `data/ChatEvent.kt` — sealed class: MiddlemanLine / WorkerLine / Complete / AppReload / Error.
-- `data/ConfigSync.kt` — SettingsForm → ConfigRequest mapper + PUT /config caller. `open` so tests can subclass.
+- `data/ChatEvent.kt` — sealed class: MiddlemanLine / WorkerLine / Complete / Error.
 - `ui/chat/ChatViewModel.kt` — wired to ChatTransport; `init` connects + collects events, `send` forwards the prompt, `onCleared` closes.
 - `ui/shell/ShellViewModel.kt` — wired to BackendApi; `submit` calls `shellExec` + appends Stdout/Stderr/Exit, `isExecuting` drives the Cancel button, `cancel` is a v0.1 no-op.
 - `ui/shell/ShellScreen.kt` — reads `isExecuting`, passes to input bar; Run button enabled = non-blank AND not executing; Cancel button enabled = executing.
-- `ui/settings/SettingsViewModel.kt` — wired to SettingsRepo + ConfigSync; `save` does local + backend in order; public API unchanged from 5.7.
-- `seed_backend/service.py` — new `ConfigPayload` / `ConfigResponse` / `PUT /config` route + `DEFAULT_CONFIG_PATH`.
+- `ui/settings/SettingsViewModel.kt` — wired to SettingsRepo; `save` persists locally and runtime credentials apply to the next process generation.
 
 **APK size:** 17.9 MB → 18.9 MB (+1 MB for Retrofit/OkHttp/Moshi/kotlin-reflect; this phase added WebSocket + chat-event serialization, no size delta vs. 6.4). All runtime deps in the 4.12.0 / 1.15.1 / 2.11.0 line; kotlin-reflect is the heaviest at ~3 MB and pays for the Moshi KotlinJsonAdapterFactory (the KSP-codegen alternative would be lighter but needs a build plugin and is overkill for ~3 DTOs).
 
@@ -325,7 +320,7 @@ and connected-device acceptance.
 | 9.1 | Startup state resolver | `runtime/RuntimeStartup.kt`, `RuntimeStartupTest.kt` | ✅ Keeps extraction-owned `BootState` separate from service-owned `HealthState`. A pure resolver maps the pair to extraction UI, runtime UI, or `SeedNav`; a single-fire gate starts the service only after extraction is ready. This supersedes the older duplicate `BootState.Starting` / `RuntimeError` proposal. |
 | 9.2 | Runtime startup + retry UI | `runtime/StartRuntimeScreen.kt`, `androidTest/.../StartRuntimeScreenTest.kt`, `res/values/strings.xml` | ✅ Shows polling progress and attempt count, or an error banner and Retry action. At this milestone the instrumentation suite compiled; it was not run on a device during the 2026-08-13 verification. |
 | 9.3 | Service lifecycle wiring + retry | `MainActivity.kt`, `runtime/{RuntimeSupervisor,RuntimeService,RuntimeBinder}.kt` | ✅ `MainActivity` starts and binds the foreground service after extraction, mirrors binder health, requests Android 13+ notification permission once, gates navigation until healthy, retains the service in the background, and unbinds on destroy. Retry re-polls a live process or replaces a dead one. Extraction is single-flight across activity recreation. |
-| 9.4 | Embedded endpoint defaults + host persistence | `app/build.gradle.kts`, `data/{ApiModule,AndroidSettingsRepo}.kt`, `ui/{app,settings}/*`, related tests | ✅ Active HTTP, WebSocket, and WebView clients use `127.0.0.1:7777`; Flask is WSGI-mounted on the FastAPI port in the embedded runtime. Cleartext/navigation allowlists retain loopback plus `10.0.2.2`. `SettingsForm.host` persists `127.0.0.1`; its legacy `webappPort=7778` field and other saved endpoint values do not currently rebuild clients or reconfigure/restart the backend. That operational wiring and host UI remain Phase 10 work. |
+| 9.4 | Embedded endpoint defaults + host persistence | `app/build.gradle.kts`, `data/{ApiModule,AndroidSettingsRepo}.kt`, `ui/{app,settings}/*`, related tests | ✅ Active HTTP and WebSocket clients use `127.0.0.1:7777`; the WebView uses the separate Flask app at `127.0.0.1:7778`. Cleartext/navigation allowlists retain loopback plus `10.0.2.2`. `SettingsForm.host` persists `127.0.0.1`; its legacy `webappPort=7778` field and other saved endpoint values do not currently rebuild clients or reconfigure/restart the backend. That operational wiring and host UI remain Phase 10 work. |
 
 **Module shape after Phase 9:** `RuntimeSupervisor` owns retryable process/health startup, `RuntimeStartup` owns pure UI gating, and `MainActivity` is the Android lifecycle adapter. At that milestone the 2-class / 6-method instrumentation suite compiled, and the native PRoot/real-pi RPC smoke method passed on x86_64 on 2026-08-14; see the current verification block for the later compile regression.
 
@@ -353,23 +348,9 @@ roughly by release risk rather than by the historical phase numbering.
    `subprocess.Popen`/pipe implementation is accepted on x86_64, including two
    live pi RPC processes and an error round-trip. A successful provider-backed
    model/tool turn still needs acceptance.
-4. **Make worker edits live in embedded mode.** The mode-aware `SEED_APP_URL` is
-   complete, but Android's one-shot in-process WSGI mount retains old Python
-   code and `app_reload` still only adds a Chat banner. Add a concurrency-safe,
-   lifecycle-owned reload/restart mechanism that retains the last good app on
-   syntax/import failure, covers all mutable Python modules, handles repeated
-   edits, and makes templates reload correctly; then wire `app_reload` to the
-   App WebView and test the full mutation-to-visible-page path.
-
-   The local Qwen suggestion identified this real gap and the rolling-callable /
-   mtime-watcher idea is a useful option, but its proposed patch is **not ready
-   to apply verbatim**: `FlaskRolling` is undefined, delete-from-`sys.modules`
-   conflicts with its `importlib.reload` wording, it reaches through private
-   manager state, lacks locking/debounce/error rollback, and incorrectly assumes
-   watching only `seed_app/app.py` covers cached templates and helper modules.
-   It also omits the Android WebView half of the task. Keep the finding; redesign
-   the implementation and acceptance tests, then remove/archive the misspelled
-   suggestion file so this document remains the canonical tracker.
+4. **Keep the prototype simple.** Flask runs as its own reloading process on
+   7778; do not add WSGI mounting, transactional reload infrastructure, or an
+   app-reload event unless a later accepted requirement needs it.
 5. **Secure the control plane and build inputs.** The middle-man tool allowlist
    and encrypted credential injection are complete. Authenticate HTTP/WS,
    verify backend identity, separate mutable web content from privileged routes,
@@ -389,10 +370,9 @@ roughly by release risk rather than by the historical phase numbering.
    if it does, add job IDs/cancellation and isolation. For Chat, surface
    connection failures, do not silently drop offline sends, and bound/persist
    histories.
-7. **Make Settings operational.** Saved provider/model/key are loaded for each
-   new PRoot generation and secrets no longer cross loopback config sync.
-   Deliberately restart/apply after Save, load or migrate ports, rebuild clients
-   when endpoints change, expose the persisted host, and surface sync failures.
+7. **Make Settings operational.** Save currently persists provider/model/key
+   locally; users restart Seed to inject them into the next runtime generation.
+   Live apply, endpoint reconfiguration, and host/port controls remain deferred.
 8. **Harden runtime recovery.** Keep monitoring after initial health; detect
    process death and wedged processes; add binding timeouts, retryable extraction
    errors, explicit stop/restart/wipe controls, and bounded crash supervision.
@@ -434,9 +414,9 @@ scratch artifacts and are not tracked in the repository.
 | 5.9.1 | App tab loads the Flask webapp at `10.0.2.2:7778` | ✅ "Hello, what should I become?" + "ready (ping ok)" rendered. Proves the backend is reachable from the emulator and the WebView + network-security-config allowlist is correct. |
 | 5.9.2 | Seed green theme + dark-mode bar icons | ✅ Status bar + system bar use the Seed green; icons are light on dark in dark mode (the SideEffect in `SeedTheme` flips the `isAppearanceLight*` flags). |
 | 5.9.3 | 4-tab bottom nav | ✅ App / Chat / Shell / Settings; selected tab gets the purple pill indicator. |
-| 5.9.4 | Chat send → WS connect → fake-pi response stream | ✅ User message bubble appears; worker emits 3 progress events + `<task:done/>`; chat UI shows Worker cards (purple surfaceVariant) + "Task complete" banner (pink errorContainer) + "App reloading" banner. All 5 ChatEvent → ChatMessage translations working. |
+| 5.9.4 | Chat send → WS connect → fake-pi response stream | ✅ User message bubble appears; worker emits 3 progress events + `<task:done/>`; chat UI shows Worker cards (purple surfaceVariant) + a "Task complete" banner. |
 | 5.9.5 | Shell submit → POST /shell/exec → render | ✅ `$ echo hi from the shell` → `hi from the shell` → `[exit 0]` rendered with monospaced font + green `$` prompt + muted exit. Backend log shows `POST /shell/exec 200 OK`. |
-| 5.9.6 | Settings save → backend `PUT /config` + config.json | ✅ `model` field edited, tap Save, status pill flips "Modified" → "Saved", `PUT /config 200 OK` in backend log, `backend/config.json` written with the new model + nested ports + logLevel correctly dropped. |
+| 5.9.6 | Settings save persistence | ✅ Editing `model`, then tapping Save flips "Modified" → "Saved" and persists the form locally. The next runtime generation receives provider/model/API-key credentials directly from Android storage; no `/config` request is made. |
 | 5.9.7 | Settings persistence after kill+relaunch | ✅ Force-stop + relaunch: form re-hydrates to the saved model (not the default), status pill stays "Saved" (form == lastSaved). Proves DataStore round-trip. |
 
 **Bug found + fixed during 5.9:** the SettingsViewModel
@@ -472,10 +452,9 @@ Android tooling only; Python dependencies come from
   generations through an allowlisted environment mapping. No operational key
   was available for this verification, and Settings Save still needs an explicit
   live restart/apply path before the change affects an already-running runtime.
-- **Embedded worker edits cannot hot-reload yet.** Flask falls back to an
-  in-process WSGI mount on Android, which has no code reloader. The current
-  `app_reload` event only renders a Chat banner and does not refresh the App
-  WebView.
+- **Prototype reload behavior is Flask's development reloader.** The generated
+  app is separate on port 7778; no bespoke reload or WebSocket reload event is
+  part of this prototype.
 - **Prototype security: the loopback backend is unauthenticated.** Android
   localhost is shared with other apps, and the surface includes arbitrary
   `/shell/exec`, `/config`, `/chat`, and mutable Flask routes. Android no longer
@@ -491,11 +470,9 @@ Android tooling only; Python dependencies come from
   block HTTPS subresources. The middle-man now has both pi's read-only tool
   allowlist and the matching runtime event filter, but prompt/tool rules are not
   a complete sandbox and the worker boundary still needs enforcement.
-- **Settings are not operational backend configuration.** `PUT /config`
-  persists a CWD-relative, non-atomic JSON file, but startup does not load it;
-  provider/model still come from defaults or environment variables and ports
-  remain fixed. Android host/port changes do not rebuild active clients or
-  restart the runtime, and sync failures are not surfaced.
+- **Settings apply on restart only.** Save persists provider/model/key locally;
+  the next Seed runtime generation receives them. Ports remain fixed at FastAPI
+  7777 and Flask 7778; live endpoint reconfiguration is deferred.
 - **Runtime recovery is incomplete.** A process that dies immediately can
   leave health at `Unknown`; an accepted service binding has no callback
   timeout; extraction failures are not translated into retryable UI; and
@@ -584,7 +561,7 @@ make run-phone-x86-test  # build/install/launch succeeds; not Pi-path acceptance
 **Run the Phase 3 manual demo (no real pi / API key needed):**
 ```bash
 .venv/bin/python backend/scripts/demo_phase3.py
-# streams middleman_line → worker_line → complete → app_reload
+# streams middleman_line → worker_line → complete
 ```
 
 **Worktree workflow for new phases:**

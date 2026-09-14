@@ -28,7 +28,6 @@ enum class SystemEventKind {
     COMPLETE,
 
     /** Worker finished; the App tab should reload. */
-    APP_RELOAD,
 
     /** Some error (connection drop, agent crash, send failure). */
     ERROR,

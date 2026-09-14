@@ -100,7 +100,6 @@ def parse_task_done(line: str) -> Optional[str]:
 WS_TYPE_MIDDLEMAN_LINE = "middleman_line"
 WS_TYPE_WORKER_LINE = "worker_line"
 WS_TYPE_COMPLETE = "complete"
-WS_TYPE_APP_RELOAD = "app_reload"
 WS_TYPE_ERROR = "error"
 
 # Pi RPC command shape (Phase 4). The orchestrator wraps

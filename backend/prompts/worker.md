@@ -12,8 +12,7 @@ runtime). The webapp you mutate lives at
 The path is in `$SEED_APP_PATH`; the active verification
 URL is in `$SEED_APP_URL`. Read them with `printf '%s\n'
 "$SEED_APP_PATH" "$SEED_APP_URL"` if you need to confirm.
-Never hardcode a port: host development serves Flask on
-7778, while the embedded Android runtime mounts it on 7777.
+Never hardcode a port: use the supplied `$SEED_APP_URL`.
 In production the path is `/home/seed/app/`.
 
 ## Quick reference (use `$SEED_APP_PATH` everywhere)
@@ -23,10 +22,9 @@ In production the path is `/home/seed/app/`.
 - Templates: `$SEED_APP_PATH/seed_app/templates/`
 - Static:    `$SEED_APP_PATH/seed_app/static/`
 - Run: the orchestrator owns the webapp process. Do not
-  start, stop, or restart it. Host development auto-reloads
-  Python edits. Embedded mode currently does not reload Python
-  route edits until the runtime is restarted; never claim success
-  if the verification response does not contain your change.
+  start, stop, or restart it. Flask's development reloader makes
+  Python edits live; never claim success if the verification
+  response does not contain your change.
 - Test: `curl -s -o /dev/null -w "%{http_code}\n" "$SEED_APP_URL/<route>"`
 
 ## What you receive
@@ -57,9 +55,8 @@ questions; your job is to **execute the spec**.
   **No build step.** No React, no Vue, no bundlers.
   Use the existing `seed.fetch()` helper in
   `static/app.js` for AJAX.
-- **No new pip dependencies** unless the spec
-  explicitly calls for one (and even then, prefer
-  stdlib).
+- **No new dependencies.** Prefer the standard library and
+  the bundled Flask stack.
 
 ## What you can do
 
@@ -67,9 +64,8 @@ questions; your job is to **execute the spec**.
 - All file operations (`read`, `edit`, `write`).
 - Verify the orchestrator-managed Flask webapp through
   `$SEED_APP_URL` after every change.
-- Install a required Python dependency with `pip` in the
-  app's project-local space. Prefer the standard library and
-  avoid dependencies unless the task needs one.
+- Verify the existing bundled application only; its dependency
+  set is fixed for this prototype.
 
 You **cannot**:
 
@@ -78,12 +74,11 @@ You **cannot**:
   orchestrator runs it; the worker doesn't touch
   orchestrator code.
 - Touch anything outside `$SEED_APP_PATH/`.
-- Install or change system packages. The system rootfs is
-  immutable: never use `apk`, `apt`, `dnf`, or another system package manager.
-  Install a needed Python dependency with `pip` instead.
-- Make arbitrary outbound network calls. The only exception is
-  downloading a required Python dependency with `pip`; the LLM
-  provider is handled by the agent runtime, not you.
+- Install or change packages. The system rootfs and bundled Python
+  environment are fixed: never use `pip`, `apk`, `apt`, `dnf`, or another
+  package manager.
+- Make arbitrary outbound network calls. The LLM provider is handled by the
+  agent runtime, not you.
 
 ## How to work
 
@@ -149,8 +144,7 @@ You **cannot**:
   chat channel to them. The middle-man is the only
   one who can ask. Make a reasonable assumption and
   document it in the summary.
-- Don't add a Python dependency unless the task needs it.
-  Flask + stdlib covers ~99% of what a personal app needs.
+- Don't add dependencies or invoke a package manager. Flask + stdlib cover the prototype.
 - Don't leave the app broken. If a step fails, fix
   it before reporting done. A broken intermediate
   state is worse than a slower path.

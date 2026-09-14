@@ -50,7 +50,7 @@ pytest backend/ webapp/ -v
 
 # Open a real chat session (Phase 3 demo, no API key needed)
 .venv/bin/python backend/scripts/demo_phase3.py
-# → streams middleman_line → worker_line → complete → app_reload
+# → streams middleman_line → worker_line → complete
 ```
 
 ### Running the real agent loop

@@ -192,62 +192,6 @@ class BackendApiTest {
     // ---- /config -----------------------------------------------
 
     @Test
-    fun `putConfig issues PUT config with snake_case body and parses ok response`() = runBlocking {
-        server.enqueue(
-            MockResponse()
-                .setResponseCode(200)
-                .setBody("""{"ok":true}"""),
-        )
-
-        val response = api.putConfig(
-            ConfigRequest(
-                provider = "anthropic",
-                model = "claude-sonnet-4-5",
-                ports = ConfigPorts(backend = 7777, flask = 7778),
-            ),
-        )
-
-        assertTrue(response.ok)
-        val request = server.takeRequest()
-        assertEquals("PUT", request.method)
-        assertEquals("/config", request.path)
-        val body = request.body.readUtf8()
-        // Verify the wire format byte-for-byte. Provider/model and nested
-        // ports are synchronized, but the encrypted API key must never cross
-        // the loopback HTTP boundary.
-        assertEquals(
-            """{"provider":"anthropic","model":"claude-sonnet-4-5","ports":{"backend":7777,"flask":7778}}""",
-            body,
-        )
-    }
-
-    @Test
-    fun `putConfig parses ok false response`() = runBlocking {
-        // The backend currently always returns 200
-        // with ok=true, but the response shape
-        // permits `{"ok": false}` for a future
-        // "config locked because orchestrator is
-        // busy" case. Pin the parse path.
-        server.enqueue(
-            MockResponse()
-                .setResponseCode(200)
-                .setBody("""{"ok":false}"""),
-        )
-
-        val response = api.putConfig(
-            ConfigRequest(
-                provider = "openai",
-                model = "gpt-4o",
-                ports = ConfigPorts(backend = 7777, flask = 7778),
-            ),
-        )
-
-        assertFalse(response.ok)
-    }
-
-    // ---- Response delay (proves the suspend boundary) ----------
-
-    @Test
     fun `shellExec suspends until the response is available`() = runBlocking {
         // We enqueue the response with a 200ms
         // bodyDelay. The Retrofit `suspend` bridge

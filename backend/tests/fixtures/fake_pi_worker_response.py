@@ -50,7 +50,7 @@ def main() -> int:
 
     # Task-done marker (Phase 4: with summary attribute).
     # The orchestrator's worker read loop detects this and
-    # broadcasts `complete` + `app_reload` to chat clients
+    # broadcasts `complete to chat clients
     # (Task 3.6). Phase 4 added the `summary` attribute —
     # the orchestrator surfaces it as the `summary` field
     # on the `complete` WS event, which is what the chat

@@ -102,11 +102,11 @@ The orchestrator also supplies runtime app context to the agents:
 | Env var | Host default | Embedded default | Purpose |
 |---|---|---|---|
 | `SEED_APP_PATH` | `<repo>/webapp` via `dev.sh` | `/home/seed/app` | Mutable webapp workspace. |
-| `SEED_APP_URL` | `http://127.0.0.1:7778` | `http://127.0.0.1:7777` | Mode-aware URL used by the worker for `curl` verification. |
+| `SEED_APP_URL` | `http://127.0.0.1:7778` | `http://127.0.0.1:7778` | Generated Flask URL used by the worker for `curl` verification. |
 
-`SEED_APP_URL` is selected after the service knows whether Flask started
-as a host subprocess or fell back to the embedded WSGI mount. An explicit
-`SEED_APP_URL` overrides that selection for custom development layouts.
+FastAPI remains on port 7777 and Flask always runs separately on port 7778
+with its development reloader. An explicit `SEED_APP_URL` overrides the
+default for custom development layouts.
 The read-only middle-man cannot expand environment variables through a
 shell, so its resolved workspace path is also appended as literal system
 context at spawn time.

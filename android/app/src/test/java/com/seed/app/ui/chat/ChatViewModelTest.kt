@@ -235,15 +235,6 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `AppReload event becomes a System APP_RELOAD banner`() = runTest {
-        val vm = ChatViewModel(chat = fakeChat)
-        fakeChat.emit(ChatEvent.AppReload)
-        val messages = vm.messages.value
-        val msg = messages[0] as ChatMessage.System
-        assertEquals(SystemEventKind.APP_RELOAD, msg.kind)
-    }
-
-    @Test
     fun `Error event becomes a System ERROR banner with the message as summary`() = runTest {
         val vm = ChatViewModel(chat = fakeChat)
         fakeChat.emit(ChatEvent.Error(message = "agent crashed"))
@@ -261,14 +252,12 @@ class ChatViewModelTest {
         fakeChat.emit(ChatEvent.MiddlemanLine(line = "what columns?"))
         fakeChat.emit(ChatEvent.WorkerLine(line = "creating schema"))
         fakeChat.emit(ChatEvent.Complete(summary = "done"))
-        fakeChat.emit(ChatEvent.AppReload)
         val messages = vm.messages.value
-        assertEquals(5, messages.size)
+        assertEquals(4, messages.size)
         assertTrue(messages[0] is ChatMessage.User)
         assertEquals(AgentRole.MIDDLEMAN, (messages[1] as ChatMessage.Agent).role)
         assertEquals(AgentRole.WORKER, (messages[2] as ChatMessage.Agent).role)
         assertEquals(SystemEventKind.COMPLETE, (messages[3] as ChatMessage.System).kind)
-        assertEquals(SystemEventKind.APP_RELOAD, (messages[4] as ChatMessage.System).kind)
     }
 }
 

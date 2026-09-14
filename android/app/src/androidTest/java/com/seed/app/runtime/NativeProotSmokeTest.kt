@@ -17,7 +17,7 @@ import kotlin.concurrent.thread
 @RunWith(AndroidJUnit4::class)
 class NativeProotSmokeTest {
     @Test
-    fun runsGuestPythonAndPipeBackedPiFromAndroidAppDomain() {
+    fun runsGuestPythonPiAndFlaskReloadFromAndroidAppDomain() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val domain = File("/proc/self/attr/current").readText().trim()
         assertTrue("expected untrusted_app domain, got $domain", domain.contains("untrusted_app"))
@@ -95,7 +95,7 @@ class NativeProotSmokeTest {
                 runner = PiRunner(
                     cmd=pi_cmd_for_role("middleman"),
                     role="middleman",
-                    env=pi_env_for_role("middleman", app_url="http://127.0.0.1:7777"),
+                    env=pi_env_for_role("middleman", app_url="http://127.0.0.1:7778"),
                     read_only_tools={"read", "grep", "find", "ls"},
                 )
                 try:
@@ -136,6 +136,73 @@ class NativeProotSmokeTest {
             timeoutSeconds = PI_PROCESS_TIMEOUT_SECONDS,
         )
         assertTrue(piOutput, piOutput.contains("APP_DOMAIN_PI_RPC_OK"))
+
+        // Flask must work as a separate subprocess in the same Android PRoot
+        // environment. This is the acceptance check for the :7778 WebView and
+        // worker-verification endpoint: it proves both readiness and a real
+        // Python source edit observed by Flask's development reloader.
+        val flaskSmokeScript = """
+            import asyncio
+            from pathlib import Path
+            from urllib.request import urlopen
+            import sys
+
+            sys.path.insert(0, "/home/seed/backend")
+            from seed_backend.flask_manager import FlaskManager
+
+            app_dir = Path("/tmp/seed-flask-reload-smoke")
+            package = app_dir / "seed_app"
+            package.mkdir(parents=True, exist_ok=True)
+            (package / "__init__.py").write_text("")
+            app_file = package / "app.py"
+
+            def write_app(message):
+                app_file.write_text(
+                    "from flask import Flask\n"
+                    "app = Flask(__name__)\n"
+                    "@app.get('/api/ping')\n"
+                    "def ping():\n"
+                    "    return {'pong': True}\n"
+                    "@app.get('/reload-probe')\n"
+                    "def reload_probe():\n"
+                    "    return " + repr(message) + "\n"
+                )
+
+            def get_body():
+                with urlopen("http://127.0.0.1:17778/reload-probe", timeout=2) as response:
+                    return response.read().decode()
+
+            async def main():
+                write_app("before")
+                manager = FlaskManager(port=17778, app_dir=str(app_dir), poll_interval=0.05)
+                try:
+                    assert await manager.start()
+                    assert await asyncio.to_thread(get_body) == "before"
+                    # Ensure the source timestamp advances on filesystems with
+                    # one-second mtime resolution before asking Werkzeug to reload.
+                    await asyncio.sleep(1.1)
+                    write_app("after")
+                    deadline = asyncio.get_running_loop().time() + 12
+                    while await asyncio.to_thread(get_body) != "after":
+                        if asyncio.get_running_loop().time() >= deadline:
+                            raise AssertionError("Flask reloader did not serve edited source")
+                        await asyncio.sleep(0.1)
+                    print("APP_DOMAIN_FLASK_RELOAD_OK")
+                finally:
+                    await manager.stop()
+
+            asyncio.run(main())
+        """.trimIndent()
+        val flaskOutput = runGuest(
+            domain = domain,
+            rootfs = rootfs,
+            nativeProot = nativeProot,
+            qemuX86_64 = qemuX86_64,
+            environment = environment,
+            command = listOf("/usr/bin/python3", "-c", flaskSmokeScript),
+            timeoutSeconds = PI_PROCESS_TIMEOUT_SECONDS,
+        )
+        assertTrue(flaskOutput, flaskOutput.contains("APP_DOMAIN_FLASK_RELOAD_OK"))
     }
 
     private fun runGuest(

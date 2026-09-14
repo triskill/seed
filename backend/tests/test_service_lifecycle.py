@@ -80,7 +80,8 @@ def test_lifespan_enforces_middleman_read_only_tools(orchestrator_client):
     assert orch.worker.read_only_tools is None
     assert orch.middleman.env is not None
     assert orch.worker.env is not None
-    assert orch.middleman.env["SEED_APP_URL"] == orch.worker.env["SEED_APP_URL"]
+    assert orch.middleman.env["SEED_APP_URL"] == "http://127.0.0.1:7778"
+    assert orch.worker.env["SEED_APP_URL"] == "http://127.0.0.1:7778"
 
 
 def test_lifespan_stops_runners_on_shutdown(monkeypatch):
@@ -119,3 +120,17 @@ def test_lifespan_survives_missing_pi_command(monkeypatch):
         # take down the app.
         response = client.get("/health")
         assert response.status_code == 200
+
+def test_lifespan_fails_when_generated_flask_cannot_start(monkeypatch):
+    """A missing Flask endpoint fails the runtime instead of serving degraded API."""
+    async def failed_start(self):
+        self.mode = "failed"
+        return False
+
+    monkeypatch.setattr(service.FlaskManager, "start", failed_start)
+    monkeypatch.setattr(service, "pi_cmd_for_role", lambda role: _fake_pi_cmd())
+    isolated_app = service.FastAPI(lifespan=service.lifespan)
+
+    with pytest.raises(RuntimeError, match="Flask failed to start"):
+        with TestClient(isolated_app):
+            pass

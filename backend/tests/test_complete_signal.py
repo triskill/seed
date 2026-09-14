@@ -5,18 +5,10 @@ marker on its stdout. The orchestrator's worker read loop
 detects the marker and broadcasts two events to every chat
 WS client:
 
-    {"type": "complete",  "summary": "..."}
-    {"type": "app_reload"}
+    {"type": "complete", "summary": "..."}
 
-`complete` is what the chat UI uses to render the "your
-habit tracker is ready" bubble; `app_reload` is what the App
-screen's WebView listens for to reload the running web app
-at the new state. The two are separate so a chat-only client
-can ignore `app_reload` and an app-only client can ignore
-the verbose `complete` summary.
-
-The end-to-end test: user_message -> middle-man dispatch ->
-worker progress + `<task:done/>` -> WS sees complete + app_reload.
+The end-to-end test: user_message -> middle-man dispatch -> worker progress
++ `<task:done/>` -> a complete summary reaches every chat client.
 """
 from __future__ import annotations
 
@@ -47,8 +39,8 @@ def complete_signal_client(monkeypatch):
         yield client
 
 
-def test_complete_signal_emits_app_reload_event(complete_signal_client):
-    """`<task:done/>` from the worker causes `complete` + `app_reload` to broadcast."""
+def test_complete_signal_emits_complete_event(complete_signal_client):
+    """`<task:done/>` from the worker causes one `complete` event."""
     client = complete_signal_client
     with client.websocket_connect("/chat") as ws:
         rcv = Receiver(ws)
@@ -59,11 +51,8 @@ def test_complete_signal_emits_app_reload_event(complete_signal_client):
         # types — they arrive back-to-back, so a single window
         # captures both. (Calling `collect_by_type` twice in
         # a row would race: the second call's queue is empty
-        # because the first call already consumed the
-        # `app_reload` frame.)
         frames = collect_all(rcv, timeout_s=5.0)
         complete_frames = filter_by_type(frames, "complete")
-        app_reload_frames = filter_by_type(frames, "app_reload")
 
     assert len(complete_frames) == 1, (
         f"expected exactly 1 'complete' frame, got {complete_frames!r}"
@@ -79,17 +68,12 @@ def test_complete_signal_emits_app_reload_event(complete_signal_client):
     assert complete_frames[0]["summary"] == (
         "Built /habits page with 3 progress steps."
     ), complete_frames[0]
-    assert len(app_reload_frames) == 1, (
-        f"expected exactly 1 'app_reload' frame, got {app_reload_frames!r}"
-    )
-    # app_reload is a pure signal — no payload needed in v0.1.
-    assert app_reload_frames[0]["type"] == "app_reload"
 
 
 def test_complete_signal_fans_out_to_multiple_clients(complete_signal_client):
-    """A second connected chat client also receives `complete` + `app_reload`.
+    """A second connected chat client also receives `complete`.
 
-    The app_reload signal is what the App screen WebView
+    The completion summary
     listens for; the chat screen subscribes for the summary.
     A real run will have both kinds of client connected
     simultaneously. This test guards against a future bug

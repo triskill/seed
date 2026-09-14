@@ -20,13 +20,11 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket
 from pydantic import BaseModel, Field
 
 from seed_backend.chat import handle_chat
-from seed_backend.config import Config, DEFAULT_PORTS
 from seed_backend.flask_manager import FlaskManager
 from seed_backend.orchestrator import (
     MIDDLEMAN_READ_ONLY_TOOLS,
@@ -43,46 +41,14 @@ from seed_backend.shell import ShellSession
 # cap; the cap stays.
 SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS: float = 60.0
 
-_HOST_APP_URL = "http://127.0.0.1:7778"
-_EMBEDDED_APP_URL = "http://127.0.0.1:7777"
+_APP_URL = "http://127.0.0.1:7778"
 
 log = logging.getLogger(__name__)
 
 
-def _app_url_for_mode(*, flask_subprocess_running: bool) -> str:
-    """Return the webapp URL exposed by the active Flask mode.
-
-    Host development runs Flask separately on port 7778. Android PRoot
-    cannot spawn that process, so Flask is WSGI-mounted into FastAPI on
-    port 7777. An explicit SEED_APP_URL remains available for custom
-    development layouts.
-    """
-    configured = os.environ.get("SEED_APP_URL")
-    if configured:
-        return configured.rstrip("/")
-    return _HOST_APP_URL if flask_subprocess_running else _EMBEDDED_APP_URL
-
-
-# Where the orchestrator reads / writes its
-# config.json. The Android Settings screen
-# (Phase 6.5) PUTs the user's settings to
-# `PUT /config` and the route persists them
-# to this path. The next orchestrator start
-# will read the file in a future task (the
-# orchestrator currently reads API keys
-# from environment variables; the config
-# file is the v0.2+ mechanism).
-#
-# v0.1 keeps the path hardcoded relative to
-# the uvicorn CWD. The Makefile's `dev.sh`
-# script `cd`s into `backend/` before
-# starting uvicorn, so `./config.json`
-# resolves to `backend/config.json` in
-# dev. A future task may make this
-# configurable via an env var
-# (`SEED_CONFIG_PATH`) so production
-# deployments can put it wherever they want.
-DEFAULT_CONFIG_PATH: Path = Path("config.json")
+def _app_url() -> str:
+    """Return the generated Flask app URL for every runtime."""
+    return os.environ.get("SEED_APP_URL", _APP_URL).rstrip("/")
 
 
 __all__ = [
@@ -92,105 +58,34 @@ __all__ = [
     "pi_env_for_role",
     "Orchestrator",
     "SHELL_EXEC_DEFAULT_TIMEOUT_SECONDS",
-    "DEFAULT_CONFIG_PATH",
     "ShellExecRequest",
     "ShellExecResponse",
-    "ConfigPayload",
-    "ConfigResponse",
 ]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start Flask + both `pi` processes; stop them on shutdown.
+    """Start separate Flask (:7778) and agent processes; stop them on shutdown.
 
-    Flask is brought up first because the orchestrator's `/health`
-    endpoint reports Flask status, and clients typically poll
-    `/health` to know when the orchestrator is ready. The two
-    `pi` processes are then spawned and their `PiRunner`s stashed
-    in `app.state.orchestrator` for the chat route (Task 3.2+)
-    to consume.
-
-    Flask starts in one of two modes:
-
-      * **subprocess** (dev): FlaskManager spawns `flask --app
-        seed_app.app run` as a child process. FLASK_DEBUG=1
-        enables the Werkzeug reloader so the worker agent's
-        edits to app.py are picked up on the next request.
-      * **wsgi_mount** (embedded runtime fallback): the
-        embedded Linux runtime launches the orchestrator
-        inside proot, which does not implement `fork(2)` on
-        Android. The lifespan catches the spawn failure and
-        mounts the Flask app's `wsgi_app` inside the
-        FastAPI process via a2wsgi — same routes, no
-        subprocess, no reloader.
-
-    The orchestrator still comes up regardless of Flask mode
-    — `/health` reports `flask: "up"` in either mode, or
-    `flask: "down"` if both fail (e.g. `seed_app` not
-    installed).
-
-    If the `pi` cmd is unrunnable (e.g. `pi` is not installed), the
-    backend still comes up. `subprocess.Popen` reports the exec failure
-    synchronously; the lifespan logs it and leaves the orchestrator in
-    `app.state` so `/health`, the webapp, and Shell remain available.
-
-    Also creates a single `ShellSession` on `app.state` so every
-    `/shell/exec` call shares the same cwd. Task 1.5: the
-    session is process-global by design for v0.1 — one logical
-    shell per orchestrator process. A future task may scope
-    sessions per client.
+    The generated app is never mounted into FastAPI.  Flask runs with its
+    development reloader, so edits to the generated Python app become live
+    independently of the FastAPI orchestrator on :7777.
     """
     manager = FlaskManager(port=7778)
     app.state.flask_manager = manager
     app.state.shell_session = ShellSession()
-
-    # Try subprocess first (dev path); fall back to WSGI mount
-    # (embedded-runtime path). Either way, /health will report
-    # `flask: "up"` once the routes are reachable.
-    subprocess_ok = False
     try:
-        subprocess_ok = await manager.start()
-    except Exception:
-        subprocess_ok = False
+        flask_started = await manager.start()
+    except Exception as exc:
+        log.exception("Flask failed to start")
+        raise RuntimeError("Flask failed to start") from exc
+    if not flask_started:
+        # Do not advertise a usable API while the generated app and worker
+        # verification endpoint are unavailable. RuntimeSupervisor will see
+        # the process exit and retry the whole runtime generation.
+        raise RuntimeError("Flask failed to start; see /tmp/seed-flask-stderr.log")
 
-    if not subprocess_ok:
-        # Mount the Flask WSGI app inside the FastAPI process
-        # via a2wsgi. No subprocess, no reloader, but the same
-        # routes serve on `/`. Imports happen here (not at
-        # module top) so a missing webapp package (e.g. partial
-        # extraction) doesn't prevent the orchestrator from
-        # starting at all.
-        try:
-            from a2wsgi import WSGIMiddleware  # type: ignore[import-not-found]
-            from seed_app.app import app as flask_app  # type: ignore[import-not-found]
-
-            # Flask is itself a WSGI callable — pass it directly,
-            # not `flask_app.wsgi_app` (the WSGI middleware Flask
-            # provides for nested WSGI apps).
-            #
-            # NB: `from seed_app import app` would import the
-            # *module* `seed_app.app` (because Python prefers the
-            # submodule over a top-level attribute named `app`),
-            # and a module isn't callable as a WSGI app. The
-            # explicit `from seed_app.app import app` reaches the
-            # Flask instance defined in app.py.
-            app.mount("/", WSGIMiddleware(flask_app))
-            manager.mount_wsgi()
-            print("[lifespan] Flask mounted via WSGI in-process (subprocess mode unavailable)", flush=True)
-        except Exception as exc:
-            # Both modes failed; /health will surface `flask: "down"`.
-            print(f"[lifespan] Flask WSGI mount failed: {exc!r}", flush=True)
-            with open("/tmp/seed-flask-wsgi-error.log", "w") as fh:
-                fh.write(f"WSGI mount failed: {exc!r}\n")
-
-    # Phase 3: bring up both `pi` runners. (Task 3.1)
-    # The env passed to each runner overrides
-    # `PI_CODING_AGENT_DIR` to the project's local config
-    # (so the agent uses our defaultProvider/defaultModel
-    # from `.pi/agent/settings.json`) while still
-    # inheriting API keys set in the parent shell.
-    app_url = _app_url_for_mode(flask_subprocess_running=subprocess_ok)
+    app_url = _app_url()
     orchestrator = Orchestrator(
         middleman=PiRunner(
             cmd=pi_cmd_for_role("middleman"),
@@ -208,9 +103,6 @@ async def lifespan(app: FastAPI):
     try:
         await orchestrator.start()
     except Exception:
-        # Pi failed to spawn (likely `pi` not installed). Leave
-        # the orchestrator in app.state — /health still works,
-        # /chat will surface the failure on first use.
         log.exception("pi orchestrator failed to start")
 
     yield
@@ -298,90 +190,3 @@ async def chat_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=1011, reason="orchestrator not initialized")
         return
     await handle_chat(websocket, orchestrator)
-
-
-class ConfigPayload(BaseModel):
-    """Request body for `PUT /config` (Phase 6.5).
-
-    Mirrors the Android `data.ConfigRequest` DTO field-for-field
-    so a `PUT /config` from the Settings screen lands directly
-    in the on-disk `config.json` (via [seed_backend.config.Config.save]).
-
-    The `ports` sub-object matches the backend's
-    [seed_backend.config.DEFAULT_PORTS] dict: `backend` (FastAPI,
-    default 7777) and `flask` (webapp, default 7778). The Android
-    side maps its `SettingsForm.backendPort` → `ports.backend`
-    and `SettingsForm.webappPort` → `ports.flask` in
-    `ConfigSync.toRequest`.
-
-    **Why a `ports` sub-object (not two top-level fields):**
-    the on-disk format already uses a `ports` dict (the
-    dataclass field is `ports: dict[str, int]`), so PUTting a
-    flat shape would force the route to flatten on write and
-    the next reader to re-nest. Keeping the wire shape the
-    same as the file shape is the smallest delta.
-
-    **Why no `logLevel` here:** the Android Settings form has
-    a `logLevel` field (Phase 5.6) but the orchestrator has no
-    concept of log level yet (Phase 7+ will add a `RuntimeService`
-    log view). The Android side doesn't send `logLevel` to the
-    backend — it stays a client-side concern. The
-    `ConfigSync.toRequest` deliberately drops the field.
-    """
-
-    provider: str = Field(..., min_length=1)
-    model: str = Field(..., min_length=1)
-    # Accepted for backward wire compatibility but deliberately ignored by
-    # put_config; Android injects credentials from encrypted storage directly
-    # into the embedded process environment.
-    api_key: str = ""
-    ports: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_PORTS))
-
-
-class ConfigResponse(BaseModel):
-    """Response body for `PUT /config`.
-
-    A small ack: `{"ok": true}` on success. The Android
-    [com.seed.app.data.ConfigSync] checks [ok] and surfaces a
-    "sync failed" error in the Settings UI if it's `false` (a
-    future task may add a banner; for Phase 6.5 we just log
-    the failure and let the local save stand).
-    """
-
-    ok: bool
-
-
-@app.put("/config", response_model=ConfigResponse)
-async def put_config(payload: ConfigPayload) -> ConfigResponse:
-    """Persist the user's settings to [DEFAULT_CONFIG_PATH].
-
-    Phase 6.5 wires the Android Settings screen to this route
-    via [com.seed.app.data.ConfigSync]. The flow is:
-      1. User taps Save on the Settings screen.
-      2. Android's `SettingsViewModel.save()` calls
-         `SettingsRepo.save(form)` (local persistence to
-         DataStore + EncryptedSharedPreferences) and then
-         `ConfigSync.sync(form)` (this endpoint).
-      3. The route writes non-secret settings via
-         `Config.save(DEFAULT_CONFIG_PATH)`. The legacy `api_key` request field
-         is ignored and the file is cleared to an empty key.
-      4. On the next orchestrator start (Phase 7+ will wire
-         this), the file is read back via
-         `Config.load(DEFAULT_CONFIG_PATH)`.
-
-    **Defensive — 422 on missing fields:** the `Field(..., min_length=1)`
-    on `provider` and `model` matches the Android
-    `SettingsForm.DEFAULTS` (which always populates both), but a
-    hand-rolled curl call could send `{"provider": ""}` and get
-    a 422. The Android side never does that.
-    """
-    cfg = Config(
-        provider=payload.provider,
-        model=payload.model,
-        # Never duplicate Android's encrypted credential into plaintext
-        # config.json. Host development continues to use provider env vars.
-        api_key="",
-        ports=payload.ports,
-    )
-    cfg.save(DEFAULT_CONFIG_PATH)
-    return ConfigResponse(ok=True)

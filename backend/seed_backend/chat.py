@@ -4,7 +4,7 @@ Bridges the Android chat client to the Orchestrator's two `pi`
 agents. Task 3.2 covers the request half: accept the WebSocket,
 receive a user_message frame, forward it to the middle-man.
 Streaming of agent output back to the client is added in
-Tasks 3.3 (middle-man) and 3.5 (worker); complete + app_reload
+Tasks 3.3 (middle-man) and 3.5 (worker); complete
 events are added in Task 3.6.
 
 The wire format is JSON, one object per WS text frame:
@@ -13,7 +13,7 @@ The wire format is JSON, one object per WS text frame:
     {"type": "user_message", "text": "..."}
 
   server -> client:
-    (Tasks 3.3-3.6 add line / complete / app_reload / error
+    (Tasks 3.3-3.6 add line / complete / error
     events.)
 
 Unknown message types and malformed JSON are logged and
@@ -51,7 +51,7 @@ async def handle_chat(
     Accepts the upgrade, subscribes a private queue to the
     orchestrator, and spawns a forwarder task that pumps
     orchestrator events (middle-man lines, worker lines,
-    complete, app_reload, errors) to the WebSocket as JSON
+    complete and errors) to the WebSocket as JSON
     text frames. Then loops on `receive_text` for inbound
     user messages.
 

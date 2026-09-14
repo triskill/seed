@@ -1,8 +1,6 @@
 package com.seed.app.runtime
 
 import com.seed.app.data.BackendApi
-import com.seed.app.data.ConfigRequest
-import com.seed.app.data.ConfigResponse
 import com.seed.app.data.HealthResponse
 import com.seed.app.data.ShellExecRequest
 import com.seed.app.data.ShellExecResponse
@@ -259,6 +257,4 @@ private abstract class StubBackendApi : BackendApi {
     override suspend fun shellExec(request: ShellExecRequest): ShellExecResponse =
         error("Not used by HealthMonitor")
 
-    override suspend fun putConfig(payload: ConfigRequest): ConfigResponse =
-        error("Not used by HealthMonitor")
 }

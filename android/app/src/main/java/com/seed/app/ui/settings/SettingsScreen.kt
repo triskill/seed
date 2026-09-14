@@ -40,9 +40,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.seed.app.R
-import com.seed.app.data.AndroidSettingsRepo
-import com.seed.app.data.ApiModule
-import com.seed.app.data.ConfigSync
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -174,6 +171,10 @@ fun SettingsScreen(
         ) {
             Text(stringResource(R.string.settings_action_save))
         }
+        Text(
+            text = stringResource(R.string.settings_restart_required),
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 

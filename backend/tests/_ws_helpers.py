@@ -146,7 +146,7 @@ def drain(
 
     Used to filter for a specific event type on a WS that carries
     multiple event kinds (e.g. middleman_line + worker_line +
-    complete + app_reload on the same chat connection).
+    complete on the same chat connection).
     """
     deadline = time.monotonic() + timeout_s
     out: list[dict] = []
@@ -171,7 +171,7 @@ def collect_all(
     this helper returns the full stream so the caller can
     filter for multiple event types out of one window — the
     common case in Phase 3 tests where a single user_message
-    produces a `complete` + `app_reload` pair that should
+    produces a `complete pair that should
     both be asserted on.
 
     Stops early on EOF (server closed the WS) and returns

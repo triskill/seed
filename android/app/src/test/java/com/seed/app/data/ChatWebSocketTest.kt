@@ -295,7 +295,7 @@ and left""")
     }
 
     @Test
-    fun `events flow emits WorkerLine, Complete, AppReload, and Error`() = runBlocking {
+    fun `events flow emits WorkerLine, Complete, and Error`() = runBlocking {
         val events = mutableListOf<ChatEvent>()
         val collector = testScope.launch {
             chat.events.collect { events.add(it) }
@@ -324,19 +324,17 @@ and left""")
         // them.
         socket.send("""{"type":"worker_line","line":"building..."}""")
         socket.send("""{"type":"complete","summary":"added /hello route"}""")
-        socket.send("""{"type":"app_reload"}""")
         socket.send("""{"type":"error","message":"agent crashed"}""")
         withTimeout(2_000) {
-            while (events.size < 4) delay(20)
+            while (events.size < 3) delay(20)
         }
-        assertEquals(4, events.size)
+        assertEquals(3, events.size)
         assertTrue(events[0] is ChatEvent.WorkerLine)
         assertEquals("building...", (events[0] as ChatEvent.WorkerLine).line)
         assertTrue(events[1] is ChatEvent.Complete)
         assertEquals("added /hello route", (events[1] as ChatEvent.Complete).summary)
-        assertEquals(ChatEvent.AppReload, events[2])
-        assertTrue(events[3] is ChatEvent.Error)
-        assertEquals("agent crashed", (events[3] as ChatEvent.Error).message)
+        assertTrue(events[2] is ChatEvent.Error)
+        assertEquals("agent crashed", (events[2] as ChatEvent.Error).message)
         collector.cancel()
     }
 

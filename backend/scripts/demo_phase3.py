@@ -140,8 +140,6 @@ def main() -> int:
                     f"  [complete]  summary={frame.get('summary')!r}",
                     flush=True,
                 )
-            elif t == "app_reload":
-                print("  [app_reload] (App screen would refresh now)", flush=True)
                 # We saw the demo's terminal event. Break early.
                 break
             else:

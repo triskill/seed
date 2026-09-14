@@ -4,11 +4,10 @@ import com.squareup.moshi.Json
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
-import retrofit2.http.PUT
 
 /**
  * HTTP client for the FastAPI backend (`/health`,
- * `/shell/exec`, `/config`).
+ * `/shell/exec`).
  *
  * **Phase 6.1** introduces this Retrofit interface
  * as the single typed entry point for every HTTP
@@ -80,27 +79,6 @@ interface BackendApi {
      */
     @POST("shell/exec")
     suspend fun shellExec(@Body request: ShellExecRequest): ShellExecResponse
-
-    /**
-     * `PUT /config` — write the Android-side settings
-     * (provider, model, ports) to the
-     * backend's `config.json` so the next orchestrator
-     * restart picks them up.
-     *
-     * Phase 6.5 adds this endpoint to the backend
-     * (the route is a thin wrapper around
-     * [seed_backend.config.Config.save]). The
-     * Android side calls it from
-     * [com.seed.app.data.ConfigSync] after a
-     * successful [com.seed.app.data.SettingsRepo.save].
-     *
-     * The response is a 200 OK with a small ack body
-     * (`{"ok": true}`) so the client can tell a
-     * successful write apart from a 200-with-error-
-     * payload if the backend ever needs that.
-     */
-    @PUT("config")
-    suspend fun putConfig(@Body payload: ConfigRequest): ConfigResponse
 }
 
 /**
@@ -144,52 +122,4 @@ data class ShellExecResponse(
     val stderr: String,
     @Json(name = "exit_code") val exitCode: Int,
     val truncated: Boolean = false,
-)
-
-/**
- * `PUT /config` request body.
- *
- * Mirrors the backend's
- * [seed_backend.config.Config] dataclass. The
- * backend's `load()` method tolerates missing
- * fields (falls back to dataclass defaults), so a
- * partial write is recoverable — but the Android
- * side always sends all four fields populated.
- *
- * The API key is deliberately absent. Android keeps it in
- * EncryptedSharedPreferences and injects it directly into the embedded
- * process environment at startup. Sending it through this unauthenticated
- * loopback endpoint would expose it to debug HTTP logging and duplicate it in
- * the guest's plaintext `config.json`.
- */
-data class ConfigRequest(
-    val provider: String,
-    val model: String,
-    val ports: ConfigPorts,
-)
-
-/**
- * The `ports` sub-object of [ConfigRequest].
- *
- * Two keys: `backend` (FastAPI, default 7777) and
- * `flask` (webapp, default 7778). Matches the
- * backend's [seed_backend.config.DEFAULT_PORTS]
- * dict field-for-field.
- */
-data class ConfigPorts(
-    val backend: Int,
-    val flask: Int,
-)
-
-/**
- * `PUT /config` response body.
- *
- * A small ack: `{"ok": true}` on success. The
- * ConfigSync caller checks [ok] and surfaces a
- * "sync failed" error in the Settings UI if it's
- * `false` (a future task may add a banner; for
- * Phase 6.5 we just log it).
- */
-data class ConfigResponse(
-    val ok: Boolean,
 )

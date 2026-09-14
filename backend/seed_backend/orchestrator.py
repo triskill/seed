@@ -38,7 +38,6 @@ from pathlib import Path
 from seed_backend.events import (
     parse_task_done,
     translate_pi_line,
-    WS_TYPE_APP_RELOAD,
     WS_TYPE_COMPLETE,
     WS_TYPE_MIDDLEMAN_LINE,
     WS_TYPE_WORKER_LINE,
@@ -245,10 +244,9 @@ def pi_env_for_role(
     Args:
         role: "middleman" or "worker".
         app_url: URL the worker must use to verify webapp routes.
-                 The service supplies a mode-aware value: port 7778
-                 for the host Flask subprocess or port 7777 for the
-                 embedded in-process WSGI mount. When omitted, an
-                 inherited `SEED_APP_URL` or the host-dev URL is used.
+                 The service supplies Flask's separate port-7778 URL in every
+                 runtime. When omitted, an inherited `SEED_APP_URL` or that
+                 default is used.
 
     Returns:
         A new env dict suitable for `os.execvpe`.
@@ -292,7 +290,7 @@ class Orchestrator:
       * background read loops that shovel middle-man and worker
         output into those queues;
       * dispatch-JSON detection (middle-man -> worker);
-      * a `complete` + `app_reload` broadcast on worker done.
+      * a `complete` broadcast on worker done.
 
     The pub-sub surface is in place from Task 3.1 so the WS
     route (3.2) can register its queue without further changes
@@ -410,9 +408,8 @@ class Orchestrator:
         Used by the middle-man and worker read loops (Tasks 3.3
         and 3.5) to shovel lines to chat clients, and by the
         complete-signal handler (Task 3.6) to fan out the
-        `app_reload` event. The list() copy avoids "set changed
-        during iteration" if a subscribe/unsubscribe races the
-        broadcast.
+        `complete` event. The list() copy avoids "set changed during
+        iteration" if a subscribe/unsubscribe races the broadcast.
         """
         for q in list(self._subscribers):
             try:
@@ -560,14 +557,8 @@ class Orchestrator:
         Task 3.5 broadcasts each line as a
         `{"type": "worker_line", "line": <line>}` event.
 
-        Task 3.6 also watches for a `<task:done/>` marker:
-        when the worker emits that exact string on a line,
-        the orchestrator broadcasts two extra events to all
-        subscribers — `complete` (with a summary) and
-        `app_reload` (a pure reload signal for the App
-        screen WebView). The marker line itself is NOT
-        broadcast as a worker_line (it is a control
-        signal, not user-facing content).
+        A `<task:done/>` marker produces one `complete` event with a
+        summary. The marker itself is not broadcast as a worker line.
 
         The loop runs until the worker's `read_lines()`
         async generator terminates (the child exited). It
@@ -602,22 +593,12 @@ class Orchestrator:
                     summary = parse_task_done(candidate)
                     if summary is None:
                         continue
-                    # Fan out the done signal. The chat UI
-                    # uses `complete` to render a summary
-                    # bubble; the App screen WebView uses
-                    # `app_reload` to refresh at the new
-                    # state. We do NOT also broadcast the
-                    # marker line as a worker_line — it is
-                    # a control marker, not user-facing
-                    # text.
+                    # The task marker is a control signal, not a worker line.
                     await self._broadcast(
                         {
                             "type": WS_TYPE_COMPLETE,
                             "summary": summary or _DEFAULT_COMPLETE_SUMMARY,
                         }
-                    )
-                    await self._broadcast(
-                        {"type": WS_TYPE_APP_RELOAD}
                     )
                     break  # one marker is enough
         except asyncio.CancelledError:

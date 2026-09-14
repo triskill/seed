@@ -6,6 +6,8 @@ down cleanly. Exercises the real Flask process so the test catches
 both lifecycle bugs and webapp startup regressions.
 """
 import asyncio
+import socket
+import time
 from pathlib import Path
 
 import httpx
@@ -31,17 +33,13 @@ def test_flask_manager_starts_and_stops():
     asyncio.run(scenario())
 
 
-def test_flask_manager_enables_flask_debug_for_reload():
+def test_flask_manager_uses_debug_reloader_without_debugger():
     """The worker agent mutates `app.py` while Flask is
-    running. Without debug mode, the Werkzeug reloader
-    doesn't watch the file and new routes don't appear
-    until restart. The manager must set `FLASK_DEBUG=1`
-    in the subprocess env so worker edits are picked up
-    on the next request.
+    running. The Flask CLI must explicitly enable its reloader while
+    disabling the interactive debugger.
 
-    We don't spawn Flask (that would be slow / flaky) —
-    we just verify the env dict that *would* be passed
-    to the child has `FLASK_DEBUG=1` set.
+    We don't spawn Flask (that would be slow / flaky) — we verify the
+    command passed to the child.
     """
     from unittest.mock import patch
     captured: dict = {}
@@ -60,6 +58,7 @@ def test_flask_manager_enables_flask_debug_for_reload():
             return b"", b""
 
     async def fake_exec(*args, env=None, **kwargs):
+        captured["args"] = args
         captured["env"] = env
         return FakeProcess()
 
@@ -77,7 +76,8 @@ def test_flask_manager_enables_flask_debug_for_reload():
 
     asyncio.run(scenario())
     assert captured["env"] is not None
-    assert captured["env"].get("FLASK_DEBUG") == "1"
+    assert "--debug" in captured["args"]
+    assert "--no-debugger" in captured["args"]
 
 
 def test_flask_manager_prefers_seed_app_path_environment(monkeypatch, tmp_path):
@@ -99,3 +99,51 @@ def test_flask_manager_finds_repository_webapp_without_cwd_dependency(
 
     assert expected.is_dir()
     assert FlaskManager._default_app_dir() == str(expected)
+
+
+def test_flask_manager_reloads_worker_python_edit(tmp_path):
+    """The real Flask reloader serves a worker edit without restarting FastAPI."""
+    app_dir = tmp_path / "worker-app"
+    package_dir = app_dir / "seed_app"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("")
+    app_file = package_dir / "app.py"
+
+    def write_app(message: str) -> None:
+        app_file.write_text(
+            "from flask import Flask\n"
+            "app = Flask(__name__)\n"
+            "@app.get('/api/ping')\n"
+            "def ping():\n"
+            "    return {'pong': True}\n"
+            "@app.get('/reload-probe')\n"
+            "def reload_probe():\n"
+            f"    return {message!r}\n"
+        )
+
+    write_app("before")
+    with socket.socket() as candidate:
+        candidate.bind(("127.0.0.1", 0))
+        port = candidate.getsockname()[1]
+
+    async def scenario():
+        manager = FlaskManager(port=port, app_dir=str(app_dir), poll_interval=0.05)
+        try:
+            assert await manager.start()
+            async with httpx.AsyncClient() as client:
+                assert (await client.get(f"http://127.0.0.1:{port}/reload-probe")).text == "before"
+                # Werkzeug's filesystem watcher can have one-second timestamp
+                # granularity, so ensure the source mtime advances.
+                time.sleep(1.1)
+                write_app("after")
+                deadline = asyncio.get_running_loop().time() + 12
+                while True:
+                    if (await client.get(f"http://127.0.0.1:{port}/reload-probe")).text == "after":
+                        break
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise AssertionError("Flask reloader did not serve the worker edit")
+                    await asyncio.sleep(0.1)
+        finally:
+            await manager.stop()
+
+    asyncio.run(scenario())

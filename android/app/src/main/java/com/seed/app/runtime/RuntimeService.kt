@@ -64,7 +64,11 @@ class RuntimeService : Service() {
                 val environment = ProotEnvironment.createBackend(
                     tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
                     installation = nativeProot,
-                ) + piEnvironment + if (qemuX86_64 != null) {
+                ) + piEnvironment + mapOf(
+                    // The FastAPI service passes this to both agents for generated
+                    // app verification; Flask itself is a separate :7778 process.
+                    "SEED_APP_URL" to "http://127.0.0.1:7778",
+                ) + if (qemuX86_64 != null) {
                     // Expose every x86 feature implemented by QEMU. V8 still
                     // cannot safely use its generated-code JIT below, but this
                     // gives non-JIT guest programs the broadest CPU model.

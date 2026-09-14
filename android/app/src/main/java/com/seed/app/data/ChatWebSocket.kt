@@ -345,7 +345,6 @@ class ChatWebSocket(
             EVENT_TYPE_MIDDLEMAN_LINE -> ChatEvent.MiddlemanLine(line = obj["line"] as? String ?: "")
             EVENT_TYPE_WORKER_LINE -> ChatEvent.WorkerLine(line = obj["line"] as? String ?: "")
             EVENT_TYPE_COMPLETE -> ChatEvent.Complete(summary = obj["summary"] as? String)
-            EVENT_TYPE_APP_RELOAD -> ChatEvent.AppReload
             EVENT_TYPE_ERROR -> ChatEvent.Error(message = obj["message"] as? String ?: "unknown error")
             else -> null
         }
@@ -376,7 +375,6 @@ class ChatWebSocket(
         const val EVENT_TYPE_MIDDLEMAN_LINE: String = "middleman_line"
         const val EVENT_TYPE_WORKER_LINE: String = "worker_line"
         const val EVENT_TYPE_COMPLETE: String = "complete"
-        const val EVENT_TYPE_APP_RELOAD: String = "app_reload"
         const val EVENT_TYPE_ERROR: String = "error"
 
         private fun defaultClient(): OkHttpClient = OkHttpClient.Builder()

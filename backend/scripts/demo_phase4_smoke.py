@@ -8,7 +8,7 @@ as Task 4.3. It exercises the full Phase 3 + Phase 4 stack:
   2. Open a real WebSocket connection.
   3. Send a user_message.
   4. Print every event the chat stream emits.
-  5. Tear down on `complete` / `app_reload` or after a
+  5. Tear down on `complete or after a
      timeout.
 
 The user_message is intentionally a **question** (not a
@@ -26,7 +26,7 @@ dispatch JSON block. So this test exercises:
 A separate test (TODO: Phase 4 follow-up) should drive a
 build request end-to-end (middle-man → dispatch → worker
 build → `<task:done summary="..."/>` → `complete` +
-`app_reload`). That's a longer test (the worker actually
+complete). That's a longer test (the worker actually
 mutates `/home/seed/app/`, which is not checked out in
 the worktree) and is best done with a real webapp +
 real worker, which is what Phase 4 follow-up Task 4.4
@@ -41,7 +41,7 @@ default question. Pass a build request (e.g. "Add a
 /habits page with a daily check-in form and streak
 counter") to drive the full chain end-to-end:
 middle-man emits a dispatch, worker builds, chat
-gets `complete` + `app_reload`. The build mode waits
+gets `complete` + complete. The build mode waits
 up to 3 minutes for the worker; the question mode
 exits after 5s of silence.
 """
@@ -203,13 +203,11 @@ def main() -> int:
                 )
                 saw_complete = True
                 # In build mode keep listening briefly
-                # for the `app_reload` event (the
+                # for the complete event (the
                 # orchestrator broadcasts it right after
                 # complete). In question mode, exit.
                 if not build_mode:
                     break
-            elif t == "app_reload":
-                print("  [app_reload] (App screen would refresh now)", flush=True)
                 if saw_complete:
                     break
             else:

@@ -1,9 +1,6 @@
 package com.seed.app.ui.shell
 
 import com.seed.app.data.BackendApi
-import com.seed.app.data.ConfigPorts
-import com.seed.app.data.ConfigRequest
-import com.seed.app.data.ConfigResponse
 import com.seed.app.data.HealthResponse
 import com.seed.app.data.ShellExecRequest
 import com.seed.app.data.ShellExecResponse
@@ -377,12 +374,12 @@ class ShellViewModelTest {
  * hold without per-test setup.
  *
  * The other two [BackendApi] methods
- * ([health], [putConfig]) are `TODO()` because
+ * ([health]) are `TODO()` because
  * the Shell screen doesn't use them. The
  * Phase 6.3 ChatViewModel test doesn't use this
  * fake (it has its own transport), and the
  * Phase 6.5 SettingsViewModel test will likely
- * need its own fake that handles [putConfig].
+ * does not need config support.
  */
 class FakeBackendApi : BackendApi {
     val shellExecCalls: MutableList<ShellExecRequest> = mutableListOf()
@@ -410,6 +407,4 @@ class FakeBackendApi : BackendApi {
         return shellExecHandler?.invoke(request) ?: nextResponse
     }
 
-    override suspend fun putConfig(payload: ConfigRequest): ConfigResponse =
-        TODO("Shell screen doesn't use /config")
 }

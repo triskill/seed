@@ -8,7 +8,7 @@ package com.seed.app.data
  * the typed counterpart to the backend's WS
  * `type` strings (defined in
  * `seed_backend.events.py`: `middleman_line`,
- * `worker_line`, `complete`, `app_reload`,
+ * `worker_line`, `complete`,
  * `error`). The wire format is a flat JSON object
  * with a `type` discriminator; the Kotlin side
  * parses each one into a [ChatEvent] variant.
@@ -34,10 +34,6 @@ package com.seed.app.data
  *   - [Complete] — the worker emitted
  *     `<task:done .../>`. The optional [summary]
  *     is the worker's one-paragraph report.
- *   - [AppReload] — broadcast right after
- *     [Complete]; the chat UI is expected to
- *     trigger an App-screen refresh (Phase 10
- *     will wire the actual `webView.reload()`).
  *   - [Error] — something went wrong (the
  *     agent crashed, the WebSocket dropped, the
  *     dispatch JSON was malformed). [message]
@@ -64,12 +60,6 @@ sealed class ChatEvent {
      * (v0.1 placeholder).
      */
     data class Complete(val summary: String?) : ChatEvent()
-
-    /**
-     * Worker finished; the App screen should
-     * reload. Broadcast right after [Complete].
-     */
-    data object AppReload : ChatEvent()
 
     /**
      * An error occurred. [message] is the

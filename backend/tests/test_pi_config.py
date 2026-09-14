@@ -195,14 +195,14 @@ def test_pi_env_for_role_honors_inherited_app_url(monkeypatch):
     assert env["SEED_APP_URL"] == "http://127.0.0.1:9000"
 
 
-def test_pi_env_for_role_explicit_app_url_selects_embedded_mode(monkeypatch):
-    """The service can override a parent value after selecting WSGI mode."""
+def test_pi_env_for_role_explicit_app_url_overrides_parent(monkeypatch):
+    """The service supplies one URL to both agent roles."""
     monkeypatch.setenv("SEED_APP_URL", "http://127.0.0.1:9000")
     env = pi_env_for_role(
         "worker",
-        app_url="http://127.0.0.1:7777/",
+        app_url="http://127.0.0.1:7778/",
     )
-    assert env["SEED_APP_URL"] == "http://127.0.0.1:7777"
+    assert env["SEED_APP_URL"] == "http://127.0.0.1:7778"
 
 
 
