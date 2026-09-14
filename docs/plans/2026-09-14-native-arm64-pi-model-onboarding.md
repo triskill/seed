@@ -1,7 +1,11 @@
 # Native ARM64 runtime and Pi-backed model onboarding
 
-**Status:** proposed
+**Status:** superseded for the first-run login flow
 **Branch:** `feat/model-selection-improvoment`
+
+> **2026-09-15 update:** Native ARM64 runtime work remains in effect, but the
+> proposed first-run onboarding flow was removed. The app starts with packaged
+> Pi defaults; provider key/login and model selection live only in Settings.
 **Date:** 2026-09-14
 
 ## Goal
@@ -27,10 +31,11 @@ There is no x86 guest and no QEMU user-mode executable in the APK.
    an Android/Kotlin API or a stable machine protocol. Running them through the
    Shell would be a poor first-launch UI and would leave Pi's `auth.json` in
    the extracted guest filesystem.
-3. **Reuse Pi's headless model RPC, not its TUI.** Pi 0.80.3 documents
-   `get_available_models`, `set_model`,
-   `get_available_thinking_levels`, and `set_thinking_level` RPC commands.
-   FastAPI/PiRunner remains their sole owner and exposes a protected local
+3. **Reuse Pi's headless model RPC, not its TUI.** Pi 0.80.3 exposes
+   `get_available_models`, `set_model`, and `set_thinking_level` RPC commands.
+   It has no thinking-level discovery command; Seed derives the levels from
+   each model's `reasoning`/`thinkingLevelMap` metadata. FastAPI/PiRunner
+   remains their sole owner and exposes a protected local
    control-plane API to Compose. Compose owns presentation, filtering, errors,
    and persistence.
 4. **MVP authentication is API-key based.** The Kotlin setup flow stores an
@@ -60,10 +65,11 @@ The installed Pi CLI confirms the split:
   variable on every runtime process generation.
 
 Therefore direct reuse is **not possible as a Kotlin UI integration**. Pi
-0.80.3 does, however, document headless RPC equivalents for `/model`:
-`get_available_models`, `set_model`, `get_available_thinking_levels`, and
-`set_thinking_level`. They can be reused through a backend-owned control plane.
-Pi documents no comparable login/auth RPC, so `/login` remains non-reusable.
+0.80.3 does, however, expose headless RPC equivalents for `/model`:
+`get_available_models`, `set_model`, and `set_thinking_level`. It has no
+thinking-level discovery RPC, so Seed derives levels from the returned model
+metadata. They are reused through a backend-owned control plane. Pi documents
+no comparable login/auth RPC, so `/login` remains non-reusable.
 We must not scrape ANSI TUI output or parse the human table from
 `pi --list-models`.
 
@@ -176,7 +182,6 @@ code or command can select QEMU/x86.
 
    ```json
    {"id":"models-1","type":"get_available_models"}
-   {"id":"thinking-1","type":"get_available_thinking_levels"}
    {"id":"model-1","type":"set_model","provider":"openai","modelId":"gpt-4o"}
    {"id":"thinking-set-1","type":"set_thinking_level","level":"low"}
    ```

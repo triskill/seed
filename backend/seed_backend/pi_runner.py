@@ -23,7 +23,10 @@ import re
 import signal
 import subprocess
 import threading
+import uuid
 from typing import AsyncIterator, BinaryIO
+
+from seed_backend.process_env import PI_CREDENTIAL_ENV_VARS
 
 
 log = logging.getLogger(__name__)
@@ -37,6 +40,16 @@ def _strip_ansi(text: str) -> str:
     """Return ``text`` with common CSI and OSC sequences removed."""
     text = _ANSI_CSI_RE.sub("", text)
     return _ANSI_OSC_RE.sub("", text)
+
+
+def _redact_sensitive(text: str, env: dict[str, str] | None = None) -> str:
+    """Redact provider credentials before a Pi line reaches chat/log sinks."""
+    source = env if env is not None else os.environ
+    for name in PI_CREDENTIAL_ENV_VARS:
+        value = source.get(name)
+        if value:
+            text = text.replace(value, "[REDACTED]")
+    return text
 
 
 def _check_tool_call(line: str, allowed: set[str]) -> dict | None:
@@ -115,6 +128,11 @@ class PiRunner:
 
         self._lines: asyncio.Queue[str | None] = asyncio.Queue(maxsize=1024)
         self._violations: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
+        # RPC responses share stdout with chat events.  Correlation is kept
+        # here, never in the FastAPI layer, so an Android caller cannot race
+        # the long-lived agent event reader.
+        self._rpc_lock = asyncio.Lock()
+        self._rpc_pending: dict[str, asyncio.Future[dict]] = {}
         self._write_lock = threading.Lock()
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=3,
@@ -253,6 +271,53 @@ class PiRunner:
         except (BrokenPipeError, OSError) as exc:
             raise PiRunnerNotRunning("pi subprocess stdin is closed") from exc
 
+    async def rpc_request(self, payload: dict, *, timeout: float = 30.0) -> dict:
+        """Send one correlated RPC command and await only its response.
+
+        Pi emits responses and streaming events on the same JSONL stream.  A
+        serialized request path keeps state-changing control commands ordered;
+        the pending map ensures a late/unknown response is never forwarded to
+        chat subscribers.
+        """
+        if not isinstance(payload, dict):
+            raise TypeError("RPC payload must be an object")
+        request = dict(payload)
+        request_id = request.get("id")
+        if not isinstance(request_id, str) or not request_id:
+            request_id = uuid.uuid4().hex
+            request["id"] = request_id
+        if timeout <= 0:
+            raise ValueError("RPC timeout must be positive")
+
+        async with self._rpc_lock:
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future[dict] = loop.create_future()
+            if request_id in self._rpc_pending:
+                raise ValueError(f"duplicate RPC request id: {request_id}")
+            self._rpc_pending[request_id] = future
+            try:
+                await self.send(json.dumps(request, separators=(",", ":")))
+                return await asyncio.wait_for(asyncio.shield(future), timeout)
+            finally:
+                if self._rpc_pending.get(request_id) is future:
+                    self._rpc_pending.pop(request_id, None)
+
+    def _route_rpc_response(self, event: dict) -> None:
+        """Resolve a known RPC waiter and discard every response from events."""
+        request_id = event.get("id")
+        if not isinstance(request_id, str):
+            return
+        future = self._rpc_pending.pop(request_id, None)
+        if future is not None and not future.done():
+            future.set_result(event)
+
+    def _fail_rpc_pending(self, error: BaseException) -> None:
+        pending = list(self._rpc_pending.values())
+        self._rpc_pending.clear()
+        for future in pending:
+            if not future.done():
+                future.set_exception(error)
+
     async def _write(self, stream: BinaryIO, payload: bytes) -> None:
         """Write all bytes without interleaving concurrent chat sends."""
         def _write_all() -> None:
@@ -344,6 +409,7 @@ class PiRunner:
                             continue
                     except Exception as exc:
                         log.exception("pi auto-restart failed: %r", exc)
+                self._fail_rpc_pending(PiRunnerNotRunning("pi subprocess reached EOF"))
                 await self._enqueue_line(None)
                 return
 
@@ -359,6 +425,18 @@ class PiRunner:
         """Normalize/filter one line and enqueue it; false means abort."""
         if self.strip_ansi:
             line = _strip_ansi(line)
+        line = _redact_sensitive(line, self.env)
+        # RPC responses are transport control frames, not chat events.  Even
+        # unknown, duplicate, malformed-id, and late responses are swallowed.
+        # This prevents control traffic from reaching WebSocket subscribers.
+        if line.lstrip().startswith("{"):
+            try:
+                event = json.loads(line)
+            except (TypeError, ValueError):
+                event = None
+            if isinstance(event, dict) and event.get("type") == "response":
+                self._route_rpc_response(event)
+                return True
         if self.read_only_tools is not None:
             violation = _check_tool_call(line, self.read_only_tools)
             if violation is not None:
@@ -416,6 +494,7 @@ class PiRunner:
             return
 
         self._stopping = True
+        self._fail_rpc_pending(PiRunnerNotRunning("PiRunner stopped"))
         process = self._process
         self._process = None
         self.pid = None

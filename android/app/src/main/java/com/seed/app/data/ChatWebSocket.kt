@@ -1,6 +1,7 @@
 package com.seed.app.data
 
 import com.squareup.moshi.JsonClass
+import com.seed.app.runtime.RuntimeService
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CompletableDeferred
@@ -228,7 +229,10 @@ class ChatWebSocket(
 
     private fun openOnce(): CompletableDeferred<Unit> {
         val closed = CompletableDeferred<Unit>()
-        val request = Request.Builder().url(wsUrl()).build()
+        val request = Request.Builder()
+            .url(wsUrl())
+            .header("Authorization", "Bearer ${RuntimeService.controlCapability}")
+            .build()
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 backoff.reset()

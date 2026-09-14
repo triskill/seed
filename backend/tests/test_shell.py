@@ -202,3 +202,20 @@ def test_cwd_persists_across_calls():
     # /private/tmp. Both forms end with "tmp", which is the
     # portable check — the command literally is `cd /tmp`.
     assert result.stdout.strip().endswith("tmp")
+
+
+def test_shell_requires_runtime_capability_when_runtime_sets_one(monkeypatch):
+    monkeypatch.setenv("SEED_RUNTIME_CAPABILITY", "capability-secret")
+    with TestClient(app, client=("127.0.0.1", 1234)) as client:
+        denied = client.post("/shell/exec", json={"command": "echo nope"})
+        allowed = client.post(
+            "/shell/exec",
+            json={"command": "printf %s \"$SEED_RUNTIME_CAPABILITY\""},
+            headers={"Authorization": "Bearer capability-secret"},
+        )
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    # Direct inheritance is scrubbed. A caller with the capability is already
+    # trusted to invoke shell; this test protects against accidental leakage to
+    # ordinary command environments.
+    assert allowed.json()["stdout"] == ""

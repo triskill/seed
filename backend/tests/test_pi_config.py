@@ -133,8 +133,8 @@ def test_pi_env_for_role_sets_pi_coding_agent_dir():
     """The env dict overrides `PI_CODING_AGENT_DIR` to the project-local config."""
     env = pi_env_for_role("middleman")
     assert "PI_CODING_AGENT_DIR" in env
-    # The path should be inside the repo, end with `.pi/agent`.
-    assert env["PI_CODING_AGENT_DIR"].endswith(".pi/agent"), env["PI_CODING_AGENT_DIR"]
+    # The path is role-isolated so Pi auth.json cannot bleed between roles.
+    assert env["PI_CODING_AGENT_DIR"].endswith(".pi/agent/middleman"), env["PI_CODING_AGENT_DIR"]
     # And it should actually exist (the helper mkdirs it
     # on first call so a fresh clone works).
     import os

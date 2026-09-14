@@ -1,5 +1,7 @@
 package com.seed.app.ui.settings
 
+import com.seed.app.data.ProviderCatalog
+
 /**
  * The structured form values for the Settings tab.
  *
@@ -13,20 +15,12 @@ package com.seed.app.ui.settings
  * tabs.
  *
  * **Field semantics:**
- *   - [provider] — model provider name. The full
- *     list of supported providers lives in
- *     [SettingsForm.KNOWN_PROVIDERS] for the
- *     dropdown. Free-form for now; Phase 6 will
- *     switch to a closed enum.
- *   - [model] — model name (e.g. "gpt-4o",
- *     "claude-sonnet-4-5"). Free-form; the
- *     provider's API is the source of truth for
- *     what models it accepts.
- *   - [apiKey] — API key for the provider. Phase
- *     5.7 will store this in
- *     `EncryptedSharedPreferences` rather than
- *     the regular DataStore so it lives in the
- *     Android keystore.
+ *   - [provider] — provider ID from the curated
+ *     [ProviderCatalog].
+ *   - [model] — exact model ID returned by Pi's
+ *     authenticated catalog.
+ *   - [apiKey] — provider credential stored in
+ *     Android Keystore-backed encrypted preferences.
  *   - [host] — Android-side host for backend connections. It defaults
  *     to device loopback for the embedded runtime. Phase 10 will expose
  *     host switching in the UI and rebuild active clients when it changes.
@@ -37,9 +31,10 @@ package com.seed.app.ui.settings
  *     somewhere).
  */
 data class SettingsForm(
-    val provider: String = "openai",
-    val model: String = "gpt-4o",
+    val provider: String = "opencode-go",
+    val model: String = "deepseek-v4-flash",
     val apiKey: String = "",
+    val thinkingLevel: String = "low",
     val host: String = "127.0.0.1",
     val backendPort: Int = 7777,
     val webappPort: Int = 7778,
@@ -49,18 +44,9 @@ data class SettingsForm(
         /** Hardcoded defaults for a fresh install. */
         val DEFAULTS: SettingsForm = SettingsForm()
 
-        /**
-         * Providers the dropdown offers. Free-form
-         * (a `String`), not a closed enum, because
-         * new providers land over time and the
-         * list is advisory — typing a value not
-         * in the list is allowed.
-         */
-        val KNOWN_PROVIDERS: List<String> = listOf(
-            "openai",
-            "anthropic",
-            "local",
-        )
+        /** Compatibility provider IDs retained for older callers. */
+        /** Compatibility view for older callers; new UI uses [ProviderCatalog]. */
+        val KNOWN_PROVIDERS: List<String> = ProviderCatalog.PROVIDERS.map { it.id }
     }
 }
 

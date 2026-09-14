@@ -57,12 +57,11 @@ import java.util.concurrent.TimeUnit
  *     Chat's WebSocket connect and Shell's first
  *     `shellExec` call.
  *
- *   - **No auth header yet.** Phase 7+ may add a
- *     `RuntimeService`-issued bearer token the
- *     backend validates. For v0.1 the loopback
- *     connection is the auth boundary: nothing on
- *     the device except this app can talk to the
- *     orchestrator.
+ *   - **Capability auth.** Shell, catalog/selection,
+ *     and chat calls carry the per-runtime capability
+ *     issued by `RuntimeService`. Authorization is
+ *     redacted from the debug interceptor and is never
+ *     copied into child environments.
  */
 object ApiModule {
 
@@ -142,6 +141,7 @@ object ApiModule {
         if (debugLogging) {
             clientBuilder.addInterceptor(
                 HttpLoggingInterceptor().apply {
+                    redactHeader("Authorization")
                     level = HttpLoggingInterceptor.Level.BODY
                 },
             )

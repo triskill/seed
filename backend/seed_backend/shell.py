@@ -32,6 +32,8 @@ import tty
 from dataclasses import dataclass
 from pathlib import Path
 
+from seed_backend.process_env import untrusted_child_env
+
 
 # Strips CSI sequences (ESC [ ... final-byte). Good enough for
 # the common cases (colors, cursor moves) — full ECMA-48 coverage
@@ -275,6 +277,9 @@ async def _exec_command_impl(
         # Android Shell tab don't care about color codes from the
         # embedded runtime — they're rendered as monospaced text
         # regardless.
+        # Shell commands are untrusted local input and receive neither
+        # provider credentials nor the control-plane capability.
+        child_env = untrusted_child_env()
         proc = subprocess.Popen(
             ["sh", "-c", cmd],
             cwd=cwd,
@@ -282,6 +287,7 @@ async def _exec_command_impl(
             stderr=subprocess.STDOUT,  # merge stderr into stdout, same as PTY
             stdin=subprocess.DEVNULL,
             start_new_session=True,  # so we can killpg on cancel/timeout
+            env=child_env,
         )
         state["pid"] = proc.pid
         # Drain stdout in a read loop, applying the same

@@ -8,6 +8,8 @@ from pathlib import Path
 
 import httpx
 
+from seed_backend.process_env import untrusted_child_env
+
 # Native ARM64 startup baseline: Flask's development reloader starts a second
 # interpreter, but does not require the former foreign-architecture grace period.
 # Keep enough room for first-import cost on a physical device without masking
@@ -55,7 +57,9 @@ class FlaskManager:
         if self._process is not None:
             return True
 
-        env = os.environ.copy()
+        # The generated app is untrusted and must not inherit provider
+        # credentials or the FastAPI control-plane capability.
+        env = untrusted_child_env()
         venv_bin = str(Path(sys.executable).parent)
         env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
         try:

@@ -13,7 +13,9 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.seed.app.ui.settings.LogLevel
 import com.seed.app.ui.settings.SettingsForm
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 // Top-level DataStore name. The `preferencesDataStore`
 // delegate requires a `const val` String at
@@ -30,6 +32,7 @@ private val KEY_HOST = stringPreferencesKey("host")
 private val KEY_BACKEND_PORT = intPreferencesKey("backend_port")
 private val KEY_WEBAPP_PORT = intPreferencesKey("webapp_port")
 private val KEY_LOG_LEVEL = intPreferencesKey("log_level")
+private val KEY_THINKING_LEVEL = stringPreferencesKey("thinking_level")
 
 // SharedPreferences key for the API key. (Not a
 // DataStore key because we need encryption at rest
@@ -127,22 +130,31 @@ class AndroidSettingsRepo(context: Context) : SettingsRepo {
         return prefs.toSettingsForm(apiKey)
     }
 
+    override suspend fun saveCredentials(provider: String, apiKey: String) {
+        val current = load() ?: SettingsForm.DEFAULTS
+        save(current.copy(provider = provider, model = "", apiKey = apiKey, thinkingLevel = "off"))
+    }
+
     override suspend fun save(form: SettingsForm) {
         // DataStore is the source of truth for the
         // non-secret fields; EncryptedSharedPreferences
         // for the secret. The two writes are not
         // transactional across stores, but DataStore
         // is atomic per-edit and SharedPreferences'
-        // `apply()` is also atomic (it writes to
-        // memory immediately, syncs to disk
-        // asynchronously). A crash mid-save would
+        // checked `commit()` is synchronous, so callers
+        // never proceed while the key is only in memory.
+        // A crash mid-save would
         // leave the stores in a consistent-enough
         // state for the next `load()` to either
         // succeed (if the DataStore edit landed)
         // or return null (if it didn't) — no
         // half-form is observable.
         ds.edit { prefs -> prefs.putNonSecretSettings(form) }
-        securePrefs.edit().putString(KEY_API_KEY, form.apiKey).apply()
+        withContext(Dispatchers.IO) {
+            check(securePrefs.edit().putString(KEY_API_KEY, form.apiKey).commit()) {
+                "Could not persist encrypted provider credential"
+            }
+        }
     }
 }
 
@@ -154,11 +166,13 @@ internal fun Preferences.toSettingsForm(apiKey: String): SettingsForm? {
     val webappPort = this[KEY_WEBAPP_PORT] ?: return null
     val logLevelOrdinal = this[KEY_LOG_LEVEL] ?: return null
     val logLevel = LogLevel.values().getOrNull(logLevelOrdinal) ?: return null
+    val thinkingLevel = this[KEY_THINKING_LEVEL] ?: SettingsForm.DEFAULTS.thinkingLevel
 
     return SettingsForm(
         provider = provider,
         model = model,
         apiKey = apiKey,
+        thinkingLevel = thinkingLevel,
         // Settings saved before Phase 9 have no host. Migrate those installs
         // to the embedded-runtime default instead of discarding the form.
         host = this[KEY_HOST] ?: SettingsForm.DEFAULTS.host,
@@ -176,4 +190,5 @@ internal fun MutablePreferences.putNonSecretSettings(form: SettingsForm) {
     this[KEY_BACKEND_PORT] = form.backendPort
     this[KEY_WEBAPP_PORT] = form.webappPort
     this[KEY_LOG_LEVEL] = form.logLevel.ordinal
+    this[KEY_THINKING_LEVEL] = form.thinkingLevel
 }

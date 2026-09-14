@@ -89,20 +89,16 @@ async def handle_chat(
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
-                    log.warning(
-                        "chat: dropping non-JSON frame: %r", raw[:100]
-                    )
+                    log.warning("chat: dropping non-JSON frame")
                     continue
                 if not isinstance(msg, dict):
-                    log.warning(
-                        "chat: dropping non-object frame: %r", raw[:100]
-                    )
+                    log.warning("chat: dropping non-object frame")
                     continue
                 msg_type = msg.get("type")
                 if msg_type == "user_message":
                     await _handle_user_message(websocket, orchestrator, msg)
                 else:
-                    log.warning("chat: unknown message type: %r", msg_type)
+                    log.warning("chat: unknown message type")
         except WebSocketDisconnect:
             log.info("chat: client disconnected")
     finally:
@@ -193,7 +189,7 @@ async def _handle_user_message(
     """
     text = msg.get("text", "")
     if not isinstance(text, str):
-        log.warning("chat: user_message.text is not a string: %r", text)
+        log.warning("chat: user_message.text is not a string")
         return
     try:
         await orchestrator.send_to_middleman(text)

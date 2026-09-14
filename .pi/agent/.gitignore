@@ -18,6 +18,7 @@
 sessions/
 auth.json
 models.json
+models-store.json
 bin/
 git/
 npm/

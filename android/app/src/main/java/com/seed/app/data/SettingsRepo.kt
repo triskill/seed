@@ -59,6 +59,10 @@ interface SettingsRepo {
      */
     suspend fun save(form: SettingsForm)
 
+    /** Persist credentials before model discovery; selection is filled in later. */
+    suspend fun saveCredentials(provider: String, apiKey: String) =
+        save(SettingsForm(provider = provider, model = "", apiKey = apiKey))
+
     companion object {
         /**
          * Stateless no-op [SettingsRepo] for tests,

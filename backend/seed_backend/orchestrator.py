@@ -44,6 +44,7 @@ from seed_backend.events import (
 )
 from seed_backend.middleman import extract_dispatch
 from seed_backend.pi_runner import PiRunner
+from seed_backend.process_env import PI_CREDENTIAL_ENV_VARS, SEED_CAPABILITY_ENV
 
 log = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ def pi_cmd_for_role(role: str) -> list[str]:
     restored.
 
     Args:
-        role: "middleman" or "worker". Any other value
+        role: "middleman", "worker", or "control". Any other value
               raises ValueError so a typo in the caller
               fails fast.
 
@@ -183,11 +184,31 @@ def pi_cmd_for_role(role: str) -> list[str]:
     Raises:
         ValueError: if `role` is not one of the known roles.
     """
-    if role not in ("middleman", "worker"):
+    if role not in ("middleman", "worker", "control"):
         raise ValueError(f"unknown pi role: {role!r}")
-    provider = os.environ.get("SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER)
-    model = os.environ.get("SEED_PI_MODEL", _DEFAULT_PI_MODEL)
+    provider = os.environ.get("SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER).strip()
+    configured_model = os.environ.get("SEED_PI_MODEL")
+    model = (
+        configured_model.strip()
+        if configured_model is not None
+        else ("" if role == "control" else _DEFAULT_PI_MODEL)
+    )
     thinking = os.environ.get("SEED_PI_THINKING", _DEFAULT_PI_THINKING)
+    if role == "control":
+        # The control process must be headless and must not load project
+        # extensions, prompts, or tools.  During onboarding no model has been
+        # chosen yet; --models provider/* lets Pi pick the first authenticated
+        # model from its own bundled registry without inventing a model ID.
+        argv = [
+            "pi", "--mode", "rpc", "--provider", provider,
+            "--no-session", "--no-tools", "--no-extensions", "--no-skills",
+            "--no-prompt-templates", "--no-themes", "--no-context-files",
+        ]
+        if model:
+            argv.extend(["--model", model])
+        else:
+            argv.extend(["--models", f"{provider}/*"])
+        return argv
     prompt_file = (
         _MIDDLEMAN_PROMPT if role == "middleman" else _WORKER_PROMPT
     )
@@ -224,25 +245,13 @@ def pi_env_for_role(
 ) -> dict[str, str]:
     """Return the env dict passed to the child `pi` process.
 
-    Starts from the parent's `os.environ` (so API keys set
-    in the shell, e.g. `OPENCODE_API_KEY`, are inherited
-    — we never want to bake secrets into argv) and
-    overrides `PI_CODING_AGENT_DIR` to point at the
-    project's local config directory. This is what makes
-    the project's `.pi/agent/settings.json` (with
-    `defaultProvider=opencode-go`, `defaultModel=
-    deepseek-v4-flash`) take effect, independent of the
-    user's `~/.pi/agent/`.
-
-    The path is computed once at import time (see
-    `_PI_AGENT_DIR`). If the directory doesn't exist yet,
-    we create it on first call so a fresh clone works
-    without a manual `mkdir`. We do NOT touch the
-    `settings.json` if it already exists — the user may
-    have customised it.
+    Starts from the parent's environment so host API keys remain available to
+    the explicitly selected Pi child; credentials are never placed in argv.
+    Every role gets its own config directory, preventing stale interactive
+    ``auth.json`` state from crossing into another process.
 
     Args:
-        role: "middleman" or "worker".
+        role: "middleman", "worker", or "control".
         app_url: URL the worker must use to verify webapp routes.
                  The service supplies Flask's separate port-7778 URL in every
                  runtime. When omitted, an inherited `SEED_APP_URL` or that
@@ -254,15 +263,37 @@ def pi_env_for_role(
     Raises:
         ValueError: if `role` is not one of the known roles.
     """
-    if role not in ("middleman", "worker"):
+    if role not in ("middleman", "worker", "control"):
         raise ValueError(f"unknown pi role: {role!r}")
     env = dict(os.environ)
-    # Ensure the local config dir exists. The settings.json
-    # inside it is committed; the dir itself is what pi
-    # reads from. A fresh clone has the file but not the
-    # dir, so create on first use.
-    _PI_AGENT_DIR.mkdir(parents=True, exist_ok=True)
-    env["PI_CODING_AGENT_DIR"] = str(_PI_AGENT_DIR)
+    # The bearer capability belongs only to FastAPI's Android-facing boundary;
+    # it must never be inherited by any Pi child process.
+    env.pop(SEED_CAPABILITY_ENV, None)
+    env.pop("SEED_CONTROL_ONLY", None)
+    selected_provider = os.environ.get("SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER).strip().lower()
+    selected_key = {
+        "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GEMINI_API_KEY", "deepseek": "DEEPSEEK_API_KEY",
+        "groq": "GROQ_API_KEY", "xai": "XAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY", "mistral": "MISTRAL_API_KEY",
+        "fireworks": "FIREWORKS_API_KEY", "together": "TOGETHER_API_KEY",
+        "opencode": "OPENCODE_API_KEY", "opencode-go": "OPENCODE_API_KEY",
+        "zai": "ZAI_API_KEY", "minimax": "MINIMAX_API_KEY",
+        "moonshotai": "MOONSHOT_API_KEY", "nvidia": "NVIDIA_API_KEY",
+        "cerebras": "CEREBRAS_API_KEY", "kimi-coding": "KIMI_API_KEY",
+    }.get(selected_provider)
+    for name in PI_CREDENTIAL_ENV_VARS:
+        if name != selected_key:
+            env.pop(name, None)
+    # Ensure the role-isolated config dir exists. It is
+    # intentionally separate from the committed project
+    # defaults and any interactive auth.json.
+    # Role-specific dirs prevent stale auth.json from an interactive Pi
+    # session from silently becoming an Android credential source. Android
+    # provides the selected key through the explicit child environment only.
+    config_dir = _PI_AGENT_DIR / role
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env["PI_CODING_AGENT_DIR"] = str(config_dir)
     # Point the agent at the webapp. The middle-man and
     # worker prompts both reference `$SEED_APP_PATH` so
     # the same prompt file works in production

@@ -120,18 +120,27 @@ automatically by pi (e.g. `ANTHROPIC_API_KEY` for
 
 ### Android credential startup
 
-On Android, provider and model are read from DataStore and the API key is read
-from EncryptedSharedPreferences/Android Keystore whenever `RuntimeService`
-creates a new PRoot process. The service injects `SEED_PI_PROVIDER`,
-`SEED_PI_MODEL`, and one explicitly allowlisted provider credential variable
-into uvicorn's environment; `pi_env_for_role()` passes them to both pi children.
-The key is never placed in argv, loopback `PUT /config`, or the guest's plaintext
-`config.json`. A fresh install with no saved form keeps the packaged
-`opencode-go` / `deepseek-v4-flash` defaults.
+On Android, Seed starts normally with its packaged Pi defaults. Provider login
+and model selection are separate Settings actions. **Save login** stores the
+selected provider/API key in EncryptedSharedPreferences backed by the Android
+Keystore without interrupting the running app. Pi's generic catalog is then
+available from the headless control process; select a catalog model and use
+**Save model and restart** to apply the saved provider/model/key to both Pi
+roles. The catalog loader retries the short control-Pi startup window and also
+provides Retry. Pi has no non-interactive credential-validation RPC in 0.80.3,
+so saving login confirms secure persistence, not remote key validity; validity
+is confirmed by the first provider-backed request after a model is selected.
 
-Settings saved while PRoot is already alive take effect on the next real runtime
-process generation (service cold start or crash replacement). A deliberate live
-restart/apply control remains Phase 10 work.
+The normal runtime injects `SEED_PI_PROVIDER`, `SEED_PI_MODEL`, and one
+explicitly allowlisted provider credential variable into uvicorn's environment;
+role-isolated `pi_env_for_role()` passes credentials only to the intended Pi
+child. The key is never placed in argv, loopback HTTP, or guest plaintext
+config. Shell and Flask children receive a scrubbed environment, and control,
+shell, and chat routes require the per-runtime Bearer capability.
+
+Saving login does not restart the runtime; saving a selected model does. A
+login never requires a model selection, and login is never required before the
+normal app can start.
 
 ## Why no `auth.json` in the project?
 
@@ -150,9 +159,10 @@ pi's `~/.pi/agent/auth.json` stores API keys on disk
    inherited by the child process.
 
 If you want a `auth.json` locally (e.g. for offline
-testing), create `.pi/agent/auth.json` with your key —
-it's gitignored. The orchestrator will pick it up
-because `PI_CODING_AGENT_DIR` points there.
+host testing), place it in the role-specific directory
+used by that process. Android deliberately uses fresh
+role-isolated directories and never imports interactive
+Pi auth state.
 
 ## Testing without an API key
 

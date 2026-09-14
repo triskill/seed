@@ -1,7 +1,7 @@
 package com.seed.app.runtime
 
+import com.seed.app.data.ProviderCatalog
 import com.seed.app.ui.settings.SettingsForm
-import java.util.Locale
 
 /**
  * Convert encrypted Android settings into the environment inherited by the
@@ -12,13 +12,18 @@ import java.util.Locale
  * out of command-line arguments, loopback HTTP, and the generated rootfs. The
  * returned values are sensitive and must never be logged.
  */
-internal fun SettingsForm?.toPiRuntimeEnvironment(): Map<String, String> {
+internal fun SettingsForm?.toPiRuntimeEnvironment(
+    allowMissingModel: Boolean = false,
+): Map<String, String> {
     if (this == null) return emptyMap()
 
     val normalizedProvider = provider.trim()
     val normalizedModel = model.trim()
-    // require(normalizedProvider.isNotEmpty()) { "Saved pi provider is blank" }
-    require(normalizedModel.isNotEmpty()) { "Saved pi model is blank" }
+    require(normalizedProvider.isNotEmpty()) { "Saved pi provider is blank" }
+    require(ProviderCatalog.find(normalizedProvider) != null) {
+        "Saved pi provider is not supported"
+    }
+    require(allowMissingModel || normalizedModel.isNotEmpty()) { "Saved pi model is blank" }
     require(normalizedProvider.none { it.isISOControl() }) {
         "Saved pi provider contains control characters"
     }
@@ -28,27 +33,21 @@ internal fun SettingsForm?.toPiRuntimeEnvironment(): Map<String, String> {
     require(apiKey.none { it.isISOControl() }) {
         "Saved pi API key contains control characters"
     }
+    require(thinkingLevel in setOf("off", "minimal", "low", "medium", "high", "xhigh")) {
+        "Saved pi thinking level is invalid"
+    }
 
-    val keyVariable = providerApiKeyVariable(normalizedProvider)
+    val keyVariable = ProviderCatalog.find(normalizedProvider)?.apiKeyEnvironment
     require(apiKey.isEmpty() || keyVariable != null) {
         "Saved pi provider does not have an allowlisted API-key variable"
     }
 
     return buildMap {
         put("SEED_PI_PROVIDER", normalizedProvider)
-        put("SEED_PI_MODEL", normalizedModel)
+        if (normalizedModel.isNotEmpty()) put("SEED_PI_MODEL", normalizedModel)
+        put("SEED_PI_THINKING", thinkingLevel)
         if (apiKey.isNotEmpty() && keyVariable != null) {
             put(keyVariable, apiKey)
         }
     }
 }
-
-/** Return pi's credential variable, or null for local/unknown providers. */
-private fun providerApiKeyVariable(provider: String): String? =
-    when (provider.lowercase(Locale.US)) {
-        "openai" -> "OPENAI_API_KEY"
-        "anthropic" -> "ANTHROPIC_API_KEY"
-        "opencode", "opencode-go" -> "OPENCODE_API_KEY"
-        "local" -> null
-        else -> null
-    }

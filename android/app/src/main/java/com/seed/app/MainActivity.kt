@@ -51,6 +51,9 @@ import kotlinx.coroutines.launch
  */
 class MainActivity : ComponentActivity() {
     private val runtimeHealth = MutableStateFlow<HealthState>(HealthState.Unknown)
+    // A settings save can beat ServiceConnection.onServiceConnected. Keep
+    // one pending restart rather than stopping/recreating a service mid-bind.
+    private var restartRequested = false
     private var runtimeBinder: RuntimeBinder? = null
     private var terminalManager: SeedTerminalManager? = null
     private var binderHealthJob: Job? = null
@@ -89,6 +92,10 @@ class MainActivity : ComponentActivity() {
                         runtimeHealth.value = health
                     }
                 }
+            }
+            if (restartRequested) {
+                restartRequested = false
+                binder.restart()
             }
         }
 
@@ -149,7 +156,6 @@ class MainActivity : ComponentActivity() {
             SeedTheme {
                 val bootState by bootController.states.collectAsState()
                 val healthState by runtimeHealth.collectAsState()
-
                 when (val destination = resolveStartupDestination(bootState, healthState)) {
                     is StartupDestination.Extraction -> ExtractionScreen(destination.state)
                     is StartupDestination.Runtime -> StartRuntimeScreen(
@@ -160,10 +166,26 @@ class MainActivity : ComponentActivity() {
                     is StartupDestination.Seed -> SeedNav(
                         terminalManager = terminalManager
                             ?: throw IllegalStateException("Terminal manager not bound when navigating to Seed"),
+                        onRuntimeSettingsChanged = ::restartRuntime,
                     )
                 }
             }
         }
+    }
+
+    private fun restartRuntime() {
+        // Clear a previous generation's healthy value before requesting its
+        // replacement, so the UI never keeps showing stale health.
+        runtimeHealth.value = HealthState.Unknown
+        val binder = runtimeBinder
+        if (binder != null && binder.isBinderAlive) {
+            binder.restart()
+            return
+        }
+        // Service start/stop is asynchronous. Queue the restart for the
+        // existing/new binder instead of binding a service while it is dying.
+        restartRequested = true
+        if (!frameworkBindingRegistered) startAndBindRuntime()
     }
 
     override fun onDestroy() {

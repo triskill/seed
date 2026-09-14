@@ -1,6 +1,10 @@
 package com.seed.app.runtime
 
 import com.seed.app.data.BackendApi
+import com.seed.app.data.ModelsResponse
+import com.seed.app.data.ThinkingLevelsResponse
+import com.seed.app.data.SelectionRequest
+import com.seed.app.data.SelectionResponse
 import com.seed.app.data.HealthResponse
 import com.seed.app.data.ShellExecRequest
 import com.seed.app.data.ShellExecResponse
@@ -254,7 +258,10 @@ private class FakeBackendApi(
 private abstract class StubBackendApi : BackendApi {
     override suspend fun health(): HealthResponse = error("Not configured")
 
-    override suspend fun shellExec(request: ShellExecRequest): ShellExecResponse =
+    override suspend fun shellExec(request: ShellExecRequest, authorization: String): ShellExecResponse =
         error("Not used by HealthMonitor")
+    override suspend fun models(authorization: String): ModelsResponse = error("Not used")
+    override suspend fun thinkingLevels(provider: String, modelId: String, authorization: String): ThinkingLevelsResponse = error("Not used")
+    override suspend fun validateSelection(request: SelectionRequest, authorization: String): SelectionResponse = error("Not used")
 
 }

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -25,6 +26,7 @@ internal class RuntimeSupervisor(
     private val lifecycleLock = Any()
     private var generation = 0L
     private var handle: ProotHandle? = null
+    private var restartPending = false
     private val commandJob = scope.launch { processCommands() }
 
     val health: StateFlow<HealthState> = mutableHealth.asStateFlow()
@@ -39,7 +41,33 @@ internal class RuntimeSupervisor(
             if (terminal.get()) return
             generation += 1
             mutableHealth.value = HealthState.Unknown
-            commands.trySend(generation)
+            if (!restartPending) commands.trySend(generation)
+        }
+    }
+
+    /** Replace the current PRoot generation while keeping the service alive. */
+    fun restart() {
+        val activeHandle = synchronized(lifecycleLock) {
+            if (terminal.get()) return
+            generation += 1
+            mutableHealth.value = HealthState.Unknown
+            if (restartPending) return
+            restartPending = true
+            handle.also { handle = null }
+        }
+        scope.launch {
+            activeHandle?.destroy()
+            // ProotHandle.destroy() escalates asynchronously. Do not start a
+            // replacement until the old process is actually gone, otherwise
+            // credentials and ports can overlap across generations.
+            while (activeHandle?.isAlive == true) {
+                if (terminal.get()) return@launch
+                delay(50)
+            }
+            synchronized(lifecycleLock) {
+                restartPending = false
+                if (!terminal.get()) commands.trySend(generation)
+            }
         }
     }
 
@@ -106,7 +134,7 @@ internal class RuntimeSupervisor(
         }
 
         val installed = synchronized(lifecycleLock) {
-            if (terminal.get()) {
+            if (terminal.get() || generation != commandGeneration) {
                 false
             } else {
                 handle = replacement

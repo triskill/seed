@@ -5,17 +5,20 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
+import android.util.Base64
 import android.util.Log
 import com.seed.app.MainActivity
 import com.seed.app.R
 import com.seed.app.data.AndroidSettingsRepo
 import com.seed.app.data.ApiModule
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
+import java.security.SecureRandom
 
 /** Foreground owner of the embedded proot + FastAPI runtime. */
 class RuntimeService : Service() {
@@ -32,6 +35,7 @@ class RuntimeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        controlCapability = newControlCapability()
         startForeground(NOTIFICATION_ID, runtimeNotification())
 
         terminalManager = SeedTerminalManager(this)
@@ -43,15 +47,27 @@ class RuntimeService : Service() {
                 // process generation, so a cold start or crash replacement picks
                 // up the latest encrypted provider settings without blocking the
                 // Android service main thread.
-                val piEnvironment = AndroidSettingsRepo(applicationContext)
-                    .load()
-                    .toPiRuntimeEnvironment()
+                // First launch deliberately uses the packaged Pi defaults.
+                // Provider login and model selection are optional Settings work,
+                // never a gate before the user can reach the regular app.
+                val piEnvironment = try {
+                    AndroidSettingsRepo(applicationContext).load()
+                        .toPiRuntimeEnvironment(allowMissingModel = true)
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (_: Exception) {
+                    // A transient Keystore/DataStore failure must not turn a
+                    // saved login into a first-launch crash loop. Start with
+                    // Pi defaults; Settings remains available to retry it.
+                    emptyMap()
+                }
                 val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
                 val runtimeDir = File(filesDir, LINUX_DIRECTORY)
                 val environment = ProotEnvironment.createBackend(
                     tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
                     installation = nativeProot,
                 ) + piEnvironment + mapOf(
+                    "SEED_RUNTIME_CAPABILITY" to controlCapability,
                     // The FastAPI service passes this to both agents for generated
                     // app verification; Flask itself is a separate :7778 process.
                     "SEED_APP_URL" to "http://127.0.0.1:7778",
@@ -110,6 +126,15 @@ class RuntimeService : Service() {
     companion object {
         const val CHANNEL_ID = "seed_runtime"
         const val NOTIFICATION_ID = 1001
+        @Volatile var controlCapability: String = ""
+            private set
+
+        private fun newControlCapability(): String {
+            val bytes = ByteArray(32)
+            SecureRandom().nextBytes(bytes)
+            return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP)
+        }
+
         private const val TAG = "SeedRuntime"
         private const val LINUX_DIRECTORY = "linux"
         private const val ROOTFS_DIRECTORY = "rootfs"

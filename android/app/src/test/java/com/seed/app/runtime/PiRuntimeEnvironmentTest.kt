@@ -42,7 +42,7 @@ class PiRuntimeEnvironmentTest {
                 apiKey = "secret",
             ).toPiRuntimeEnvironment()
             assertEquals("secret", environment[expectedVariable])
-            assertEquals(3, environment.size)
+            assertEquals(4, environment.size)
         }
     }
 
@@ -53,14 +53,20 @@ class PiRuntimeEnvironmentTest {
             model = "claude",
             apiKey = "",
         ).toPiRuntimeEnvironment()
-        val local = SettingsForm(
-            provider = "local",
-            model = "local-model",
-            apiKey = "",
-        ).toPiRuntimeEnvironment()
+        assertEquals(setOf("SEED_PI_PROVIDER", "SEED_PI_MODEL", "SEED_PI_THINKING"), emptyKey.keys)
+    }
 
-        assertEquals(setOf("SEED_PI_PROVIDER", "SEED_PI_MODEL"), emptyKey.keys)
-        assertEquals(setOf("SEED_PI_PROVIDER", "SEED_PI_MODEL"), local.keys)
+    @Test
+    fun `saved login without a model starts control catalog with its credential`() {
+        val environment = SettingsForm(
+            provider = "opencode",
+            model = "",
+            apiKey = "secret",
+        ).toPiRuntimeEnvironment(allowMissingModel = true)
+
+        assertEquals("opencode", environment["SEED_PI_PROVIDER"])
+        assertEquals("secret", environment["OPENCODE_API_KEY"])
+        assertFalse(environment.containsKey("SEED_PI_MODEL"))
     }
 
     @Test
@@ -83,6 +89,7 @@ class PiRuntimeEnvironmentTest {
             SettingsForm(provider = "openai", model = " "),
             SettingsForm(provider = "openai\u0000bad", model = "model"),
             SettingsForm(provider = "openai", model = "model", apiKey = "bad\nkey"),
+            SettingsForm(provider = "local", model = "model"),
         ).forEach { form ->
             assertThrows(IllegalArgumentException::class.java) {
                 form.toPiRuntimeEnvironment()

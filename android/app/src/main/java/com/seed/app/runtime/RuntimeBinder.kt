@@ -28,5 +28,7 @@ class RuntimeBinder internal constructor(
 
     fun retry() = supervisor.startOrRetry()
 
+    fun restart() = supervisor.restart()
+
     fun stop() = stopService()
 }

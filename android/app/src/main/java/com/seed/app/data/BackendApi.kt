@@ -3,11 +3,13 @@ package com.seed.app.data
 import com.squareup.moshi.Json
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.Query
 
 /**
  * HTTP client for the FastAPI backend (`/health`,
- * `/shell/exec`).
+ * `/shell/exec`, and protected Pi control routes).
  *
  * **Phase 6.1** introduces this Retrofit interface
  * as the single typed entry point for every HTTP
@@ -78,7 +80,29 @@ interface BackendApi {
      * against empty input before calling).
      */
     @POST("shell/exec")
-    suspend fun shellExec(@Body request: ShellExecRequest): ShellExecResponse
+    suspend fun shellExec(
+        @Body request: ShellExecRequest,
+        @Header("Authorization") authorization: String = "",
+    ): ShellExecResponse
+
+    /** Protected, non-secret catalog from the dedicated Pi control process. */
+    @GET("control/v1/models")
+    suspend fun models(@Header("Authorization") authorization: String): ModelsResponse
+
+    /** Thinking capabilities are derived from the exact Pi model metadata. */
+    @GET("control/v1/thinking-levels")
+    suspend fun thinkingLevels(
+        @Query("provider") provider: String,
+        @Query("modelId") modelId: String,
+        @Header("Authorization") authorization: String,
+    ): ThinkingLevelsResponse
+
+    /** Validate the exact provider/model/thinking tuple through Pi. */
+    @POST("control/v1/selection/validate")
+    suspend fun validateSelection(
+        @Body request: SelectionRequest,
+        @Header("Authorization") authorization: String,
+    ): SelectionResponse
 }
 
 /**
@@ -122,4 +146,47 @@ data class ShellExecResponse(
     val stderr: String,
     @Json(name = "exit_code") val exitCode: Int,
     val truncated: Boolean = false,
+)
+
+
+data class PiModelDto(
+    val provider: String,
+    val id: String,
+    val name: String,
+    val contextWindow: Int? = null,
+    val maxTokens: Int? = null,
+    val input: List<String> = emptyList(),
+    val supportsThinking: Boolean = false,
+    val thinkingLevels: List<String> = listOf("off"),
+) {
+    fun toDomain() = ModelOption(
+        provider = provider,
+        id = id,
+        name = name,
+        contextWindow = contextWindow,
+        maxTokens = maxTokens,
+        input = input,
+        supportsThinking = supportsThinking,
+        thinkingLevels = thinkingLevels,
+    )
+}
+
+data class ModelsResponse(val models: List<PiModelDto> = emptyList())
+
+data class ThinkingLevelsResponse(
+    val provider: String,
+    val modelId: String,
+    val levels: List<String> = emptyList(),
+)
+
+data class SelectionRequest(
+    val provider: String,
+    val modelId: String,
+    val thinkingLevel: String? = null,
+)
+
+data class SelectionResponse(
+    val valid: Boolean,
+    val model: PiModelDto? = null,
+    val thinkingLevel: String = "off",
 )

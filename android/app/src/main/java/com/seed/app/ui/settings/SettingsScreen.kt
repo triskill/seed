@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,9 +41,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.seed.app.R
-import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
+import com.seed.app.data.ModelOption
+import com.seed.app.data.ProviderCatalog
 
 /**
  * Settings tab — provider, model, API key, ports, log
@@ -52,9 +52,8 @@ import androidx.lifecycle.ViewModelProvider
  * scrollable form bound to a `SettingsViewModel`:
  *   - a [SettingsHeader] (title + "Modified" /
  *     "Saved" status pill);
- *   - a `ProviderDropdown` (the user picks from
- *     [SettingsForm.KNOWN_PROVIDERS] or types a
- *     free-form value);
+ *   - a closed-set `ProviderDropdown` backed by the
+ *     curated provider catalog;
  *   - a model `OutlinedTextField`;
  *   - an API-key `OutlinedTextField` with
  *     [PasswordVisualTransformation] so the key
@@ -67,13 +66,9 @@ import androidx.lifecycle.ViewModelProvider
  *   - a Save button that calls
  *     [SettingsViewModel.save].
  *
- * **No persistence yet.** `SettingsViewModel.save`
- * just records the current form in an in-memory
- * `lastSaved` flow (so the screen can show "Saved"
- * / "Modified" feedback). Phase 5.7 will add a
- * `SettingsRepo` (DataStore-Preferences for the
- * non-secret fields + EncryptedSharedPreferences
- * for the API key) and rewrite `save` to persist.
+ * Settings persist through DataStore and encrypted
+ * preferences. Saving restarts the runtime so a provider/key change applies
+ * to the Pi processes; it never redirects the user out of the app.
  * The public ViewModel API
  * ([SettingsViewModel.form],
  * [SettingsViewModel.lastSaved], and the six
@@ -85,10 +80,17 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel(
         factory = SettingsViewModel.Factory,
     ),
+    onApplied: () -> Unit = {},
 ) {
     val form by viewModel.form.collectAsState()
     val lastSaved by viewModel.lastSaved.collectAsState()
     val isSaved = lastSaved != null && lastSaved == form
+    val catalog by viewModel.catalog.collectAsState()
+    val catalogLoading by viewModel.catalogLoading.collectAsState()
+    val catalogError by viewModel.catalogError.collectAsState()
+    val saveError by viewModel.saveError.collectAsState()
+    val loginStatus by viewModel.loginStatus.collectAsState()
+    val applying by viewModel.applying.collectAsState()
 
     Column(
         modifier = modifier
@@ -101,38 +103,65 @@ fun SettingsScreen(
 
         HorizontalDivider()
 
+        Text(
+            text = stringResource(R.string.settings_section_login),
+            style = MaterialTheme.typography.titleMedium,
+        )
         ProviderDropdown(
             value = form.provider,
             onValueChange = viewModel::onProviderChange,
         )
-
-        OutlinedTextField(
-            value = form.model,
-            onValueChange = viewModel::onModelChange,
-            label = { Text(stringResource(R.string.settings_field_model)) },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { testTag = "settings-field-model" },
-        )
-
         OutlinedTextField(
             value = form.apiKey,
             onValueChange = viewModel::onApiKeyChange,
             label = { Text(stringResource(R.string.settings_field_api_key)) },
             singleLine = true,
-            // Hide the key as the user types so a
-            // bystander can't read it off the
-            // screen. Phase 5.7 also stores the key
-            // in EncryptedSharedPreferences (which
-            // lives in the Android keystore) so
-            // the at-rest copy is also protected.
+            // Hide the key as the user types so a bystander cannot read it.
+            // Android stores the at-rest copy in Keystore-backed encrypted
+            // preferences.
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { testTag = "settings-field-api-key" },
         )
+        Button(
+            onClick = viewModel::login,
+            enabled = !applying,
+            modifier = Modifier.fillMaxWidth().semantics { testTag = "settings-login" },
+        ) {
+            Text(stringResource(R.string.settings_action_login))
+        }
+
+        loginStatus?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+
+        HorizontalDivider()
+        Text(
+            text = stringResource(R.string.settings_section_model),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        ModelDropdown(
+            value = form.model,
+            models = catalog,
+            loading = catalogLoading,
+            onValueChange = viewModel::onModelChange,
+        )
+        catalogError?.let {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                TextButton(onClick = viewModel::loadCatalog) { Text(stringResource(R.string.settings_action_retry)) }
+            }
+        }
+        saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+        val selectedModel = catalog.firstOrNull { it.provider == form.provider && it.id == form.model }
+        if (selectedModel != null && selectedModel.thinkingLevels.isNotEmpty()) {
+            ThinkingLevelDropdown(
+                value = form.thinkingLevel,
+                levels = selectedModel.thinkingLevels,
+                onValueChange = viewModel::onThinkingLevelChange,
+            )
+        }
 
         // The two port fields sit on one row so the
         // form stays compact on a phone screen.
@@ -164,12 +193,13 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Button(
-            onClick = viewModel::save,
+            onClick = { viewModel.save(onApplied) },
+            enabled = !applying,
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { testTag = "settings-save" },
         ) {
-            Text(stringResource(R.string.settings_action_save))
+            Text(stringResource(R.string.settings_action_save_model))
         }
         Text(
             text = stringResource(R.string.settings_restart_required),
@@ -271,10 +301,8 @@ private fun PortField(
 
 /**
  * M3 exposed-dropdown for the provider name. The
- * list is [SettingsForm.KNOWN_PROVIDERS] but the
- * field is still free-form: a value not in the
- * list is kept as-is (some users will type their
- * own provider URL). The dropdown only suggests.
+ * list is the closed-set [ProviderCatalog] used by
+ * Settings. Unknown provider identifiers cannot be persisted or passed to Pi.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -283,42 +311,63 @@ private fun ProviderDropdown(
     onValueChange: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = it },
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { testTag = "settings-field-provider" },
+        modifier = Modifier.fillMaxWidth().semantics { testTag = "settings-field-provider" },
     ) {
-        // Use the un-styled `TextField` (not
-        // `OutlinedTextField`) here because
-        // `ExposedDropdownMenuBox` provides its own
-        // outlined chrome via the `menuAnchor`
-        // modifier on this child.
         TextField(
-            value = value,
-            onValueChange = onValueChange,
+            value = ProviderCatalog.find(value)?.displayName ?: value,
+            onValueChange = {},
+            readOnly = true,
             label = { Text(stringResource(R.string.settings_field_provider)) },
-            readOnly = false,
-            trailingIcon = {
-                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
-            },
-            modifier = Modifier.menuAnchor(),
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
         )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            SettingsForm.KNOWN_PROVIDERS.forEach { provider ->
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ProviderCatalog.PROVIDERS.forEach { provider ->
                 DropdownMenuItem(
-                    text = { Text(provider) },
-                    onClick = {
-                        onValueChange(provider)
-                        expanded = false
-                    },
+                    text = { Text(provider.displayName) },
+                    onClick = { onValueChange(provider.id); expanded = false },
                 )
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelDropdown(
+    value: String,
+    models: List<ModelOption>,
+    loading: Boolean,
+    onValueChange: (ModelOption) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var query by remember(value) { mutableStateOf(value) }
+    val selected = models.firstOrNull { it.id == value }
+    val filtered = models.filter { query.isBlank() || it.id.contains(query, true) || it.name.contains(query, true) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.fillMaxWidth().semantics { testTag = "settings-field-model" },
+    ) {
+        TextField(
+            value = if (expanded) query else (selected?.name ?: value),
+            onValueChange = { query = it; expanded = true },
+            readOnly = loading,
+            label = { Text(stringResource(R.string.settings_field_model)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            filtered.forEach { model ->
+                DropdownMenuItem(
+                    text = { Text("${model.name} (${model.id})") },
+                    onClick = { onValueChange(model); query = model.id; expanded = false },
+                )
+            }
+            if (filtered.isEmpty()) DropdownMenuItem(text = { Text("No catalog models") }, onClick = { expanded = false })
         }
     }
 }
@@ -366,6 +415,31 @@ private fun LogLevelDropdown(
                         expanded = false
                     },
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ThinkingLevelDropdown(
+    value: String,
+    levels: List<String>,
+    onValueChange: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        TextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Thinking level") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth().semantics { testTag = "settings-field-thinking" },
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            levels.forEach { level ->
+                DropdownMenuItem(text = { Text(level) }, onClick = { onValueChange(level); expanded = false })
             }
         }
     }

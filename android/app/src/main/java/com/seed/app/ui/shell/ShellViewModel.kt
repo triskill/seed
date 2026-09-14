@@ -7,6 +7,7 @@ import com.seed.app.data.ApiModule
 import com.seed.app.data.BackendApi
 import com.seed.app.data.ShellExecRequest
 import com.seed.app.data.ShellExecResponse
+import com.seed.app.runtime.RuntimeService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -142,7 +143,10 @@ class ShellViewModel(
         _isExecuting.value = true
         viewModelScope.launch {
             val response: ShellExecResponse? = try {
-                backend.shellExec(ShellExecRequest(command = command))
+                backend.shellExec(
+                    ShellExecRequest(command = command),
+                    "Bearer ${RuntimeService.controlCapability}",
+                )
             } catch (e: Exception) {
                 // Network error, HTTP 4xx/5xx, etc.
                 // We surface this as a -1 exit

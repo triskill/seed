@@ -59,6 +59,7 @@ import com.seed.app.ui.shell.ShellScreen
 @Composable
 fun SeedNav(
     terminalManager: SeedTerminalManager,
+    onRuntimeSettingsChanged: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -111,7 +112,9 @@ fun SeedNav(
             composable(Routes.APP) { AppScreen() }
             composable(Routes.CHAT) { ChatScreen() }
             composable(Routes.SHELL) { ShellScreen(terminalManager = terminalManager) }
-            composable(Routes.SETTINGS) { SettingsScreen() }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(onApplied = onRuntimeSettingsChanged)
+            }
         }
     }
 }

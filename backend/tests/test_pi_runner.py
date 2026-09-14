@@ -246,3 +246,40 @@ def test_stop_kills_term_ignoring_process_group():
     if stat_path.exists():
         state = stat_path.read_text().split()[2]
         assert state == "Z"
+
+
+def test_rpc_request_correlates_response_and_hides_transport_frames():
+    fixture = Path(__file__).parent / "fixtures" / "fake_pi_rpc.py"
+
+    async def scenario():
+        runner = PiRunner(cmd=[sys.executable, str(fixture)], role="control")
+        try:
+            await runner.start()
+            response = await runner.rpc_request({"type": "get_available_models"})
+            # The response is consumed by rpc_request, not read_lines().
+            async with asyncio.timeout(1):
+                await asyncio.sleep(0.05)
+            assert runner._lines.empty()
+            return response
+        finally:
+            await runner.stop()
+
+    response = asyncio.run(scenario())
+    assert response["success"] is True
+    assert response["data"]["models"][0]["id"] == "gpt-test"
+
+
+def test_rpc_request_timeout_removes_pending_request():
+    fixture = Path(__file__).parent / "fixtures" / "fake_pi_rpc.py"
+
+    async def scenario():
+        runner = PiRunner(cmd=[sys.executable, str(fixture)], role="control")
+        try:
+            await runner.start()
+            with pytest.raises(asyncio.TimeoutError):
+                await runner.rpc_request({"type": "delay"}, timeout=0.05)
+            return dict(runner._rpc_pending)
+        finally:
+            await runner.stop()
+
+    assert asyncio.run(scenario()) == {}

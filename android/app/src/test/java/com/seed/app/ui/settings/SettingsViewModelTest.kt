@@ -38,16 +38,15 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun onProviderChangeUpdatesProviderAndLeavesOtherFieldsUnchanged() {
+    fun onProviderChangeClearsProviderSpecificModelAndKey() {
         val vm = SettingsViewModel()
         val before = vm.form.value
-
         vm.onProviderChange("anthropic")
 
         val after = vm.form.value
         assertEquals("anthropic", after.provider)
-        assertEquals(before.model, after.model)
-        assertEquals(before.apiKey, after.apiKey)
+        assertEquals("", after.model)
+        assertEquals("", after.apiKey)
         assertEquals(before.backendPort, after.backendPort)
         assertEquals(before.webappPort, after.webappPort)
         assertEquals(before.logLevel, after.logLevel)
@@ -114,6 +113,7 @@ class SettingsViewModelTest {
                 provider = "anthropic",
                 model = "claude-sonnet-4-5",
                 apiKey = "sk-test",
+                thinkingLevel = "off",
                 backendPort = 8888,
                 webappPort = 9999,
                 logLevel = LogLevel.WARNING,
@@ -133,6 +133,22 @@ class SettingsViewModelTest {
         vm.save()
 
         assertEquals(vm.form.value, vm.lastSaved.value)
+    }
+
+    @Test
+    fun loginPersistsCredentialsWithoutRequiringAModelOrRestarting() {
+        val repo = RecordingSettingsRepo()
+        val vm = SettingsViewModel(repo = repo)
+        vm.onProviderChange("opencode")
+        vm.onApiKeyChange("key")
+
+        vm.login()
+
+        assertEquals("opencode", repo.lastSaved?.provider)
+        assertEquals("", repo.lastSaved?.model)
+        assertEquals("key", repo.lastSaved?.apiKey)
+        assertEquals(repo.lastSaved, vm.lastSaved.value)
+        assertEquals("Login saved. Select a model, then save model settings.", vm.loginStatus.value)
     }
 
     // --- Phase 5.7 (still relevant) -------------------------------

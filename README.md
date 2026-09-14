@@ -23,8 +23,9 @@ The pipe-backed `PiRunner` and both real pi RPC processes were accepted inside
 the native ARM64 Android PRoot runtime on 2026-08-14. Saved Android provider/model/key
 settings are loaded from DataStore/Keystore storage and injected on embedded
 runtime startup without copying the key to loopback HTTP or plaintext config.
-A successful provider-backed turn, live apply/restart after Save, embedded Python
-edit reload, and product hardening remain Phase 10 work.
+First launch starts the regular embedded app with its packaged Pi defaults.
+Provider login and model/thinking selection are optional, separate controls in
+Settings; saved credentials remain in Android Keystore-backed storage.
 
 ## Quick start (host dev)
 
@@ -90,6 +91,8 @@ to merged `assets/linux/rootfs.tar` and stores it with `noCompress`; the app
 extracts rootfs data and the marker to `filesDir`, but never copies PRoot there.
 
 A fresh checkout has the marker but no generated runtime binaries or rootfs.
+Android starts normally on first launch. Open Settings to add a provider API
+key and choose model/thinking-level choices from Pi's catalog.
 Install Docker/tooling and an ARM64 Android target as described in
 [`android/README.md`](android/README.md) and [`docs/build-runtime.md`](docs/build-runtime.md),
 then build explicitly:
