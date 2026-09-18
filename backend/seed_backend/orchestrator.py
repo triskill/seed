@@ -45,6 +45,7 @@ from seed_backend.events import (
 from seed_backend.middleman import extract_dispatch
 from seed_backend.pi_runner import PiRunner
 from seed_backend.process_env import PI_CREDENTIAL_ENV_VARS, SEED_CAPABILITY_ENV
+from seed_backend.provider_allowlist import credential_env_for
 
 log = logging.getLogger(__name__)
 
@@ -271,17 +272,7 @@ def pi_env_for_role(
     env.pop(SEED_CAPABILITY_ENV, None)
     env.pop("SEED_CONTROL_ONLY", None)
     selected_provider = os.environ.get("SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER).strip().lower()
-    selected_key = {
-        "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
-        "google": "GEMINI_API_KEY", "deepseek": "DEEPSEEK_API_KEY",
-        "groq": "GROQ_API_KEY", "xai": "XAI_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY", "mistral": "MISTRAL_API_KEY",
-        "fireworks": "FIREWORKS_API_KEY", "together": "TOGETHER_API_KEY",
-        "opencode": "OPENCODE_API_KEY", "opencode-go": "OPENCODE_API_KEY",
-        "zai": "ZAI_API_KEY", "minimax": "MINIMAX_API_KEY",
-        "moonshotai": "MOONSHOT_API_KEY", "nvidia": "NVIDIA_API_KEY",
-        "cerebras": "CEREBRAS_API_KEY", "kimi-coding": "KIMI_API_KEY",
-    }.get(selected_provider)
+    selected_key = credential_env_for(selected_provider)
     for name in PI_CREDENTIAL_ENV_VARS:
         if name != selected_key:
             env.pop(name, None)
