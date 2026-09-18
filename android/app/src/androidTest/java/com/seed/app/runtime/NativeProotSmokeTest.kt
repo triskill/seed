@@ -3,6 +3,7 @@ package com.seed.app.runtime
 import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.seed.app.data.AndroidSettingsRepo
 import com.seed.app.ui.settings.SettingsForm
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
@@ -189,6 +190,68 @@ class NativeProotSmokeTest {
             timeoutSeconds = PI_PROCESS_TIMEOUT_SECONDS,
         )
         assertTrue(flaskOutput, flaskOutput.contains("APP_DOMAIN_FLASK_RELOAD_OK"))
+    }
+
+    @Test
+    fun persistedSelectionReachesNextPiGeneration() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val runtimeDir = File(context.cacheDir, "native-proot-persist/runtime")
+        runBlocking {
+            RuntimeExtractor(AndroidAssetSource(context.assets)).extract(runtimeDir).collect()
+        }
+        val rootfs = File(runtimeDir, "rootfs")
+        val nativeProot = NativeProot.resolve(context.applicationInfo.nativeLibraryDir)
+
+        // Persist a selection through the same encrypted repo Android uses in
+        // production. This is the Phase 4 acceptance gate: after the user
+        // saves a model in Settings, the next PRoot generation must see the
+        // saved env vars.
+        val repo = AndroidSettingsRepo(context)
+        runBlocking {
+            repo.save(
+                SettingsForm(
+                    provider = "opencode-go",
+                    model = "deepseek-v4-flash",
+                    apiKey = "instrumentation-not-a-real-key",
+                    thinkingLevel = "low",
+                ),
+            )
+        }
+        val persisted = runBlocking { repo.load() }
+        assertEquals("opencode-go", persisted?.provider)
+        assertEquals("deepseek-v4-flash", persisted?.model)
+        assertEquals("low", persisted?.thinkingLevel)
+        assertEquals("instrumentation-not-a-real-key", persisted?.apiKey)
+
+        // Convert the persisted form to the env map Android injects into the
+        // next PRoot generation.
+        val environment = ProotEnvironment.createBackend(
+            tempDir = File(context.cacheDir, "native-proot-persist/tmp"),
+            installation = nativeProot,
+        ) + persisted!!.toPiRuntimeEnvironment()
+
+        // Run a guest Python interpreter and assert the env vars are exactly
+        // what we saved. This is the strongest possible test that the
+        // selection reaches the next generation without manual rewriting.
+        val output = runGuest(
+            domain = File("/proc/self/attr/current").readText().trim(),
+            rootfs = rootfs,
+            nativeProot = nativeProot,
+            environment = environment,
+            command = listOf(
+                "/usr/bin/python3",
+                "-c",
+                """
+                    import os
+                    assert os.environ["SEED_PI_PROVIDER"] == "opencode-go"
+                    assert os.environ["SEED_PI_MODEL"] == "deepseek-v4-flash"
+                    assert os.environ["SEED_PI_THINKING"] == "low"
+                    assert os.environ["OPENCODE_API_KEY"] == "instrumentation-not-a-real-key"
+                    print("APP_DOMAIN_PERSIST_OK")
+                """.trimIndent(),
+            ),
+        )
+        assertEquals("APP_DOMAIN_PERSIST_OK", output.trim())
     }
 
     private fun runGuest(
