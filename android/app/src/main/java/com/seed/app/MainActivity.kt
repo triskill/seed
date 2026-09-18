@@ -167,6 +167,8 @@ class MainActivity : ComponentActivity() {
                         terminalManager = terminalManager
                             ?: throw IllegalStateException("Terminal manager not bound when navigating to Seed"),
                         onRuntimeSettingsChanged = ::restartRuntime,
+                        onSettingsOpened = ::enterControlOnly,
+                        onSettingsClosed = ::leaveControlOnly,
                     )
                 }
             }
@@ -186,6 +188,24 @@ class MainActivity : ComponentActivity() {
         // existing/new binder instead of binding a service while it is dying.
         restartRequested = true
         if (!frameworkBindingRegistered) startAndBindRuntime()
+    }
+
+    private fun enterControlOnly() {
+        // Switching modes while Settings is open lets the catalog populate
+        // from the lazy control service without booting the middleman/worker.
+        // If the service isn't bound yet, the next /control/v1/models call
+        // will lazily start PiControlService on the running orchestrator.
+        val binder = runtimeBinder
+        if (binder != null && binder.isBinderAlive) binder.startControlOnly()
+    }
+
+    private fun leaveControlOnly() {
+        // If the user saved a model, onApplied already called restartRuntime()
+        // and the new generation will reflect the chosen mode. We do not queue
+        // this transition across the service-connection race: see
+        // enterControlOnly().
+        val binder = runtimeBinder
+        if (binder != null && binder.isBinderAlive) binder.startNormal()
     }
 
     override fun onDestroy() {

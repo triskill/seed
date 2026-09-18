@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -60,6 +61,8 @@ import com.seed.app.ui.shell.ShellScreen
 fun SeedNav(
     terminalManager: SeedTerminalManager,
     onRuntimeSettingsChanged: () -> Unit = {},
+    onSettingsOpened: () -> Unit = {},
+    onSettingsClosed: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -113,6 +116,10 @@ fun SeedNav(
             composable(Routes.CHAT) { ChatScreen() }
             composable(Routes.SHELL) { ShellScreen(terminalManager = terminalManager) }
             composable(Routes.SETTINGS) {
+                DisposableEffect(Unit) {
+                    onSettingsOpened()
+                    onDispose { onSettingsClosed() }
+                }
                 SettingsScreen(onApplied = onRuntimeSettingsChanged)
             }
         }
