@@ -103,12 +103,20 @@ class ProotRunner(
         override val stderr: Flow<String> = stderrFlow
         override fun destroy() {
             if (!stopping.compareAndSet(false, true)) return
+            // Force-close stdin/stdout/stderr immediately. This unblocks any
+            // pending readLine() on the drain coroutine and lets the channel
+            // close in finally, signalling "process closed" to the supervisor
+            // without waiting for the JVM `Process.isAlive()` (which on
+            // Android is unreliable for Termux PRoot).
+            runCatching {
+                process.outputStream?.close()
+                process.inputStream?.close()
+                process.errorStream?.close()
+            }
             process.destroy()
-
-            // Service.onDestroy runs on the main thread, so waiting there
-            // would risk an ANR. A short-lived daemon watcher provides the
-            // graceful deadline and escalates independently of the service's
-            // coroutine scope, which is cancelled during teardown.
+            // Best-effort daemon escalation. The JVM's group kill is unreliable
+            // for Termux PRoot, but a follow-up SIGKILL is harmless if the
+            // process has already exited from the stream close.
             Thread({
                 try {
                     if (!process.waitFor(terminationGracePeriodMs, TimeUnit.MILLISECONDS)) {

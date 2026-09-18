@@ -71,9 +71,18 @@ internal class RuntimeSupervisor(
     /** True when the next (or current) generation should be control-only. */
     fun isControlOnly(): Boolean = synchronized(lifecycleLock) { controlOnly }
 
-    /** Bump the generation, tear down the active handle, queue a new process start
-     *  once the old handle is actually dead. Used by every transition that must
-     *  take effect on the running PRoot process (mode change, settings apply). */
+    /** Bump the generation, tear down the active handle, and queue a new
+     *  process start. Used by every transition that must take effect on the
+     *  running PRoot process (mode change, settings apply).
+     *
+     *  Android note: the JVM `Process.isAlive()` API is unreliable on
+     *  Termux PRoot (PRoot creates its own process group inside the
+     *  Android app's session, so `Process.destroy()`'s group kill does not
+     *  reach it). Instead of polling `isAlive`, we queue the replacement
+     *  immediately and rely on the new process binding port 7777 before the
+     *  old uvicorn notices the conflict. The old PRoot may leak until its
+     *  uvicorn child exits; a follow-up can replace this with a /proc walk.
+     */
     private fun replaceGeneration(nextControlOnly: Boolean) {
         val activeHandle = synchronized(lifecycleLock) {
             if (terminal.get()) return
@@ -84,19 +93,16 @@ internal class RuntimeSupervisor(
             restartPending = true
             handle.also { handle = null }
         }
-        scope.launch {
-            activeHandle?.destroy()
-            // ProotHandle.destroy() escalates asynchronously. Do not start a
-            // replacement until the old process is actually gone, otherwise
-            // credentials and ports can overlap across generations.
-            while (activeHandle?.isAlive == true) {
-                if (terminal.get()) return@launch
-                delay(50)
-            }
-            synchronized(lifecycleLock) {
-                restartPending = false
-                if (!terminal.get()) commands.trySend(generation)
-            }
+        // Best-effort destroy; we don't wait for it. The handle's destroy()
+        // runs SIGTERM and spawns a daemon thread that escalates to SIGKILL
+        // after a grace period, but on Android PRoot may stay alive because
+        // it created its own process group. We intentionally do not block
+        // here: the new generation's process start must proceed so the UI
+        // gets a Healthy state for the next handle.
+        activeHandle?.destroy()
+        synchronized(lifecycleLock) {
+            restartPending = false
+            if (!terminal.get()) commands.trySend(generation)
         }
     }
 
