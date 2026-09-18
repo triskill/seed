@@ -1,12 +1,16 @@
 package com.seed.app.runtime
 
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -18,6 +22,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.InterruptedIOException
 import java.io.OutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -255,6 +260,99 @@ class ProotRunnerTest {
         )
         assertFalse(process.isAlive)
     }
+
+    @Test
+    fun drainClosesCleanlyWhenProcessDestroyInterruptsRead() = runTest(UnconfinedTestDispatcher()) {
+        // Reproduces the on-device crash from opening Settings:
+        // RuntimeSupervisor.replaceGeneration() calls handle.destroy() from a
+        // coroutine on the same scope as the drain; destroy() closes the
+        // process pipes from a different thread, and the drain's
+        // BufferedReader.readLine() throws InterruptedIOException. Before the
+        // fix, that exception escaped the coroutine and crashed the whole
+        // service process. After the fix, the drain swallows the
+        // InterruptedIOException and completes normally.
+        //
+        // runTest swallows uncaught exceptions by default, so we capture the
+        // exception via a CoroutineExceptionHandler installed on a child
+        // scope; the test fails if the handler ever fires.
+        val captured = mutableListOf<Throwable>()
+        val handler = CoroutineExceptionHandler { _, exc -> captured += exc }
+        val parentScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler) + handler)
+
+        val rootfs = tempFolder.newFolder("rootfs")
+        val proot = tempFolder.newFile("proot")
+        // Pre-set the interrupt so the very first BufferedReader.fill() throws.
+        val stdout = InterruptingInputStream("ignored\n")
+        stdout.interruptNextRead()
+        val stderr = InterruptingInputStream("")
+        val process = InterruptibleFakeProcess(stdout, stderr)
+        val fake = RecordingProcessFactory(process)
+
+        ProotRunner(proot, rootfs, factory = fake).start(parentScope)
+
+        // Wait for the drain coroutine to observe the InterruptedIOException
+        // and settle. If it swallowed the exception cleanly, no captured
+        // exception is recorded; if it propagated, the handler fires.
+        testScheduler.advanceTimeBy(100)
+        testScheduler.runCurrent()
+
+        assertEquals(
+            "drain must swallow InterruptedIOException, not propagate to the scope: $captured",
+            emptyList<Throwable>(),
+            captured,
+        )
+
+        parentScope.cancel()
+    }
+}
+
+/** InputStream that throws InterruptedIOException once after [interruptNextRead] is invoked.
+ *
+ *  Used to reproduce what `Process.destroy()` does on Android when called from
+ *  a thread other than the drain's: it closes the pipes, and Android's pipe
+ *  layer raises InterruptedIOException to the readLine() caller.
+ */
+private class InterruptingInputStream(
+    initialData: String,
+) : InputStream() {
+    private val buffer = initialData.toByteArray(Charsets.UTF_8)
+    private var pos = 0
+    @Volatile private var interrupted = false
+
+    fun interruptNextRead() { interrupted = true }
+
+    override fun read(): Int {
+        if (interrupted) throw InterruptedIOException("simulated close()")
+        if (pos >= buffer.size) return -1
+        return buffer[pos++].toInt()
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        if (interrupted) throw InterruptedIOException("simulated close()")
+        if (pos >= buffer.size) return -1
+        val n = minOf(len, buffer.size - pos)
+        for (i in 0 until n) {
+            b[off + i] = buffer[pos++]
+        }
+        return n
+    }
+}
+
+/** FakeProcess that exposes the supplied InputStreams directly (no ByteArrayInputStream wrapping). */
+private class InterruptibleFakeProcess(
+    private val stdoutStream: InputStream,
+    private val stderrStream: InputStream,
+) : Process() {
+    private val alive = AtomicBoolean(true)
+    override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+    override fun getInputStream(): InputStream = stdoutStream
+    override fun getErrorStream(): InputStream = stderrStream
+    override fun waitFor(): Int { /* unused */ throw InterruptedException() }
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = false
+    override fun exitValue(): Int = 0
+    override fun destroy() { alive.set(false) }
+    override fun destroyForcibly(): Process { alive.set(false); return this }
+    override fun isAlive(): Boolean = alive.get()
 }
 
 // ---- Test doubles -------------------------------------------------------

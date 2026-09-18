@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
@@ -132,6 +133,18 @@ class ProotRunner(
                         line = reader.readLine()
                     }
                 }
+            } catch (closed: IOException) {
+                // destroy() on the parent handle closes the process pipes from
+                // another thread; Android's pipe layer throws
+                // InterruptedIOException to the readLine() caller in that
+                // case. The drain's coroutine is launched on the service
+                // scope (a SupervisorJob), but the IOException still escapes
+                // into the dispatcher and would otherwise reach the JVM's
+                // default uncaught handler and crash the process. Treat
+                // stream closure as the natural end of this drain: the
+                // channel's collectors see an EOF and the supervisor spawns
+                // the next generation. The IOException is intentionally not
+                // logged because every generation replacement triggers one.
             } finally {
                 sink.close()
             }
