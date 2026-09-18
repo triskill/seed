@@ -546,6 +546,28 @@ stable test tags. The following Compose assertions are deferred:
   test body until the dropdowns are extracted into a stable composable
   signature.
 
+## Runtime generation restart (resolved manually, not the plan)
+
+Two on-device bugs surfaced after the plan work landed:
+
+1. **Crash on Settings tap.** `ProotRunner.drain` did not catch
+   `InterruptedIOException` raised when `Process.destroy()` closed the
+   pipes from another thread; the exception escaped the coroutine and
+   killed the service process. Fixed in `4f3ab99`.
+2. **Stuck on splash after Settings tap.** `RuntimeSupervisor.replaceGeneration`
+   polled `Process.isAlive()` to wait for the old PRoot to die, but
+   Android's `Process` API cannot reach Termux PRoot (PRoot creates its
+   own process group inside the app's session). Fixed in `c51979f` by
+   queueing the replacement command immediately and closing the
+   stdin/stdout/stderr pipes so the drain completes via the existing
+   IOException catch.
+
+**Known trade-off:** the old PRoot may linger until its uvicorn child
+exits from the closed pipe. A follow-up can walk
+`/proc/<ppid>/task/<ppid>/children` to kill the actual PRoot PID
+directly if this becomes a problem (memory pressure from repeated
+restart cycles).
+
 ---
 
 ## Quick reference
