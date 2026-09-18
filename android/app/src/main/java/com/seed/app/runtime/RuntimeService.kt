@@ -63,7 +63,7 @@ class RuntimeService : Service() {
                 }
                 val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
                 val runtimeDir = File(filesDir, LINUX_DIRECTORY)
-                val environment = ProotEnvironment.createBackend(
+                val baseEnvironment = ProotEnvironment.createBackend(
                     tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
                     installation = nativeProot,
                 ) + piEnvironment + mapOf(
@@ -72,6 +72,11 @@ class RuntimeService : Service() {
                     // app verification; Flask itself is a separate :7778 process.
                     "SEED_APP_URL" to "http://127.0.0.1:7778",
                 )
+                val environment = if (supervisor.isControlOnly()) {
+                    baseEnvironment + mapOf("SEED_CONTROL_ONLY" to "1")
+                } else {
+                    baseEnvironment - "SEED_CONTROL_ONLY"
+                }
                 val runner = ProotRunner(
                     prootExecutable = nativeProot.executable,
                     rootfsDir = File(runtimeDir, ROOTFS_DIRECTORY),

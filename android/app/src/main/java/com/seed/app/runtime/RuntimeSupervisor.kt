@@ -27,6 +27,7 @@ internal class RuntimeSupervisor(
     private var generation = 0L
     private var handle: ProotHandle? = null
     private var restartPending = false
+    private var controlOnly: Boolean = false
     private val commandJob = scope.launch { processCommands() }
 
     val health: StateFlow<HealthState> = mutableHealth.asStateFlow()
@@ -46,9 +47,21 @@ internal class RuntimeSupervisor(
     }
 
     /** Replace the current PRoot generation while keeping the service alive. */
-    fun restart() {
+    fun restart() = replaceGeneration(controlOnly)
+
+    /** Switch into control-only mode and replace the current PRoot generation. */
+    fun startControlOnly() = replaceGeneration(true)
+
+    /** Switch back to the normal orchestrator and replace the current generation. */
+    fun startNormal() = replaceGeneration(false)
+
+    /** True when the next (or current) generation should be control-only. */
+    fun isControlOnly(): Boolean = synchronized(lifecycleLock) { controlOnly }
+
+    private fun replaceGeneration(nextControlOnly: Boolean) {
         val activeHandle = synchronized(lifecycleLock) {
             if (terminal.get()) return
+            controlOnly = nextControlOnly
             generation += 1
             mutableHealth.value = HealthState.Unknown
             if (restartPending) return

@@ -30,5 +30,9 @@ class RuntimeBinder internal constructor(
 
     fun restart() = supervisor.restart()
 
+    fun startControlOnly() = supervisor.startControlOnly()
+
+    fun startNormal() = supervisor.startNormal()
+
     fun stop() = stopService()
 }

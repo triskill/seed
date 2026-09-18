@@ -423,6 +423,76 @@ class RuntimeSupervisorTest {
         assertEquals(1, handle.destroyCalls)
         assertFalse(supervisor.isRuntimeAlive)
     }
+
+    @Test
+    fun startControlOnlyLaunchesOneGenerationAndSetsMode() = runTest {
+        val handle = FakeProotHandle()
+        var processStarts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = {
+                processStarts += 1
+                handle
+            },
+            healthStates = { emptyFlow() },
+        )
+
+        assertFalse(supervisor.isControlOnly())
+        supervisor.startControlOnly()
+        runCurrent()
+
+        assertEquals(1, processStarts)
+        assertTrue(supervisor.isControlOnly())
+    }
+
+    @Test
+    fun startNormalLaunchesOneGenerationAndClearsMode() = runTest {
+        val handle = FakeProotHandle()
+        var processStarts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = {
+                processStarts += 1
+                handle
+            },
+            healthStates = { emptyFlow() },
+        )
+
+        supervisor.startControlOnly()
+        runCurrent()
+        assertTrue(supervisor.isControlOnly())
+
+        supervisor.startNormal()
+        runCurrent()
+
+        assertEquals(2, processStarts)
+        assertFalse(supervisor.isControlOnly())
+    }
+
+    @Test
+    fun startControlOnlyReplacesPreviousGeneration() = runTest {
+        val handle = FakeProotHandle()
+        var processStarts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = {
+                processStarts += 1
+                handle
+            },
+            healthStates = { emptyFlow() },
+        )
+
+        supervisor.startOrRetry()
+        runCurrent()
+        supervisor.startControlOnly()
+        runCurrent()
+
+        // Two distinct generations were spawned; the previous handle was
+        // destroyed so the next start picks up the new env.
+        assertEquals(2, processStarts)
+        assertEquals(1, handle.destroyCalls)
+        assertTrue(supervisor.isControlOnly())
+    }
 }
 
 private class FakeProotHandle(
