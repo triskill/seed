@@ -12,8 +12,8 @@
 
 Recover the embedded orchestrator by removing the Android ARM64-host → QEMU
 user-mode → x86_64 Alpine guest path, then replace the free-form Settings
-provider/model/key form with a first-run, Pi-backed provider login and model
-selection experience.
+provider/model/key form with a Pi-backed catalog and selection that the user
+drives from Settings on demand (no first-run onboarding gate).
 
 The target is one **native ARM64 Android runtime**: ARM64 Android device,
 ARM64 Termux PRoot, ARM64 Alpine rootfs, ARM64 Node, and the bundled Pi CLI.
@@ -29,8 +29,10 @@ There is no x86 guest and no QEMU user-mode executable in the APK.
 2. **Do not embed or automate Pi's terminal `/login` and `/model` screens in
    Compose.** They are JavaScript TUI components in the bundled Node CLI, not
    an Android/Kotlin API or a stable machine protocol. Running them through the
-   Shell would be a poor first-launch UI and would leave Pi's `auth.json` in
-   the extracted guest filesystem.
+   Shell would be a poor UI and would leave Pi's `auth.json` in the extracted
+   guest filesystem. Selection lives in Settings, is gated on a Pi-validated
+   tuple, and applies on the next runtime generation; no first-run onboarding
+   screen is shown.
 3. **Reuse Pi's headless model RPC, not its TUI.** Pi 0.80.3 exposes
    `get_available_models`, `set_model`, and `set_thinking_level` RPC commands.
    It has no thinking-level discovery command; Seed derives the levels from
@@ -215,53 +217,40 @@ code or command can select QEMU/x86.
 models/thinking levels and validate a choice via the backend-owned RPC process,
 without parsing a terminal UI or human CLI table.
 
-## Phase 4 — first-run provider connection and model selection
+## Phase 4 — Settings-driven provider login and model selection
 
-1. Add `OnboardingRepository` with an explicit incomplete/completed state. A
-   fresh install displays setup instead of silently using the inconsistent UI
-   default (`openai/gpt-4o`) or immediately starting the packaged
-   `opencode-go/deepseek-v4-flash` agents.
-2. Use this bootstrap sequence:
-   - welcome/privacy explanation and a curated, allowlisted **provider** list;
-   - API-key connection screen (or a no-key local-provider screen), which saves
-     the key through `AndroidSettingsRepo` only;
-   - extract/start a **control-only runtime** with that credential environment,
-     but do not start the two agent roles yet;
-   - call the protected Pi control endpoints, show a searchable provider-scoped
-     model list and supported thinking levels, then validate the selected
-     tuple with Pi;
-   - review/save, mark onboarding complete, stop the control-only generation,
-     and start the normal agent runtime with the selected values.
+1. The curated Android `ProviderCatalog` is the single source of provider IDs
+   and credential env var names; the backend `provider_allowlist` mirrors
+   it. A drift test pins both sides.
+2. `AndroidSettingsRepo` persists non-secret fields in DataStore and the API
+   key in Keystore-backed `EncryptedSharedPreferences`. The credential env
+   allowlist is the only path through which the key reaches Pi.
+3. When the Settings screen opens and no model has been saved, Android
+   requests a control-only runtime generation (`SEED_CONTROL_ONLY=1`); the
+   lazy `PiControlService` answers `/control/v1/*` and the catalog populates
+   from the bundled Pi without booting the middleman/worker. When Settings
+   closes (without a successful save), Android requests a return to the
+   normal orchestrator.
+4. `SettingsViewModel.login()` persists the provider + key without
+   restarting the runtime. `SettingsViewModel.save(onApplied)` validates
+   the (provider, model, thinkingLevel) tuple through
+   `/control/v1/selection/validate`, persists the form, and invokes
+   `onApplied`, which is wired to `MainActivity.restartRuntime()` ->
+   `RuntimeSupervisor.restartWithMode(false)`. Restart replaces the PRoot
+   generation, so the next `pi` children inherit the saved env vars.
+5. The Compose UI shows a provider dropdown (closed set), an API key field
+   (password-masked), a Login button, a model dropdown (filtered catalog),
+   a thinking-level dropdown (catalog-derived), and a Save model and
+   restart button. Login and Save are independent: the user can save a
+   login without selecting a model, and can change the model without
+   re-entering the key.
+6. The Phase 3 capability is required for every `/control/v1/*` and
+   `/chat` request. Control endpoints never return a credential.
 
-   The Phase-3 proof must confirm how a control-only Pi process starts before a
-   final model has been picked. If Pi requires a bootstrap model, use a pinned,
-   tested non-secret discovery default only for this process; it must never
-   become the user's saved or silently active agent model.
-3. Replace `SettingsForm.KNOWN_PROVIDERS` and the free-form model field with
-   catalog-backed Compose selectors. Show model ID/name and only Pi-returned
-   capability data; offer custom model entry only behind an explicit advanced
-   path and validate it through `set_model`, not by trusting text input.
-4. Extend `SettingsForm`, `SettingsRepo`, `AndroidSettingsRepo`, and
-   `PiRuntimeEnvironment` to persist provider/model/thinking level. Store
-   public selection data in DataStore and the API key only in
-   `EncryptedSharedPreferences`; expand the credential-env allowlist only for
-   provider/version combinations that the contract tests approve. Do not put a
-   key in argv, a loopback request body, `config.json`, a model cache, or the
-   guest's `auth.json`.
-5. Treat selection as global to both middleman and worker for v0.1. After
-   initial setup, a Settings change persists first and uses an explicit,
-   idle-only apply action: stop/restart the PRoot generation, then verify Pi
-   readiness. This avoids one runner changing model during a task and ensures
-   startup `pi_cmd_for_role()` flags, runtime state, and stored state agree.
-   Live `set_model` for both roles is a later feature only after in-flight-turn
-   semantics are specified.
-6. Update backend defaults/docs so their values are development fallbacks only.
-   An incomplete onboarding or failed provider check must leave a clear
-   setup-required/retry state, not a broken chat request.
-
-**Exit:** a fresh user connects a supported BYOK provider, selects a model and
-thinking level supplied by the exact Pi runtime, and completes a real
-provider-backed RPC turn using the persisted choice after normal runtime start.
+**Exit:** A fresh user opens Settings, logs in with a curated provider key,
+selects a catalog model and thinking level, saves, and the next runtime
+generation uses those exact values; an ARM64 device smoke test confirms
+the saved env vars reach the new `pi` process.
 
 ## Phase 5 — OAuth/subscription-login feasibility gate (not MVP)
 
@@ -297,8 +286,6 @@ onboarding, which is already compatible with Pi and the current runtime design.
       run Pi RPC with native V8.
 - [ ] A real ARM64 device completes backend, Flask reload, terminal, and
       provider-backed orchestrator smoke tests.
-- [ ] Fresh install displays setup and does not start the default agent before
-      a user completes it.
 - [ ] The model list comes from the exact packaged Pi RPC runtime, is
       non-secret at the Android boundary, searchable, provider-scoped, and
       persists a Pi-validated tuple.
