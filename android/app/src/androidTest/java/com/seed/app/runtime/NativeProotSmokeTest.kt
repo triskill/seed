@@ -213,22 +213,28 @@ class NativeProotSmokeTest {
                     provider = "opencode-go",
                     model = "deepseek-v4-flash",
                     apiKey = "instrumentation-not-a-real-key",
-                    thinkingLevel = "low",
+                    // "high" is intentionally not the default ("low") so a
+                    // regression that drops KEY_THINKING_LEVEL from
+                    // putNonSecretSettings fails the round-trip assertion
+                    // below rather than silently matching the default.
+                    thinkingLevel = "high",
                 ),
             )
         }
-        val persisted = runBlocking { repo.load() }
-        assertEquals("opencode-go", persisted?.provider)
-        assertEquals("deepseek-v4-flash", persisted?.model)
-        assertEquals("low", persisted?.thinkingLevel)
-        assertEquals("instrumentation-not-a-real-key", persisted?.apiKey)
+        val persisted = requireNotNull(runBlocking { repo.load() }) {
+            "SettingsForm did not round-trip through AndroidSettingsRepo"
+        }
+        assertEquals("opencode-go", persisted.provider)
+        assertEquals("deepseek-v4-flash", persisted.model)
+        assertEquals("high", persisted.thinkingLevel)
+        assertEquals("instrumentation-not-a-real-key", persisted.apiKey)
 
         // Convert the persisted form to the env map Android injects into the
         // next PRoot generation.
         val environment = ProotEnvironment.createBackend(
             tempDir = File(context.cacheDir, "native-proot-persist/tmp"),
             installation = nativeProot,
-        ) + persisted!!.toPiRuntimeEnvironment()
+        ) + persisted.toPiRuntimeEnvironment()
 
         // Run a guest Python interpreter and assert the env vars are exactly
         // what we saved. This is the strongest possible test that the
@@ -245,7 +251,7 @@ class NativeProotSmokeTest {
                     import os
                     assert os.environ["SEED_PI_PROVIDER"] == "opencode-go"
                     assert os.environ["SEED_PI_MODEL"] == "deepseek-v4-flash"
-                    assert os.environ["SEED_PI_THINKING"] == "low"
+                    assert os.environ["SEED_PI_THINKING"] == "high"
                     assert os.environ["OPENCODE_API_KEY"] == "instrumentation-not-a-real-key"
                     print("APP_DOMAIN_PERSIST_OK")
                 """.trimIndent(),
