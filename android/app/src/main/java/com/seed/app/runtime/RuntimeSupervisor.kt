@@ -52,15 +52,20 @@ internal class RuntimeSupervisor(
     /** Switch into control-only mode and replace the current PRoot generation. */
     fun startControlOnly() = replaceGeneration(true)
 
-    /** Switch back to the normal orchestrator and replace the current generation. */
-    fun startNormal() = replaceGeneration(false)
+    /** Switch back to the normal orchestrator and replace the current generation.
+     *  No-op when the runtime is already in normal mode, so a leave callback
+     *  after a save (which already flipped the mode via restartWithMode) does
+     *  not trigger a redundant respawn. */
+    fun startNormal() {
+        if (!isControlOnly()) return
+        replaceGeneration(false)
+    }
 
     /** Replace the current generation with one in [nextControlOnly] mode in a
      *  single transition. Use this from the Settings apply path so saving a
      *  model and leaving Settings produces one restart (not three): apply
-     *  flips the mode and the leave callback then finds the runtime already
-     *  in normal mode.
-     */
+     *  flips the mode and the leave callback's startNormal() then finds the
+     *  runtime already in normal mode and is a no-op. */
     fun restartWithMode(nextControlOnly: Boolean) = replaceGeneration(nextControlOnly)
 
     /** True when the next (or current) generation should be control-only. */

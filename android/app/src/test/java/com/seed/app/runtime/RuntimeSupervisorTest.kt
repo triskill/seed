@@ -524,10 +524,10 @@ class RuntimeSupervisorTest {
     @Test
     fun restartWithModeFlipsModeInOneGeneration() = runTest {
         // Settings save flow: open Settings (enter control-only), save a model,
-        // restartWithMode(false) should produce a single generation that runs in
-        // normal mode. The follow-up leaveControlOnly() call must then be a
-        // no-op on the mode (it can still bump the generation but cannot
-        // re-flip an already-normal mode).
+        // restartWithMode(false) produces a single generation that runs in
+        // normal mode. The follow-up leaveControlOnly() -> startNormal() call
+        // must then be a no-op (the runtime is already in normal mode), so
+        // the save+close path costs one restart, not three.
         val handle = FakeProotHandle()
         var processStarts = 0
         val supervisor = RuntimeSupervisor(
@@ -549,16 +549,37 @@ class RuntimeSupervisorTest {
         assertEquals(2, processStarts)
         assertEquals(1, handle.destroyCalls)
 
-        // Simulating leaveControlOnly() now: the mode is already correct, so a
-        // subsequent startNormal() does flip back to false but produces a
-        // third generation. We assert this is the expected cost: two restarts
-        // for save-and-close instead of three. The win comes from the apply
-        // path using restartWithMode instead of restart(); the leave path
-        // still happens but does not have to flip a mode.
+        // leaveControlOnly() -> startNormal() with the runtime already in
+        // normal mode must NOT spawn a third generation.
         supervisor.startNormal()
         runCurrent()
         assertFalse(supervisor.isControlOnly())
-        assertEquals(3, processStarts)
+        assertEquals(2, processStarts)
+    }
+
+    @Test
+    fun startNormalFlipsModeWhenControlOnly() = runTest {
+        // Symmetric to the no-op case above: when the runtime IS in
+        // control-only mode (user closed Settings without saving),
+        // startNormal() must flip to normal and replace the generation.
+        val handle = FakeProotHandle()
+        var processStarts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = {
+                processStarts += 1
+                handle
+            },
+            healthStates = { emptyFlow() },
+        )
+
+        supervisor.startControlOnly()
+        runCurrent()
+        supervisor.startNormal()
+        runCurrent()
+        assertFalse(supervisor.isControlOnly())
+        assertEquals(2, processStarts)
+        assertEquals(1, handle.destroyCalls)
     }
 
     @Test

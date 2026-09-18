@@ -217,10 +217,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun leaveControlOnly() {
-        // If the user saved a model, onApplied already called restartRuntime()
-        // and the new generation will reflect the chosen mode. We do not queue
-        // this transition across the service-connection race: see
-        // enterControlOnly().
+        // If the user saved a model, onApplied already called
+        // restartRuntimeNormal() and the new generation is in normal mode;
+        // RuntimeSupervisor.startNormal() is a no-op in that case. If the user
+        // closes Settings without saving, the runtime is still control-only
+        // and startNormal() flips it back. We do not queue this transition
+        // across the service-connection race: see enterControlOnly().
         val binder = runtimeBinder
         if (binder != null && binder.isBinderAlive) binder.startNormal()
     }
