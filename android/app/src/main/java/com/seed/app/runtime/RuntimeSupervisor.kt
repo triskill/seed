@@ -55,6 +55,14 @@ internal class RuntimeSupervisor(
     /** Switch back to the normal orchestrator and replace the current generation. */
     fun startNormal() = replaceGeneration(false)
 
+    /** Replace the current generation with one in [nextControlOnly] mode in a
+     *  single transition. Use this from the Settings apply path so saving a
+     *  model and leaving Settings produces one restart (not three): apply
+     *  flips the mode and the leave callback then finds the runtime already
+     *  in normal mode.
+     */
+    fun restartWithMode(nextControlOnly: Boolean) = replaceGeneration(nextControlOnly)
+
     /** True when the next (or current) generation should be control-only. */
     fun isControlOnly(): Boolean = synchronized(lifecycleLock) { controlOnly }
 

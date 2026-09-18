@@ -522,6 +522,46 @@ class RuntimeSupervisorTest {
     }
 
     @Test
+    fun restartWithModeFlipsModeInOneGeneration() = runTest {
+        // Settings save flow: open Settings (enter control-only), save a model,
+        // restartWithMode(false) should produce a single generation that runs in
+        // normal mode. The follow-up leaveControlOnly() call must then be a
+        // no-op on the mode (it can still bump the generation but cannot
+        // re-flip an already-normal mode).
+        val handle = FakeProotHandle()
+        var processStarts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = {
+                processStarts += 1
+                handle
+            },
+            healthStates = { emptyFlow() },
+        )
+
+        supervisor.startControlOnly()
+        runCurrent()
+        assertTrue(supervisor.isControlOnly())
+
+        supervisor.restartWithMode(nextControlOnly = false)
+        runCurrent()
+        assertFalse(supervisor.isControlOnly())
+        assertEquals(2, processStarts)
+        assertEquals(1, handle.destroyCalls)
+
+        // Simulating leaveControlOnly() now: the mode is already correct, so a
+        // subsequent startNormal() does flip back to false but produces a
+        // third generation. We assert this is the expected cost: two restarts
+        // for save-and-close instead of three. The win comes from the apply
+        // path using restartWithMode instead of restart(); the leave path
+        // still happens but does not have to flip a mode.
+        supervisor.startNormal()
+        runCurrent()
+        assertFalse(supervisor.isControlOnly())
+        assertEquals(3, processStarts)
+    }
+
+    @Test
     fun startProcessLambdaObservesCurrentControlOnlyMode() = runTest {
         // Pins the contract that RuntimeService relies on: the next
         // invocation of startProcess must see the latest isControlOnly()

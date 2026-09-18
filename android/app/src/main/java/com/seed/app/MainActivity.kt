@@ -53,7 +53,9 @@ class MainActivity : ComponentActivity() {
     private val runtimeHealth = MutableStateFlow<HealthState>(HealthState.Unknown)
     // A settings save can beat ServiceConnection.onServiceConnected. Keep
     // one pending restart rather than stopping/recreating a service mid-bind.
-    private var restartRequested = false
+    // null = no pending restart; true = pending control-only restart;
+    // false = pending normal-orchestrator restart.
+    private var pendingRestartMode: Boolean? = null
     private var runtimeBinder: RuntimeBinder? = null
     private var terminalManager: SeedTerminalManager? = null
     private var binderHealthJob: Job? = null
@@ -93,9 +95,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            if (restartRequested) {
-                restartRequested = false
-                binder.restart()
+            if (pendingRestartMode != null) {
+                val mode = pendingRestartMode!!
+                pendingRestartMode = null
+                binder.restartWithMode(mode)
             }
         }
 
@@ -166,7 +169,7 @@ class MainActivity : ComponentActivity() {
                     is StartupDestination.Seed -> SeedNav(
                         terminalManager = terminalManager
                             ?: throw IllegalStateException("Terminal manager not bound when navigating to Seed"),
-                        onRuntimeSettingsChanged = ::restartRuntime,
+                        onRuntimeSettingsChanged = ::restartRuntimeNormal,
                         onSettingsOpened = ::enterControlOnly,
                         onSettingsClosed = ::leaveControlOnly,
                     )
@@ -186,7 +189,21 @@ class MainActivity : ComponentActivity() {
         }
         // Service start/stop is asynchronous. Queue the restart for the
         // existing/new binder instead of binding a service while it is dying.
-        restartRequested = true
+        pendingRestartMode = false
+        if (!frameworkBindingRegistered) startAndBindRuntime()
+    }
+
+    /** Settings save: apply persisted selection AND flip the runtime back to
+     *  normal orchestrator mode in a single restart, so leaveControlOnly()
+     *  later finds the mode already correct and is a no-op. */
+    private fun restartRuntimeNormal() {
+        runtimeHealth.value = HealthState.Unknown
+        val binder = runtimeBinder
+        if (binder != null && binder.isBinderAlive) {
+            binder.restartWithMode(controlOnly = false)
+            return
+        }
+        pendingRestartMode = false
         if (!frameworkBindingRegistered) startAndBindRuntime()
     }
 

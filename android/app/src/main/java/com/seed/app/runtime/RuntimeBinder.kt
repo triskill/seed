@@ -34,5 +34,9 @@ class RuntimeBinder internal constructor(
 
     fun startNormal() = supervisor.startNormal()
 
+    /** Replace the current generation with one in [controlOnly] mode in a
+     *  single transition. Use from the Settings apply path. */
+    fun restartWithMode(controlOnly: Boolean) = supervisor.restartWithMode(controlOnly)
+
     fun stop() = stopService()
 }
