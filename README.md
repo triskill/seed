@@ -73,44 +73,28 @@ overrides, why no `auth.json` in the repo).
 
 ## Android runtime workflow
 
-The APK ships one **native ARM64** runtime: ARM64 Android, ARM64 PRoot,
-ARM64 Alpine, Node, and Pi. Other Android ABIs and foreign guest rootfs
-assets are not supported or packaged.
+Seed has two **direct-native** runtime lanes and no QEMU guest mode:
 
-Runtime generation writes PRoot as generated native libraries at exactly these
-paths (all Git-ignored):
+- local development: x86_64 Android AVD, x86_64 PRoot and x86_64 Alpine;
+- phone acceptance: ARM64 Android, ARM64 PRoot and ARM64 Alpine.
 
-- `android/app/src/main/jniLibs/arm64-v8a/libproot.so`
-- `android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so`
-- `android/app/src/main/jniLibs/arm64-v8a/libtalloc.so`
-- `android/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so`
-
-The matching ARM64 Alpine `rootfs.tar.gz` and tracked `seed_version.json`
-remain under `android/app/src/main/assets/linux/`. AGP expands the gzip source
-to merged `assets/linux/rootfs.tar` and stores it with `noCompress`; the app
-extracts rootfs data and the marker to `filesDir`, but never copies PRoot there.
-
-A fresh checkout has the marker but no generated runtime binaries or rootfs.
-Android starts normally on first launch. Open Settings to add a provider API
-key and choose model/thinking-level choices from Pi's catalog.
-Install Docker/tooling and an ARM64 Android target as described in
-[`android/README.md`](android/README.md) and [`docs/build-runtime.md`](docs/build-runtime.md),
-then build explicitly:
+Only one generated ABI/rootfs bundle is retained at a time, so switch lanes by
+rebuilding the runtime. On an x86_64 Linux host, the local workflow is:
 
 ```bash
-# ARM64 physical device (recommended acceptance target)
-make runtime
-make run-phone-test
-
-# ARM64 AVD, when available on your host
-make install
+make install                         # installs/recreates the x86_64 seed_dev AVD
+make runtime RUNTIME_ARCH=x86_64     # required once and after switching from phone
 make run
 ```
 
-`make runtime` rejects every architecture other than ARM64. `make run` also
-rejects non-ARM64 system images before Gradle or emulator startup. Use a
-physical ARM64 device (`make run-phone-test DEVICE_ID=<serial>`) when an ARM64
-AVD is unavailable.
+For an ARM64 physical phone:
+
+```bash
+make run-phone-test DEVICE_ID=<serial>
+```
+
+`make run-phone-test` verifies or builds the ARM64 runtime automatically. After
+phone testing, rerun `make runtime RUNTIME_ARCH=x86_64` before `make run`.
 
 
 ## Layout

@@ -1,5 +1,6 @@
 package com.seed.app.runtime
 
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.seed.app.ui.settings.SettingsForm
@@ -29,16 +30,16 @@ class NativeProotSmokeTest {
         val rootfs = File(runtimeDir, "rootfs")
         val nativeProot = NativeProot.resolve(context.applicationInfo.nativeLibraryDir)
 
-        // The APK contract is native ARM64 only.  Keep this assertion in the
-        // app-domain smoke test so accidentally packaging a legacy marker is
-        // caught before attempting to start guest processes.
+        // The APK must contain a direct-native runtime matching this device,
+        // never a legacy QEMU guest marker.
         val versionJson = context.assets.open("linux/seed_version.json").use {
             it.reader().readText()
         }
         val version = RootfsVersion.parse(versionJson)
         assertEquals(RootfsVersion.NATIVE_RUNTIME_FORMAT, version.runtimeFormat)
         assertEquals(RootfsVersion.NATIVE_RUNTIME_FORMAT_VERSION, version.runtimeFormatVersion)
-        assertEquals(RootfsVersion.NATIVE_ARCH, version.nativeArch)
+        val expectedNativeArch = if ("x86_64" in Build.SUPPORTED_ABIS) "x86_64" else "arm64"
+        assertEquals(expectedNativeArch, version.nativeArch)
 
         val environment = ProotEnvironment.createBackend(
             tempDir = File(context.cacheDir, "native-proot-smoke/tmp"),

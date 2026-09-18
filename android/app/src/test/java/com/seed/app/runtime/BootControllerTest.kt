@@ -59,8 +59,8 @@ class BootControllerTest {
         assertTrue("expected Ready, got $last", last is BootState.Ready)
         val versionText = target.resolve(".version").readText()
         assertTrue("version file missing build_id: $versionText", versionText.contains("\"build_id\":\"B1\""))
-        assertTrue(versionText.contains("\"runtime_format\":\"native-arm64\""))
-        assertTrue(versionText.contains("\"runtime_format_version\":2"))
+        assertTrue(versionText.contains("\"runtime_format\":\"native\""))
+        assertTrue(versionText.contains("\"runtime_format_version\":3"))
         assertTrue(versionText.contains("\"native_arch\":\"arm64\""))
         assertFalse(versionText.contains("guest_arch"))
     }

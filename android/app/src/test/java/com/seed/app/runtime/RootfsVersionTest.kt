@@ -10,8 +10,8 @@ class RootfsVersionTest {
     private val marker = """{
         "seed_version":"0.1.0",
         "build_id":"20260703T113314Z-a1b2c3d4",
-        "runtime_format":"native-arm64",
-        "runtime_format_version":2,
+        "runtime_format":"native",
+        "runtime_format_version":3,
         "native_arch":"arm64"
     }"""
 
@@ -56,7 +56,7 @@ class RootfsVersionTest {
     @Test
     fun rejectsUnsupportedRuntimeFormat() {
         val failure = assertThrows(IllegalArgumentException::class.java) {
-            RootfsVersion.parse(marker.replace("native-arm64", "qemu-x86"))
+            RootfsVersion.parse(marker.replace("native", "qemu-x86"))
         }
         assertEquals("unsupported runtime_format: qemu-x86", failure.message)
     }
@@ -64,17 +64,23 @@ class RootfsVersionTest {
     @Test
     fun rejectsUnsupportedRuntimeFormatVersion() {
         val failure = assertThrows(IllegalArgumentException::class.java) {
-            RootfsVersion.parse(marker.replace(":2", ":1"))
+            RootfsVersion.parse(marker.replace(":3", ":2"))
         }
-        assertEquals("unsupported runtime_format_version: 1", failure.message)
+        assertEquals("unsupported runtime_format_version: 2", failure.message)
+    }
+
+    @Test
+    fun parsesX8664NativeMarker() {
+        val version = RootfsVersion.parse(marker.replace("\"native_arch\":\"arm64", "\"native_arch\":\"x86_64"))
+        assertEquals("x86_64", version.nativeArch)
     }
 
     @Test
     fun rejectsUnsupportedNativeArchitecture() {
         val failure = assertThrows(IllegalArgumentException::class.java) {
-            RootfsVersion.parse(marker.replace("\"native_arch\":\"arm64", "\"native_arch\":\"x86_64"))
+            RootfsVersion.parse(marker.replace("\"native_arch\":\"arm64", "\"native_arch\":\"riscv64"))
         }
-        assertEquals("unsupported native_arch: x86_64", failure.message)
+        assertEquals("unsupported native_arch: riscv64", failure.message)
     }
 
     @Test
@@ -96,7 +102,7 @@ class RootfsVersionTest {
     fun serializesNativeMarker() {
         val version = RootfsVersion("0.1.0", "X")
         assertEquals(
-            """{"seed_version":"0.1.0","build_id":"X","runtime_format":"native-arm64","runtime_format_version":2,"native_arch":"arm64"}""",
+            """{"seed_version":"0.1.0","build_id":"X","runtime_format":"native","runtime_format_version":3,"native_arch":"arm64"}""",
             version.toMarkerJson(),
         )
     }

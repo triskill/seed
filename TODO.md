@@ -31,7 +31,7 @@ This tracker describes the current prototype path._
 | 4 | System prompts + first real agent loop | ⚠️ host demo done (4/4); not reproduced inside the standalone APK |
 | 5 | Android shell (4 screens, nav, WebView) | ✅ original UI phase done (9/9); Shell was subsequently replaced by the terminal implementation |
 | 6 | Android ↔ backend wiring | ✅ original wiring done (5/5); `/shell/exec` is no longer the active Android Shell UI path |
-| 7 | Native PRoot packaging + rootfs extraction | ✅ native ARM64-only runtime; QEMU/x86 generation removed in Phase 1 |
+| 7 | Native PRoot packaging + rootfs extraction | ✅ direct-native ARM64 phone and x86_64 emulator lanes; QEMU remains removed |
 | 8 | Foreground service | ✅ done (4/4); now also owns the lazy terminal session manager |
 | 9 | First-run runtime startup gate | ✅ done (4/4); phone build/install/launch targets are available |
 | 10 | Embedded agent loop + end-to-end polish | ⬜ partial; native ARM64 phone mode and a Termux-based Shell landed, but terminal/device acceptance, provider-backed E2E, live settings apply, reload, security, cancellation/recovery, and release QA remain |

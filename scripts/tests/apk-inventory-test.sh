@@ -2,13 +2,16 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/lib/arm64-v8a"
-touch "$tmp/lib/arm64-v8a/libproot.so" "$tmp/lib/arm64-v8a/libproot-loader.so" "$tmp/lib/arm64-v8a/libtalloc.so" "$tmp/lib/arm64-v8a/libandroid-shmem.so"
-(cd "$tmp" && zip -q "$tmp/native.apk" lib/arm64-v8a/*.so)
-"$ROOT/scripts/check-apk-runtime.sh" "$tmp/native.apk" >/dev/null
-mkdir -p "$tmp/lib/x86_64"; touch "$tmp/lib/x86_64/libproot.so"
-(cd "$tmp" && zip -q "$tmp/foreign.apk" lib/x86_64/libproot.so)
-if "$ROOT/scripts/check-apk-runtime.sh" "$tmp/foreign.apk" >/dev/null 2>&1; then
-  echo 'FAIL: foreign ABI APK accepted' >&2; exit 1
+for abi in arm64-v8a x86_64; do
+  mkdir -p "$tmp/$abi/lib/$abi"
+  touch "$tmp/$abi/lib/$abi/libproot.so" "$tmp/$abi/lib/$abi/libproot-loader.so"     "$tmp/$abi/lib/$abi/libtalloc.so" "$tmp/$abi/lib/$abi/libandroid-shmem.so"
+  (cd "$tmp/$abi" && zip -q "$tmp/$abi.apk" lib/$abi/*.so)
+  "$ROOT/scripts/check-apk-runtime.sh" "$tmp/$abi.apk" "$abi" >/dev/null
+done
+mkdir -p "$tmp/mixed/lib/x86_64" "$tmp/mixed/lib/arm64-v8a"
+touch "$tmp/mixed/lib/x86_64/libproot.so" "$tmp/mixed/lib/arm64-v8a/libproot.so"
+(cd "$tmp/mixed" && zip -q "$tmp/mixed.apk" lib/*/*.so)
+if "$ROOT/scripts/check-apk-runtime.sh" "$tmp/mixed.apk" x86_64 >/dev/null 2>&1; then
+  echo 'FAIL: mixed ABI APK accepted' >&2; exit 1
 fi
-echo 'PASS: APK native ARM64 inventory'
+echo 'PASS: direct-native APK inventory'

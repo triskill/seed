@@ -3,7 +3,7 @@
 # Quick start for a new dev:
 #   make install    # one-time: install Android SDK, emulator, AVD
 #   make build      # build the debug APK
-#   make run        # start the ARM64 emulator, install APK, launch app
+#   make run        # start the local x86_64 emulator, install APK, launch app
 #   make backend    # start dev backend in the background
 #   make stop       # stop the emulator and the backend
 #   make test       # run backend tests
@@ -27,13 +27,23 @@ export ANDROID_HOME
 # Versions pinned to match the app's build.gradle.kts.
 ANDROID_PLATFORM    := android-34
 ANDROID_BUILD_TOOLS := 34.0.0
-# The embedded runtime is native ARM64; use an ARM64 AVD or physical phone.
-SYSTEM_IMAGE       := system-images;android-34;default;arm64-v8a
+# Local development uses the accelerated native x86_64 Android image. ARM64
+# remains available through `make run-phone-test` for physical-device testing.
+SYSTEM_IMAGE       := system-images;android-34;default;x86_64
+SYSTEM_IMAGE_ABI   := $(word 4,$(subst ;, ,$(SYSTEM_IMAGE)))
+SYSTEM_IMAGE_SYS_DIR := $(subst ;,/,$(SYSTEM_IMAGE))/
 AVD_NAME           := seed_dev
 
 # Runtime generation is always explicit because it builds a large asset.
-# This setting is used only by `make runtime`, never as a run prerequisite.
-RUNTIME_ARCH ?= arm64
+# Default to the local x86_64 AVD; use RUNTIME_ARCH=arm64 for a phone.
+RUNTIME_ARCH ?= x86_64
+
+# Pin this Makefile's emulator to a known serial so its adb commands remain
+# unambiguous when another AVD or a physical device is connected.
+# Android uses the even console port as the serial and the following port for adb.
+EMULATOR_PORT ?= 5556
+EMULATOR_SERIAL := emulator-$(EMULATOR_PORT)
+ADB_EMULATOR = $(ADB) -s $(EMULATOR_SERIAL)
 
 # GPU mode for the emulator. The default `auto` resolves to
 # `host` (Vulkan passthrough) on systems with a discrete GPU,
@@ -103,23 +113,22 @@ build:  ## build the debug APK
 
 .PHONY: runtime
 runtime: override export RUNTIME_ARCH := $(value RUNTIME_ARCH)
-runtime:  ## explicitly build the native ARM64 runtime assets
+runtime:  ## explicitly build direct-native arm64 or x86_64 runtime assets
 	@case "$$RUNTIME_ARCH" in \
-		arm64) ;; \
-		*) echo "!! unsupported runtime architecture: $$RUNTIME_ARCH (only arm64 is supported)" >&2; exit 2 ;; \
+		arm64|x86_64) ;; \
+		*) echo "!! unsupported runtime architecture: $$RUNTIME_ARCH (expected arm64 or x86_64)" >&2; exit 2 ;; \
 	esac
 	@./scripts/build-runtime.sh
 
 .PHONY: check-runtime-arch
-check-runtime-arch: override export SYSTEM_IMAGE := $(value SYSTEM_IMAGE)
 check-runtime-arch:
-	@emulator_abi="$${SYSTEM_IMAGE##*;}"; \
-	if [ "$$emulator_abi" != "arm64-v8a" ]; then \
-		echo "!! unsupported emulator ABI: $$emulator_abi (Seed requires arm64-v8a)" >&2; \
-		echo "   Use an ARM64 AVD or a physical ARM64 device." >&2; exit 2; \
-	fi; \
+	@emulator_abi="$(SYSTEM_IMAGE_ABI)"; \
+	case "$$emulator_abi" in \
+		x86_64|arm64-v8a) ;; \
+		*) echo "!! unsupported emulator ABI: $$emulator_abi (expected x86_64 or arm64-v8a)" >&2; exit 2 ;; \
+	esac; \
 	for lib in libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so; do \
-		./scripts/check-runtime-arch.sh arm64-v8a "android/app/src/main/jniLibs/arm64-v8a/$$lib" || exit 1; \
+		./scripts/check-runtime-arch.sh "$$emulator_abi" "android/app/src/main/jniLibs/$$emulator_abi/$$lib" || exit 1; \
 	done
 
 # `make run` performs lightweight preflights before recursively
@@ -137,16 +146,35 @@ check-runtime-arch:
 .PHONY: run
 run: check-deps check-runtime-arch  ## start emulator, install APK, launch app
 	@$(MAKE) --no-print-directory build
-	@if [ ! -d $(ANDROID_AVD_HOME)/$(AVD_NAME).avd ]; then \
+	@AVD_CFG="$(ANDROID_AVD_HOME)/$(AVD_NAME).avd/config.ini"; \
+	expected_sysdir="$(SYSTEM_IMAGE_SYS_DIR)"; \
+	if [ ! -f "$$AVD_CFG" ]; then \
 		echo "!! AVD '$(AVD_NAME)' not found. Run \`make install\` first."; \
 		exit 1; \
+	fi; \
+	if ! grep -Fqx "image.sysdir.1=$$expected_sysdir" "$$AVD_CFG"; then \
+		echo "!! AVD '$(AVD_NAME)' does not use $(SYSTEM_IMAGE). Run \`make avd\` to recreate it."; \
+		exit 1; \
 	fi
-	@if [ -f $(EMULATOR_PID) ] && kill -0 $$(cat $(EMULATOR_PID)) 2>/dev/null; then \
-		echo ">> Emulator already running (pid $$(cat $(EMULATOR_PID)))."; \
-	else \
-		echo ">> Starting emulator '$(AVD_NAME)' (log: $(EMULATOR_LOG))..."; \
+	@# The PID is Make-owned, but older runs had no fixed serial. Do not issue
+	@# bare adb commands to some other attached device in that case.
+	@if [ -f $(EMULATOR_PID) ]; then \
+		if kill -0 $$(cat $(EMULATOR_PID)) 2>/dev/null; then \
+			if $(ADB_EMULATOR) get-state 2>/dev/null | grep -qx device; then \
+				echo ">> Emulator already running as $(EMULATOR_SERIAL) (pid $$(cat $(EMULATOR_PID)))."; \
+			else \
+				echo ">> Replacing Make-owned emulator that is not $(EMULATOR_SERIAL)."; \
+				kill $$(cat $(EMULATOR_PID)) 2>/dev/null || true; \
+				rm -f $(EMULATOR_PID); \
+			fi; \
+		else \
+			rm -f $(EMULATOR_PID); \
+		fi; \
+	fi
+	@if [ ! -f $(EMULATOR_PID) ] || ! kill -0 $$(cat $(EMULATOR_PID)) 2>/dev/null; then \
+		echo ">> Starting emulator '$(AVD_NAME)' as $(EMULATOR_SERIAL) (log: $(EMULATOR_LOG))..."; \
 		rm -f $(EMULATOR_PID); \
-		setsid nohup $(EMULATOR) -avd $(AVD_NAME) \
+		setsid nohup $(EMULATOR) -avd $(AVD_NAME) -port $(EMULATOR_PORT) \
 			-no-snapshot-load -no-audio -gpu $(EMULATOR_GPU) \
 			> $(EMULATOR_LOG) 2>&1 < /dev/null & \
 		echo $$! > $(EMULATOR_PID); \
@@ -159,13 +187,13 @@ run: check-deps check-runtime-arch  ## start emulator, install APK, launch app
 	fi
 	@echo ">> Waiting for adb to see the device..."
 	@$(ADB) start-server >/dev/null 2>&1
-	@if ! timeout 30 $(ADB) wait-for-device; then \
+	@if ! timeout 30 $(ADB_EMULATOR) wait-for-device; then \
 		echo "!! adb never saw the emulator after 30s. Tail of $(EMULATOR_LOG):"; \
 		tail -20 $(EMULATOR_LOG) | sed 's/^/    /'; \
 		exit 1; \
 	fi
 	@echo ">> Waiting for boot to complete (up to $(BOOT_TIMEOUT)s)..."
-	@i=0; while [ "$$($(ADB) shell getprop sys.boot_completed | tr -d '\r')" != "1" ]; do \
+	@i=0; while [ "$$($(ADB_EMULATOR) shell getprop sys.boot_completed | tr -d '\r')" != "1" ]; do \
 		i=$$((i+1)); \
 		if [ $$i -ge $(BOOT_TIMEOUT) ]; then \
 			echo "!! Boot timeout after $(BOOT_TIMEOUT)s. Check $(EMULATOR_LOG)."; \
@@ -174,10 +202,10 @@ run: check-deps check-runtime-arch  ## start emulator, install APK, launch app
 		sleep 1; \
 	done
 	@echo ">> Installing APK..."
-	@$(ADB) install -r $(APK)
+	@$(ADB_EMULATOR) install -r $(APK)
 	@echo ">> Launching $(APP_ID)/$(APP_ACTIVITY)..."
-	@$(ADB) shell am start -n $(APP_ID)/$(APP_ACTIVITY)
-	@echo ">> App launched. Attach: \`adb shell\` or \`adb logcat\`."
+	@$(ADB_EMULATOR) shell am start -n $(APP_ID)/$(APP_ACTIVITY)
+	@echo ">> App launched. Attach: \`adb -s $(EMULATOR_SERIAL) shell\` or \`adb -s $(EMULATOR_SERIAL) logcat\`."
 
 # `run-phone-test` targets a real arm64 phone connected via USB.  Its
 # runtime preflight deliberately differs from `make run`: a phone does not
@@ -265,8 +293,8 @@ run-phone-test: check-phone-deps ensure-phone-runtime  ## build native ARM64 APK
 	@$(MAKE) --no-print-directory phone-install
 
 .PHONY: check-apk-runtime
-check-apk-runtime:  ## verify APK contains only the native ARM64 runtime bundle
-	@./scripts/check-apk-runtime.sh "$(APK)"
+check-apk-runtime:  ## verify APK contains the runtime matching SYSTEM_IMAGE
+	@./scripts/check-apk-runtime.sh "$(APK)" "$(SYSTEM_IMAGE_ABI)"
 
 .PHONY: backend
 backend:  ## start dev backend in background (logs: backend.log, pid: backend.pid)
@@ -301,7 +329,7 @@ stop:  ## stop the emulator and the backend
 		kill $$(cat $(EMULATOR_PID)) 2>/dev/null || true; \
 		rm -f $(EMULATOR_PID); \
 	else \
-		$(ADB) emu kill 2>/dev/null || true; \
+		$(ADB_EMULATOR) emu kill 2>/dev/null || true; \
 	fi
 	@echo ">> Stopped."
 
@@ -371,7 +399,15 @@ sdk-packages:
 .PHONY: avd
 avd:
 	@mkdir -p $(ANDROID_AVD_HOME)
-	@if [ ! -d $(ANDROID_AVD_HOME)/$(AVD_NAME).avd ]; then \
+	@AVD_CFG="$(ANDROID_AVD_HOME)/$(AVD_NAME).avd/config.ini"; \
+	expected_sysdir="$(SYSTEM_IMAGE_SYS_DIR)"; \
+	if [ -d "$(ANDROID_AVD_HOME)/$(AVD_NAME).avd" ] && \
+		! grep -Fqx "image.sysdir.1=$$expected_sysdir" "$$AVD_CFG" 2>/dev/null; then \
+		echo ">> Recreating AVD '$(AVD_NAME)' for $(SYSTEM_IMAGE)..."; \
+		$(AVDMANAGER) delete avd -n $(AVD_NAME) >/dev/null 2>&1 || true; \
+		rm -rf "$(ANDROID_AVD_HOME)/$(AVD_NAME).avd" "$(ANDROID_AVD_HOME)/$(AVD_NAME).ini"; \
+	fi; \
+	if [ ! -d "$(ANDROID_AVD_HOME)/$(AVD_NAME).avd" ]; then \
 		echo ">> Creating AVD '$(AVD_NAME)' at $(ANDROID_AVD_HOME)..."; \
 		echo "no" | $(AVDMANAGER) create avd -n $(AVD_NAME) -k "$(SYSTEM_IMAGE)" -d pixel; \
 		echo ">> AVD created."; \

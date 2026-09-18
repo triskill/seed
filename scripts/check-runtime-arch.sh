@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Verify that a packaged PRoot binary is native ARM64.
-# Usage: ./scripts/check-runtime-arch.sh <arm64|aarch64|arm64-v8a> <proot-path>
+# Verify that a specific packaged proot binary can run on the configured emulator.
+# Usage: ./scripts/check-runtime-arch.sh <expected-arch> <proot-path>
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 <arm64|aarch64|arm64-v8a> <proot-path>" >&2
+    echo "usage: $0 <x86_64|amd64|arm64|aarch64|arm64-v8a> <proot-path>" >&2
 }
 
 if [[ $# -ne 2 ]]; then
@@ -13,12 +13,15 @@ if [[ $# -ne 2 ]]; then
 fi
 
 case "${1,,}" in
+    x86_64|amd64)
+        expected_arch="x86_64"
+        ;;
     arm64|aarch64|arm64-v8a)
         expected_arch="arm64"
         ;;
     *)
         echo "unsupported expected architecture: $1" >&2
-        echo "supported architecture: arm64/aarch64/arm64-v8a" >&2
+        echo "supported architectures: x86_64/amd64, arm64/aarch64/arm64-v8a" >&2
         exit 2
         ;;
 esac
@@ -47,6 +50,9 @@ if [[ "$description" != ELF\ 64-bit* ]]; then
 fi
 
 case "$description" in
+    *x86-64*)
+        actual_arch="x86_64"
+        ;;
     *"ARM aarch64"*)
         actual_arch="arm64"
         ;;

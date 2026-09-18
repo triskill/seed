@@ -1,6 +1,6 @@
 package com.seed.app.runtime
 
-/** Version marker for the extracted native ARM64 runtime. */
+/** Version marker for the extracted direct-native runtime. */
 data class RootfsVersion(
     val seedVersion: String,
     val buildId: String,
@@ -12,22 +12,22 @@ data class RootfsVersion(
         """{"seed_version":"$seedVersion","build_id":"$buildId","runtime_format":"$runtimeFormat","runtime_format_version":$runtimeFormatVersion,"native_arch":"$nativeArch"}"""
 
     companion object {
-        const val NATIVE_RUNTIME_FORMAT = "native-arm64"
+        /** A direct-native rootfs and Android PRoot bundle; never a QEMU guest. */
+        const val NATIVE_RUNTIME_FORMAT = "native"
         /** @deprecated use [NATIVE_RUNTIME_FORMAT]. */
         const val RUNTIME_FORMAT = NATIVE_RUNTIME_FORMAT
-        const val NATIVE_RUNTIME_FORMAT_VERSION = 2
+        const val NATIVE_RUNTIME_FORMAT_VERSION = 3
         /** @deprecated use [NATIVE_RUNTIME_FORMAT_VERSION]. */
         const val RUNTIME_FORMAT_VERSION = NATIVE_RUNTIME_FORMAT_VERSION
         const val NATIVE_ARCH = "arm64"
+        val SUPPORTED_NATIVE_ARCHES = setOf("arm64", "x86_64")
 
         fun parse(json: String): RootfsVersion {
             val seed = stringField(json, "seed_version")
                 ?: throw IllegalArgumentException("missing seed_version")
             val build = stringField(json, "build_id")
                 ?: throw IllegalArgumentException("missing build_id")
-            // `guest_arch` identified the removed QEMU/native split. Reject
-            // it even when a caller also supplies the new fields so legacy
-            // metadata cannot silently pass as a native marker.
+            // `guest_arch` belonged to the removed QEMU compatibility mode.
             if (hasField(json, "guest_arch")) {
                 throw IllegalArgumentException("unsupported marker field: guest_arch")
             }
@@ -39,7 +39,9 @@ data class RootfsVersion(
             if (version != RUNTIME_FORMAT_VERSION) throw IllegalArgumentException("unsupported runtime_format_version: $version")
             val arch = stringField(json, "native_arch")
                 ?: throw IllegalArgumentException("missing native_arch")
-            if (arch != NATIVE_ARCH) throw IllegalArgumentException("unsupported native_arch: $arch")
+            if (arch !in SUPPORTED_NATIVE_ARCHES) {
+                throw IllegalArgumentException("unsupported native_arch: $arch")
+            }
             return RootfsVersion(seed, build, format, version, arch)
         }
 
