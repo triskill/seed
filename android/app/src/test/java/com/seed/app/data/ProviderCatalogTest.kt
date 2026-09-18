@@ -11,30 +11,29 @@ import org.junit.Test
  */
 class ProviderCatalogTest {
     private val expected = setOf(
-        "openai" to "OPENAI_API_KEY",
-        "anthropic" to "ANTHROPIC_API_KEY",
-        "google" to "GEMINI_API_KEY",
-        "deepseek" to "DEEPSEEK_API_KEY",
-        "groq" to "GROQ_API_KEY",
-        "xai" to "XAI_API_KEY",
-        "openrouter" to "OPENROUTER_API_KEY",
-        "mistral" to "MISTRAL_API_KEY",
-        "fireworks" to "FIREWORKS_API_KEY",
-        "together" to "TOGETHER_API_KEY",
-        "opencode" to "OPENCODE_API_KEY",
-        "opencode-go" to "OPENCODE_API_KEY",
-        "zai" to "ZAI_API_KEY",
-        "minimax" to "MINIMAX_API_KEY",
-        "moonshotai" to "MOONSHOT_API_KEY",
-        "nvidia" to "NVIDIA_API_KEY",
-        "cerebras" to "CEREBRAS_API_KEY",
-        "kimi-coding" to "KIMI_API_KEY",
+        ProviderOption("openai", "OpenAI", "OPENAI_API_KEY"),
+        ProviderOption("anthropic", "Anthropic", "ANTHROPIC_API_KEY"),
+        ProviderOption("google", "Google Gemini", "GEMINI_API_KEY"),
+        ProviderOption("deepseek", "DeepSeek", "DEEPSEEK_API_KEY"),
+        ProviderOption("groq", "Groq", "GROQ_API_KEY"),
+        ProviderOption("xai", "xAI", "XAI_API_KEY"),
+        ProviderOption("openrouter", "OpenRouter", "OPENROUTER_API_KEY"),
+        ProviderOption("mistral", "Mistral", "MISTRAL_API_KEY"),
+        ProviderOption("fireworks", "Fireworks", "FIREWORKS_API_KEY"),
+        ProviderOption("together", "Together", "TOGETHER_API_KEY"),
+        ProviderOption("opencode", "OpenCode", "OPENCODE_API_KEY"),
+        ProviderOption("opencode-go", "OpenCode Go", "OPENCODE_API_KEY"),
+        ProviderOption("zai", "Z.AI", "ZAI_API_KEY"),
+        ProviderOption("minimax", "MiniMax", "MINIMAX_API_KEY"),
+        ProviderOption("moonshotai", "Moonshot", "MOONSHOT_API_KEY"),
+        ProviderOption("nvidia", "NVIDIA", "NVIDIA_API_KEY"),
+        ProviderOption("cerebras", "Cerebras", "CEREBRAS_API_KEY"),
+        ProviderOption("kimi-coding", "Kimi for Coding", "KIMI_API_KEY"),
     )
 
     @Test
     fun everyExpectedProviderIsPresent() {
-        val actual = ProviderCatalog.PROVIDERS.map { it.id to it.apiKeyEnvironment }
-        assertEquals(expected, actual.toSet())
+        assertEquals(expected, ProviderCatalog.PROVIDERS.toSet())
     }
 
     @Test

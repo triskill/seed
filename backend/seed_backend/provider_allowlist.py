@@ -1,13 +1,14 @@
 """Curated provider -> API-key environment-variable allowlist.
 
-A single source of truth shared by `pi_env_for_role` and the
+A single source of truth shared by the Android `ProviderCatalog`
+(pinned by `ProviderCatalogTest`), `pi_env_for_role`, and the
 credential-env contract tests. The mapping is curated locally;
 only IDs present here can be passed to Pi as `--provider` or
 used as the selected credential.
 """
 from __future__ import annotations
 
-PROVIDERS: dict[str, str | None] = {
+PROVIDERS: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "google": "GEMINI_API_KEY",
@@ -30,4 +31,6 @@ PROVIDERS: dict[str, str | None] = {
 
 
 def credential_env_for(provider: str) -> str | None:
+    if not isinstance(provider, str):
+        return None
     return PROVIDERS.get(provider.strip().lower())

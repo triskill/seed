@@ -20,6 +20,6 @@ def test_provider_ids_are_lowercase_strings():
 
 def test_all_credential_env_vars_are_in_process_env_allowlist():
     from seed_backend.process_env import PI_CREDENTIAL_ENV_VARS
-    keys = {v for v in PROVIDERS.values() if v}
+    keys = set(PROVIDERS.values())
     missing = keys - PI_CREDENTIAL_ENV_VARS
     assert not missing, f"credential env vars not in PI_CREDENTIAL_ENV_VARS: {missing}"
