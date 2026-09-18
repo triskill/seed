@@ -58,6 +58,9 @@ internal class RuntimeSupervisor(
     /** True when the next (or current) generation should be control-only. */
     fun isControlOnly(): Boolean = synchronized(lifecycleLock) { controlOnly }
 
+    /** Bump the generation, tear down the active handle, queue a new process start
+     *  once the old handle is actually dead. Used by every transition that must
+     *  take effect on the running PRoot process (mode change, settings apply). */
     private fun replaceGeneration(nextControlOnly: Boolean) {
         val activeHandle = synchronized(lifecycleLock) {
             if (terminal.get()) return

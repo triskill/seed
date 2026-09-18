@@ -466,6 +466,7 @@ class RuntimeSupervisorTest {
         runCurrent()
 
         assertEquals(2, processStarts)
+        assertEquals(1, handle.destroyCalls)
         assertFalse(supervisor.isControlOnly())
     }
 
@@ -492,6 +493,65 @@ class RuntimeSupervisorTest {
         assertEquals(2, processStarts)
         assertEquals(1, handle.destroyCalls)
         assertTrue(supervisor.isControlOnly())
+    }
+
+    @Test
+    fun restartPreservesControlOnlyMode() = runTest {
+        val handle = FakeProotHandle()
+        var processStarts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = {
+                processStarts += 1
+                handle
+            },
+            healthStates = { emptyFlow() },
+        )
+
+        supervisor.startControlOnly()
+        runCurrent()
+        assertTrue(supervisor.isControlOnly())
+
+        supervisor.restart()
+        runCurrent()
+
+        // restart() must keep the current mode and still replace the generation.
+        assertEquals(2, processStarts)
+        assertEquals(1, handle.destroyCalls)
+        assertTrue(supervisor.isControlOnly())
+    }
+
+    @Test
+    fun startProcessLambdaObservesCurrentControlOnlyMode() = runTest {
+        // Pins the contract that RuntimeService relies on: the next
+        // invocation of startProcess must see the latest isControlOnly()
+        // value, so SEED_CONTROL_ONLY=1 is added to the next generation's env
+        // when startControlOnly() was the last transition.
+        val handle = FakeProotHandle()
+        val observedModes = mutableListOf<Boolean>()
+        lateinit var supervisor: RuntimeSupervisor
+        supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = {
+                observedModes += supervisor.isControlOnly()
+                handle
+            },
+            healthStates = { emptyFlow() },
+        )
+
+        supervisor.startOrRetry()
+        runCurrent()
+        // Each transition must settle before the next so the queued destroy/respawn
+        // does not race with the next replaceGeneration call.
+        supervisor.startControlOnly()
+        runCurrent()
+        supervisor.startNormal()
+        runCurrent()
+
+        // Three generations spawned in order: normal, control-only, normal.
+        // The lambda captured the mode AT START time, which is what RuntimeService
+        // would have used to decide whether to set SEED_CONTROL_ONLY=1.
+        assertEquals(listOf(false, true, false), observedModes)
     }
 }
 
