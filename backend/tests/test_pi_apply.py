@@ -2,7 +2,8 @@
 
 Android flips SEED_CONTROL_ONLY between generations (Task 2+3). When the
 control-only flag is set, the spawned pi process must:
-  * run without --no-tools and --no-session
+  * be headless: include --no-tools, --no-session, --no-extensions,
+    --no-skills, --no-prompt-templates, --no-themes, --no-context-files
   * receive --models provider/* if no model is saved
   * receive the selected provider only (so it can pick the first catalog
     model itself)
@@ -18,7 +19,7 @@ from __future__ import annotations
 import pytest
 
 from seed_backend.orchestrator import pi_cmd_for_role, pi_env_for_role
-from seed_backend.process_env import PI_CREDENTIAL_ENV_VARS
+from seed_backend.process_env import PI_CREDENTIAL_ENV_VARS, SEED_CAPABILITY_ENV
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +74,6 @@ def test_control_only_env_strips_capability_and_control_only_flag(monkeypatch):
     assert "SEED_RUNTIME_CAPABILITY" not in env
     assert "SEED_CONTROL_ONLY" not in env
     # The capability env var constant must be the one used elsewhere.
-    from seed_backend.process_env import SEED_CAPABILITY_ENV
     assert SEED_CAPABILITY_ENV == "SEED_RUNTIME_CAPABILITY"
 
 
