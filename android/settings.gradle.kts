@@ -20,13 +20,6 @@ dependencyResolutionManagement {
 
         maven {
             url = uri("https://jitpack.io")
-            credentials {
-                username = "jitpack-token"
-                password = file("gradle.properties").readLines()
-                    .firstOrNull { it.startsWith("jitpack.token=") }
-                    ?.substringAfter("=")
-                    ?: ""
-            }
         }
     }
 }

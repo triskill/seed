@@ -329,12 +329,13 @@ and connected-device acceptance.
 The original backend process-launch blocker is resolved. Work below is ordered
 roughly by release risk rather than by the historical phase numbering.
 
-1. **P0 — revoke and remove the committed JitPack credential.**
-   `android/gradle.properties` contains a live-looking access token and is
-   tracked on `main`/`origin`. Treat it as compromised: revoke/rotate it, remove
-   it from tracked files, load credentials from a developer-local or CI secret
-   source, and decide whether repository-history cleanup is required. Add a
-   secret scan so this does not recur.
+1. **P0 — remove the committed JitPack credential — completed 2026-09-11.**
+   The Termux artifacts used by Seed are publicly downloadable from JitPack.
+   Anonymous HTTP downloads and a Gradle dependency refresh both succeeded, so
+   the token and all JitPack credential-loading code were removed rather than
+   replaced with local/CI secret handling. The exposed token must still be
+   revoked, and repository-history cleanup and automated secret scanning remain
+   follow-up security work.
 2. **Restore a trustworthy verification baseline.** Fix
    `NativeProotSmokeTest` to use `ProotEnvironment.createBackend` (or the correct
    test-specific environment) so `assembleDebugAndroidTest` compiles, then run
@@ -518,9 +519,10 @@ Android tooling only; Python dependencies come from
 - **Pi uses `--no-session`.** Per-process pi session files are intentionally
   disabled, but orchestrator-level chat/task history and reconnect replay have
   not been implemented.
-- **A dependency-repository credential is committed.** The tracked Android
-  Gradle properties contain a live-looking JitPack token already present on
-  `origin/main`; revoke it and move authentication to local/CI secret storage.
+- **A dependency-repository credential was historically committed.** JitPack
+  authentication is unnecessary and has been removed from the current tree,
+  but the exposed token remains in Git history and must be revoked. Decide
+  whether to rewrite repository history and add automated secret scanning.
 - **Repository state:** `main` is synchronized with `origin/main` at `e2abf98`.
   The staged Qwen suggestion file is the only pre-existing working-tree change;
   it is input to this audit, not implemented work.
