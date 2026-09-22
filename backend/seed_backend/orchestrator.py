@@ -103,7 +103,13 @@ _DEFAULT_APP_URL = "http://127.0.0.1:7778"
 MIDDLEMAN_READ_ONLY_TOOLS = ("read", "grep", "find", "ls")
 
 
-def pi_cmd_for_role(role: str) -> list[str]:
+def pi_cmd_for_role(
+    role: str,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    thinking: str | None = None,
+) -> list[str]:
     """Return the argv used to spawn the `pi` CLI for a given role.
 
     Production default: real `pi` in RPC mode, pointed at
@@ -187,28 +193,32 @@ def pi_cmd_for_role(role: str) -> list[str]:
     """
     if role not in ("middleman", "worker", "control"):
         raise ValueError(f"unknown pi role: {role!r}")
-    provider = os.environ.get("SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER).strip()
-    configured_model = os.environ.get("SEED_PI_MODEL")
-    model = (
+    selected_provider = (provider or os.environ.get(
+        "SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER,
+    )).strip()
+    configured_model = model if model is not None else os.environ.get("SEED_PI_MODEL")
+    selected_model = (
         configured_model.strip()
         if configured_model is not None
         else ("" if role == "control" else _DEFAULT_PI_MODEL)
     )
-    thinking = os.environ.get("SEED_PI_THINKING", _DEFAULT_PI_THINKING)
+    selected_thinking = (thinking or os.environ.get(
+        "SEED_PI_THINKING", _DEFAULT_PI_THINKING,
+    )).strip()
     if role == "control":
         # The control process must be headless and must not load project
         # extensions, prompts, or tools.  During onboarding no model has been
         # chosen yet; --models provider/* lets Pi pick the first authenticated
         # model from its own bundled registry without inventing a model ID.
         argv = [
-            "pi", "--mode", "rpc", "--provider", provider,
+            "pi", "--mode", "rpc", "--provider", selected_provider,
             "--no-session", "--no-tools", "--no-extensions", "--no-skills",
             "--no-prompt-templates", "--no-themes", "--no-context-files",
         ]
-        if model:
-            argv.extend(["--model", model])
+        if selected_model:
+            argv.extend(["--model", selected_model])
         else:
-            argv.extend(["--models", f"{provider}/*"])
+            argv.extend(["--models", f"{selected_provider}/*"])
         return argv
     prompt_file = (
         _MIDDLEMAN_PROMPT if role == "middleman" else _WORKER_PROMPT
@@ -216,9 +226,9 @@ def pi_cmd_for_role(role: str) -> list[str]:
     argv = [
         "pi",
         "--mode", "rpc",
-        "--provider", provider,
-        "--model", model,
-        "--thinking", thinking,
+        "--provider", selected_provider,
+        "--model", selected_model,
+        "--thinking", selected_thinking,
         "--no-session",
         "--append-system-prompt", str(prompt_file),
     ]
@@ -243,6 +253,7 @@ def pi_env_for_role(
     role: str,
     *,
     app_url: str | None = None,
+    provider: str | None = None,
 ) -> dict[str, str]:
     """Return the env dict passed to the child `pi` process.
 
@@ -270,8 +281,9 @@ def pi_env_for_role(
     # The bearer capability belongs only to FastAPI's Android-facing boundary;
     # it must never be inherited by any Pi child process.
     env.pop(SEED_CAPABILITY_ENV, None)
-    env.pop("SEED_CONTROL_ONLY", None)
-    selected_provider = os.environ.get("SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER).strip().lower()
+    selected_provider = (provider or os.environ.get(
+        "SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER,
+    )).strip().lower()
     selected_key = credential_env_for(selected_provider)
     for name in PI_CREDENTIAL_ENV_VARS:
         if name != selected_key:

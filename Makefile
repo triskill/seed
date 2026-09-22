@@ -152,7 +152,9 @@ run: check-deps check-runtime-arch  ## start emulator, install APK, launch app
 		echo "!! AVD '$(AVD_NAME)' not found. Run \`make install\` first."; \
 		exit 1; \
 	fi; \
-	if ! grep -Fqx "image.sysdir.1=$$expected_sysdir" "$$AVD_CFG"; then \
+	actual_sysdir=$$(awk -F= '$$1 ~ /^[[:space:]]*image\.sysdir\.1[[:space:]]*$$/ { gsub(/^[[:space:]]+|[[:space:]]+$$/, "", $$2); sub(/^\/+/, "", $$2); print $$2; exit }' "$$AVD_CFG"); \
+	normalized_expected_sysdir=$$(printf '%s' "$$expected_sysdir" | sed 's#^/##'); \
+	if [ "$$actual_sysdir" != "$$normalized_expected_sysdir" ]; then \
 		echo "!! AVD '$(AVD_NAME)' does not use $(SYSTEM_IMAGE). Run \`make avd\` to recreate it."; \
 		exit 1; \
 	fi

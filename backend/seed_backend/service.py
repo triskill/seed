@@ -34,6 +34,7 @@ from seed_backend.orchestrator import (
     pi_cmd_for_role,
     pi_env_for_role,
 )
+from seed_backend.provider_allowlist import credential_env_for
 from seed_backend.pi_control import PiControlError, PiControlService
 from seed_backend.pi_runner import PiRunner
 from seed_backend.process_env import harden_process_visibility
@@ -115,6 +116,20 @@ class SelectionResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class AgentApplyRequest(SelectionRequest):
+    """A validated selection plus its credential for a new Pi-agent generation.
+
+    The key is accepted only over the capability-protected loopback API, used
+    to construct child-only environments, and never stored by the backend.
+    """
+
+    api_key: str = Field(alias="apiKey", min_length=1, repr=False)
+
+
+class AgentApplyResponse(BaseModel):
+    applied: bool = True
+
+
 def _require_control_access(request: Request, *, allow_development: bool = False) -> None:
     """Require loopback and the current runtime capability.
 
@@ -161,6 +176,61 @@ async def _control_call(operation):
         raise HTTPException(status_code=502, detail="Pi control request failed") from exc
 
 
+def _new_orchestrator(
+    app_url: str,
+    selection: AgentApplyRequest | None = None,
+) -> Orchestrator:
+    """Build the two chat agents without replacing FastAPI, Flask, or PRoot."""
+    def runner(role: str, *, read_only_tools: set[str] | None = None) -> PiRunner:
+        if selection is None:
+            command = pi_cmd_for_role(role)
+            environment = pi_env_for_role(role, app_url=app_url)
+        else:
+            credential_name = credential_env_for(selection.provider)
+            if credential_name is None:
+                raise ValueError("unsupported provider")
+            command = pi_cmd_for_role(
+                role,
+                provider=selection.provider,
+                model=selection.model_id,
+                thinking=selection.thinking_level,
+            )
+            environment = pi_env_for_role(
+                role,
+                app_url=app_url,
+                provider=selection.provider,
+            )
+            # `pi_env_for_role` removes every other provider key. The submitted
+            # key reaches only these new Pi children, not Flask or the shell.
+            environment[credential_name] = selection.api_key
+        return PiRunner(
+            cmd=command,
+            role=role,
+            env=environment,
+            read_only_tools=read_only_tools,
+        )
+
+    return Orchestrator(
+        middleman=runner("middleman", read_only_tools=set(MIDDLEMAN_READ_ONLY_TOOLS)),
+        worker=runner("worker"),
+    )
+
+
+async def _replace_agents(app: FastAPI, selection: AgentApplyRequest) -> None:
+    """Stop the old chat agents and start configured replacements in-place."""
+    async with app.state.agent_lock:
+        previous = getattr(app.state, "orchestrator", None)
+        if previous is not None:
+            await previous.stop()
+        replacement = _new_orchestrator(_app_url(), selection)
+        try:
+            await replacement.start()
+        except Exception:
+            app.state.orchestrator = None
+            raise
+        app.state.orchestrator = replacement
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start separate Flask (:7778) and agent processes; stop them on shutdown.
@@ -198,31 +268,19 @@ async def lifespan(app: FastAPI):
         ),
     )
     app.state.control_service = control_service
-    orchestrator = None
-    if os.environ.get("SEED_CONTROL_ONLY") != "1":
-        orchestrator = Orchestrator(
-            middleman=PiRunner(
-                cmd=pi_cmd_for_role("middleman"),
-                role="middleman",
-                env=pi_env_for_role("middleman", app_url=app_url),
-                read_only_tools=set(MIDDLEMAN_READ_ONLY_TOOLS),
-            ),
-            worker=PiRunner(
-                cmd=pi_cmd_for_role("worker"),
-                role="worker",
-                env=pi_env_for_role("worker", app_url=app_url),
-            ),
-        )
-        app.state.orchestrator = orchestrator
-        try:
-            await orchestrator.start()
-        except Exception:
-            log.exception("pi orchestrator failed to start")
+    app.state.agent_lock = asyncio.Lock()
+    orchestrator = _new_orchestrator(app_url)
+    app.state.orchestrator = orchestrator
+    try:
+        await orchestrator.start()
+    except Exception:
+        log.exception("pi orchestrator failed to start")
 
     yield
 
-    if orchestrator is not None:
-        await orchestrator.stop()
+    current_orchestrator = getattr(app.state, "orchestrator", None)
+    if current_orchestrator is not None:
+        await current_orchestrator.stop()
     await control_service.stop()
     await manager.stop()
 
@@ -326,6 +384,25 @@ async def control_validate_selection(
         ),
     )
     return SelectionResponse.model_validate(result)
+
+
+@app.post("/control/v1/agents/apply", response_model=AgentApplyResponse)
+async def control_apply_agents(
+    payload: AgentApplyRequest,
+    request: Request,
+) -> AgentApplyResponse:
+    """Apply saved settings by replacing only the two Pi chat agents."""
+    _require_control_access(request)
+    if credential_env_for(payload.provider) is None:
+        raise HTTPException(status_code=422, detail="unsupported provider")
+    try:
+        await _replace_agents(request.app, payload)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        # Do not expose Pi diagnostics or credential-bearing environment data.
+        raise HTTPException(status_code=502, detail="could not apply agent settings") from exc
+    return AgentApplyResponse()
 
 
 @app.websocket("/chat")

@@ -51,11 +51,6 @@ import kotlinx.coroutines.launch
  */
 class MainActivity : ComponentActivity() {
     private val runtimeHealth = MutableStateFlow<HealthState>(HealthState.Unknown)
-    // A settings save can beat ServiceConnection.onServiceConnected. Keep
-    // one pending restart rather than stopping/recreating a service mid-bind.
-    // null = no pending restart; true = pending control-only restart;
-    // false = pending normal-orchestrator restart.
-    private var pendingRestartMode: Boolean? = null
     private var runtimeBinder: RuntimeBinder? = null
     private var terminalManager: SeedTerminalManager? = null
     private var binderHealthJob: Job? = null
@@ -94,11 +89,6 @@ class MainActivity : ComponentActivity() {
                         runtimeHealth.value = health
                     }
                 }
-            }
-            if (pendingRestartMode != null) {
-                val mode = pendingRestartMode!!
-                pendingRestartMode = null
-                binder.restartWithMode(mode)
             }
         }
 
@@ -169,62 +159,10 @@ class MainActivity : ComponentActivity() {
                     is StartupDestination.Seed -> SeedNav(
                         terminalManager = terminalManager
                             ?: throw IllegalStateException("Terminal manager not bound when navigating to Seed"),
-                        onRuntimeSettingsChanged = ::restartRuntimeNormal,
-                        onSettingsOpened = ::enterControlOnly,
-                        onSettingsClosed = ::leaveControlOnly,
                     )
                 }
             }
         }
-    }
-
-    private fun restartRuntime() {
-        // Clear a previous generation's healthy value before requesting its
-        // replacement, so the UI never keeps showing stale health.
-        runtimeHealth.value = HealthState.Unknown
-        val binder = runtimeBinder
-        if (binder != null && binder.isBinderAlive) {
-            binder.restart()
-            return
-        }
-        // Service start/stop is asynchronous. Queue the restart for the
-        // existing/new binder instead of binding a service while it is dying.
-        pendingRestartMode = false
-        if (!frameworkBindingRegistered) startAndBindRuntime()
-    }
-
-    /** Settings save: apply persisted selection AND flip the runtime back to
-     *  normal orchestrator mode in a single restart, so leaveControlOnly()
-     *  later finds the mode already correct and is a no-op. */
-    private fun restartRuntimeNormal() {
-        runtimeHealth.value = HealthState.Unknown
-        val binder = runtimeBinder
-        if (binder != null && binder.isBinderAlive) {
-            binder.restartWithMode(controlOnly = false)
-            return
-        }
-        pendingRestartMode = false
-        if (!frameworkBindingRegistered) startAndBindRuntime()
-    }
-
-    private fun enterControlOnly() {
-        // Switching modes while Settings is open lets the catalog populate
-        // from the lazy control service without booting the middleman/worker.
-        // If the service isn't bound yet, the next /control/v1/models call
-        // will lazily start PiControlService on the running orchestrator.
-        val binder = runtimeBinder
-        if (binder != null && binder.isBinderAlive) binder.startControlOnly()
-    }
-
-    private fun leaveControlOnly() {
-        // If the user saved a model, onApplied already called
-        // restartRuntimeNormal() and the new generation is in normal mode;
-        // RuntimeSupervisor.startNormal() is a no-op in that case. If the user
-        // closes Settings without saving, the runtime is still control-only
-        // and startNormal() flips it back. We do not queue this transition
-        // across the service-connection race: see enterControlOnly().
-        val binder = runtimeBinder
-        if (binder != null && binder.isBinderAlive) binder.startNormal()
     }
 
     override fun onDestroy() {

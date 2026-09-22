@@ -45,21 +45,15 @@ def test_flask_manager_uses_debug_reloader_without_debugger():
     captured: dict = {}
 
     class FakeProcess:
-        returncode = None
         pid = 12345
 
-        async def wait(self):
+        def poll(self):
             return 0
 
-        def terminate(self):
-            self.returncode = 0
-
-        async def communicate(self):
-            return b"", b""
-
-    async def fake_exec(*args, env=None, **kwargs):
+    def fake_popen(args, *, env=None, **kwargs):
         captured["args"] = args
         captured["env"] = env
+        captured["kwargs"] = kwargs
         return FakeProcess()
 
     async def timed_out_wait_ready(*, timeout):
@@ -69,7 +63,7 @@ def test_flask_manager_uses_debug_reloader_without_debugger():
     async def scenario():
         manager = FlaskManager(port=7778)
         with (
-            patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
+            patch("seed_backend.flask_manager.subprocess.Popen", side_effect=fake_popen),
             patch.object(manager, "wait_ready", side_effect=timed_out_wait_ready),
         ):
             started = await manager.start()
@@ -82,6 +76,7 @@ def test_flask_manager_uses_debug_reloader_without_debugger():
     assert captured["env"] is not None
     assert "--debug" in captured["args"]
     assert "--no-debugger" in captured["args"]
+    assert captured["kwargs"]["start_new_session"] is True
     assert captured["readiness_timeout"] == FLASK_STARTUP_TIMEOUT_SECONDS
 
 

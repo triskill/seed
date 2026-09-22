@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -36,7 +38,7 @@ class FlaskManager:
         self.host = host
         self.poll_interval = poll_interval
         self.app_dir = app_dir or self._default_app_dir()
-        self._process: asyncio.subprocess.Process | None = None
+        self._process: subprocess.Popen[bytes] | None = None
         self.mode = "stopped"
 
     @staticmethod
@@ -63,20 +65,29 @@ class FlaskManager:
         venv_bin = str(Path(sys.executable).parent)
         env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
         try:
-            stderr_log = open("/tmp/seed-flask-stderr.log", "w")
-            self._process = await asyncio.create_subprocess_exec(
-                "flask",
-                "--app", "seed_app.app",
-                "run",
-                "--host", self.host,
-                "--port", str(self.port),
-                "--debug",
-                "--no-debugger",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=stderr_log,
-                env=env,
-                cwd=self.app_dir,
-            )
+            # PRoot's x86_64 syscall translation returns ENOSYS from asyncio's
+            # subprocess transport. Plain Popen works on both Android lanes and
+            # on the host, so keep one launch path. A new session lets stop()
+            # terminate Flask's reloader and server together.
+            with open("/tmp/seed-flask-stderr.log", "w") as stderr_log:
+                self._process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m", "flask",
+                        "--app", "seed_app.app",
+                        "run",
+                        "--host", self.host,
+                        "--port", str(self.port),
+                        "--debug",
+                        "--no-debugger",
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=stderr_log,
+                    env=env,
+                    cwd=self.app_dir,
+                    start_new_session=True,
+                )
         except (FileNotFoundError, OSError, PermissionError) as exc:
             self._process = None
             self.mode = "failed"
@@ -111,24 +122,26 @@ class FlaskManager:
         raise TimeoutError(f"Flask did not become ready on {url} within {timeout}s")
 
     async def stop(self) -> None:
-        """Terminate the Flask process, escalating to SIGKILL after five seconds."""
+        """Terminate Flask's process group, escalating after five seconds."""
         process = self._process
         if process is None:
             return
-        if process.returncode is None:
+        if process.poll() is None:
             try:
-                process.terminate()
-                await asyncio.wait_for(process.wait(), timeout=5.0)
-            except (asyncio.TimeoutError, ProcessLookupError):
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.to_thread(process.wait, 5.0)
+            except subprocess.TimeoutExpired:
                 try:
-                    process.kill()
+                    os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                await process.wait()
+                await asyncio.to_thread(process.wait)
         self._process = None
-        if self.mode == "subprocess":
-            self.mode = "stopped"
+        self.mode = "stopped"
 
     def is_up(self) -> bool:
         """Whether the separate Flask process is still running."""
-        return self._process is not None and self._process.returncode is None
+        return self._process is not None and self._process.poll() is None

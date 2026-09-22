@@ -34,7 +34,7 @@ This tracker describes the current prototype path._
 | 7 | Native PRoot packaging + rootfs extraction | ✅ direct-native ARM64 phone and x86_64 emulator lanes; QEMU remains removed |
 | 8 | Foreground service | ✅ done (4/4); now also owns the lazy terminal session manager |
 | 9 | First-run runtime startup gate | ✅ done (4/4); phone build/install/launch targets are available |
-| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; provider-backed E2E with persisted selection lands via the new Settings control-only flow (Phase 4 done without first-run onboarding). Remaining: cancellation/recovery under network loss, release QA, OAuth spike |
+| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; Settings persists a selection and replaces only the two Pi agents, while FastAPI, Flask, and PRoot stay running. Remaining: provider-backed E2E, cancellation/recovery under network loss, release QA, OAuth spike |
 
 **Embedded runtime acceptance recorded so far:**
 
@@ -535,7 +535,7 @@ stable test tags. The following Compose assertions are deferred:
 - Login + clear-model assertion (needs a fake `SettingsRepo` in the
   Compose rule; the existing JVM `RecordingSettingsRepo` already covers
   it).
-- Save → validate → `onApplied` Compose assertion (needs a
+- Save → validate → agent-only apply Compose assertion (needs a
   `FakeBackendApi` test util returning a known catalog; defer until
   that util exists or `SettingsViewModel` accepts an injectable
   catalog seed).

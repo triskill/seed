@@ -67,8 +67,8 @@ import com.seed.app.data.ProviderCatalog
  *     [SettingsViewModel.save].
  *
  * Settings persist through DataStore and encrypted
- * preferences. Saving restarts the runtime so a provider/key change applies
- * to the Pi processes; it never redirects the user out of the app.
+ * preferences. Saving replaces only the Pi chat agents, so the runtime and
+ * current navigation stay in place.
  * The public ViewModel API
  * ([SettingsViewModel.form],
  * [SettingsViewModel.lastSaved], and the six
@@ -80,7 +80,6 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel(
         factory = SettingsViewModel.Factory,
     ),
-    onApplied: () -> Unit = {},
 ) {
     val form by viewModel.form.collectAsState()
     val lastSaved by viewModel.lastSaved.collectAsState()
@@ -193,7 +192,7 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Button(
-            onClick = { viewModel.save(onApplied) },
+            onClick = viewModel::save,
             enabled = !applying,
             modifier = Modifier
                 .fillMaxWidth()

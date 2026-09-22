@@ -27,7 +27,6 @@ internal class RuntimeSupervisor(
     private var generation = 0L
     private var handle: ProotHandle? = null
     private var restartPending = false
-    private var controlOnly: Boolean = false
     private val commandJob = scope.launch { processCommands() }
 
     val health: StateFlow<HealthState> = mutableHealth.asStateFlow()
@@ -47,46 +46,15 @@ internal class RuntimeSupervisor(
     }
 
     /** Replace the current PRoot generation while keeping the service alive. */
-    fun restart() = replaceGeneration(controlOnly)
-
-    /** Switch into control-only mode and replace the current PRoot generation. */
-    fun startControlOnly() = replaceGeneration(true)
-
-    /** Switch back to the normal orchestrator and replace the current generation.
-     *  No-op when the runtime is already in normal mode, so a leave callback
-     *  after a save (which already flipped the mode via restartWithMode) does
-     *  not trigger a redundant respawn. */
-    fun startNormal() {
-        if (!isControlOnly()) return
-        replaceGeneration(false)
-    }
-
-    /** Replace the current generation with one in [nextControlOnly] mode in a
-     *  single transition. Use this from the Settings apply path so saving a
-     *  model and leaving Settings produces one restart (not three): apply
-     *  flips the mode and the leave callback's startNormal() then finds the
-     *  runtime already in normal mode and is a no-op. */
-    fun restartWithMode(nextControlOnly: Boolean) = replaceGeneration(nextControlOnly)
-
-    /** True when the next (or current) generation should be control-only. */
-    fun isControlOnly(): Boolean = synchronized(lifecycleLock) { controlOnly }
+    fun restart() = replaceGeneration()
 
     /** Bump the generation, tear down the active handle, and queue a new
-     *  process start. Used by every transition that must take effect on the
-     *  running PRoot process (mode change, settings apply).
-     *
-     *  Android note: the JVM `Process.isAlive()` API is unreliable on
-     *  Termux PRoot (PRoot creates its own process group inside the
-     *  Android app's session, so `Process.destroy()`'s group kill does not
-     *  reach it). Instead of polling `isAlive`, we queue the replacement
-     *  immediately and rely on the new process binding port 7777 before the
-     *  old uvicorn notices the conflict. The old PRoot may leak until its
-     *  uvicorn child exits; a follow-up can replace this with a /proc walk.
+     *  process start. This remains only for explicit runtime recovery; model
+     *  settings replace Pi agents through FastAPI and never call this method.
      */
-    private fun replaceGeneration(nextControlOnly: Boolean) {
+    private fun replaceGeneration() {
         val activeHandle = synchronized(lifecycleLock) {
             if (terminal.get()) return
-            controlOnly = nextControlOnly
             generation += 1
             mutableHealth.value = HealthState.Unknown
             if (restartPending) return

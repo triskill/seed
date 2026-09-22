@@ -1,5 +1,7 @@
 package com.seed.app.ui.shell
 
+import com.seed.app.data.AgentApplyRequest
+import com.seed.app.data.AgentApplyResponse
 import com.seed.app.data.BackendApi
 import com.seed.app.data.ModelsResponse
 import com.seed.app.data.ThinkingLevelsResponse
@@ -413,5 +415,6 @@ class FakeBackendApi : BackendApi {
     override suspend fun models(authorization: String): ModelsResponse = error("Not used")
     override suspend fun thinkingLevels(provider: String, modelId: String, authorization: String): ThinkingLevelsResponse = error("Not used")
     override suspend fun validateSelection(request: SelectionRequest, authorization: String): SelectionResponse = error("Not used")
+    override suspend fun applyAgents(request: AgentApplyRequest, authorization: String): AgentApplyResponse = error("Not used")
 
 }

@@ -41,13 +41,10 @@ import java.util.concurrent.TimeUnit
  *     ensures the build only happens once, on first
  *     access.
  *
- *   - **Debug-only logging.** [HttpLoggingInterceptor]
- *     dumps full request/response bodies to logcat
- *     — useful for development, but a privacy leak
- *     in production. Provider credentials are no longer sent through
- *     `PUT /config`; the interceptor is only
- *     installed when [BuildConfig.DEBUG] is true;
- *     release builds get a silent OkHttp stack.
+ *   - **Debug-only logging.** [HttpLoggingInterceptor] records only
+ *     request lines and status codes. Settings apply sends a provider key to
+ *     the protected loopback backend, so request/response bodies never reach
+ *     logcat. Release builds get a silent OkHttp stack.
  *
  *   - **`@Volatile` + double-checked locking.** The
  *     lazy delegate is the idiomatic Kotlin pattern
@@ -142,7 +139,9 @@ object ApiModule {
             clientBuilder.addInterceptor(
                 HttpLoggingInterceptor().apply {
                     redactHeader("Authorization")
-                    level = HttpLoggingInterceptor.Level.BODY
+                    // Agent apply includes an API key; keep all request bodies out
+                    // of logcat, including in debug builds.
+                    level = HttpLoggingInterceptor.Level.BASIC
                 },
             )
         }

@@ -225,23 +225,18 @@ without parsing a terminal UI or human CLI table.
 2. `AndroidSettingsRepo` persists non-secret fields in DataStore and the API
    key in Keystore-backed `EncryptedSharedPreferences`. The credential env
    allowlist is the only path through which the key reaches Pi.
-3. When the Settings screen opens and no model has been saved, Android
-   requests a control-only runtime generation (`SEED_CONTROL_ONLY=1`); the
-   lazy `PiControlService` answers `/control/v1/*` and the catalog populates
-   from the bundled Pi without booting the middleman/worker. When Settings
-   closes (without a successful save), Android requests a return to the
-   normal orchestrator.
+3. The lazy `PiControlService` answers `/control/v1/*` from the running
+   backend, so Settings can load a catalog without changing the PRoot runtime.
 4. `SettingsViewModel.login()` persists the provider + key without
-   restarting the runtime. `SettingsViewModel.save(onApplied)` validates
-   the (provider, model, thinkingLevel) tuple through
-   `/control/v1/selection/validate`, persists the form, and invokes
-   `onApplied`, which is wired to `MainActivity.restartRuntime()` ->
-   `RuntimeSupervisor.restartWithMode(false)`. Restart replaces the PRoot
-   generation, so the next `pi` children inherit the saved env vars.
+   interrupting the runtime. `SettingsViewModel.save()` validates the
+   (provider, model, thinkingLevel) tuple, persists the form, and calls the
+   protected `/control/v1/agents/apply` endpoint. That endpoint replaces only
+   the middleman and worker Pi processes with child-only credential
+   environments; FastAPI, Flask, and PRoot are not restarted.
 5. The Compose UI shows a provider dropdown (closed set), an API key field
    (password-masked), a Login button, a model dropdown (filtered catalog),
-   a thinking-level dropdown (catalog-derived), and a Save model and
-   restart button. Login and Save are independent: the user can save a
+   a thinking-level dropdown (catalog-derived), and a Save model button.
+   Login and Save are independent: the user can save a
    login without selecting a model, and can change the model without
    re-entering the key.
 6. The Phase 3 capability is required for every `/control/v1/*` and

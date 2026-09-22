@@ -103,6 +103,13 @@ interface BackendApi {
         @Body request: SelectionRequest,
         @Header("Authorization") authorization: String,
     ): SelectionResponse
+
+    /** Replace only the two Pi chat agents with this saved configuration. */
+    @POST("control/v1/agents/apply")
+    suspend fun applyAgents(
+        @Body request: AgentApplyRequest,
+        @Header("Authorization") authorization: String,
+    ): AgentApplyResponse
 }
 
 /**
@@ -190,3 +197,13 @@ data class SelectionResponse(
     val model: PiModelDto? = null,
     val thinkingLevel: String = "off",
 )
+
+/** Sent only to the capability-protected loopback backend to launch Pi children. */
+data class AgentApplyRequest(
+    val provider: String,
+    val modelId: String,
+    val thinkingLevel: String,
+    val apiKey: String,
+)
+
+data class AgentApplyResponse(val applied: Boolean)

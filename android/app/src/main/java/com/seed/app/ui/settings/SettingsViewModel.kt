@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import com.seed.app.data.AgentApplyRequest
 import com.seed.app.data.AndroidSettingsRepo
 import com.seed.app.data.ApiModule
 import com.seed.app.data.BackendApi
@@ -34,8 +35,8 @@ import kotlinx.coroutines.launch
  *
  * Provider login and model configuration are intentionally separate: Login
  * stores a credential without interrupting the running app, and the generic
- * Pi catalog is used to select a model. Saving the selected model restarts Pi.
- * Neither action gates app startup.
+ * Pi catalog is used to select a model. Saving replaces only the two Pi chat
+ * agents; FastAPI, Flask, and PRoot keep running. Neither action gates startup.
  *
  * The public API — [form], [lastSaved], the six
  * onXChange setters, and [save] — is the same
@@ -179,8 +180,8 @@ class SettingsViewModel(
         }
     }
 
-    /** Validate a catalog-selected model through Pi, persist, then restart. */
-    fun save(onApplied: () -> Unit = {}) {
+    /** Validate, persist, and replace only the two Pi chat agents. */
+    fun save() {
         if (_applying.value) return
         viewModelScope.launch {
             val current = _form.value
@@ -203,8 +204,19 @@ class SettingsViewModel(
                     check(response.valid) { "Pi rejected this selection" }
                 }
                 repo.save(current)
+                if (api != null) {
+                    val applied = api.applyAgents(
+                        AgentApplyRequest(
+                            provider = current.provider,
+                            modelId = current.model,
+                            thinkingLevel = current.thinkingLevel,
+                            apiKey = current.apiKey,
+                        ),
+                        "Bearer ${RuntimeService.controlCapability}",
+                    )
+                    check(applied.applied) { "Pi agents rejected settings" }
+                }
                 _lastSaved.value = current
-                onApplied()
             } catch (failure: CancellationException) {
                 throw failure
             } catch (_: Exception) {
