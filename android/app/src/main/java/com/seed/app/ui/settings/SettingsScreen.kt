@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,9 +82,12 @@ fun SettingsScreen(
         factory = SettingsViewModel.Factory,
     ),
 ) {
+    LaunchedEffect(viewModel) { viewModel.refreshConfiguration() }
     val form by viewModel.form.collectAsState()
     val lastSaved by viewModel.lastSaved.collectAsState()
     val isSaved = lastSaved != null && lastSaved == form
+    val configuredProviders by viewModel.configuredProviders.collectAsState()
+    val legacyKeyWarning by viewModel.legacyKeyWarning.collectAsState()
     val catalog by viewModel.catalog.collectAsState()
     val catalogLoading by viewModel.catalogLoading.collectAsState()
     val catalogError by viewModel.catalogError.collectAsState()
@@ -106,18 +110,15 @@ fun SettingsScreen(
             text = stringResource(R.string.settings_section_login),
             style = MaterialTheme.typography.titleMedium,
         )
-        ProviderDropdown(
-            value = form.provider,
-            onValueChange = viewModel::onProviderChange,
-        )
+        var newProvider by remember { mutableStateOf("") }
+        ProviderDropdown(value = newProvider, providers = ProviderCatalog.PROVIDERS.map { it.id }, onValueChange = { newProvider = it })
         OutlinedTextField(
             value = form.apiKey,
             onValueChange = viewModel::onApiKeyChange,
             label = { Text(stringResource(R.string.settings_field_api_key)) },
             singleLine = true,
             // Hide the key as the user types so a bystander cannot read it.
-            // Android stores the at-rest copy in Keystore-backed encrypted
-            // preferences.
+            // Saved credentials belong to Pi's auth.json, not Android preferences.
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier
@@ -125,7 +126,7 @@ fun SettingsScreen(
                 .semantics { testTag = "settings-field-api-key" },
         )
         Button(
-            onClick = viewModel::login,
+            onClick = { viewModel.login(newProvider) },
             enabled = !applying,
             modifier = Modifier.fillMaxWidth().semantics { testTag = "settings-login" },
         ) {
@@ -133,6 +134,12 @@ fun SettingsScreen(
         }
 
         loginStatus?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+        if (legacyKeyWarning) Text("An older encrypted API key remains on this device. Re-enter it under New provider to move it to Pi; it will not be sent automatically.")
+
+        HorizontalDivider()
+        Text("Select provider", style = MaterialTheme.typography.titleMedium)
+        ProviderDropdown(value = form.provider, providers = configuredProviders, onValueChange = viewModel::onProviderChange)
+        TextButton(onClick = viewModel::refreshConfiguration) { Text("Refresh providers from Pi") }
 
         HorizontalDivider()
         Text(
@@ -307,6 +314,7 @@ private fun PortField(
 @Composable
 private fun ProviderDropdown(
     value: String,
+    providers: List<String>,
     onValueChange: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -324,10 +332,10 @@ private fun ProviderDropdown(
             modifier = Modifier.menuAnchor().fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            ProviderCatalog.PROVIDERS.forEach { provider ->
+            providers.forEach { provider ->
                 DropdownMenuItem(
-                    text = { Text(provider.displayName) },
-                    onClick = { onValueChange(provider.id); expanded = false },
+                    text = { Text(ProviderCatalog.find(provider)?.displayName ?: provider) },
+                    onClick = { onValueChange(provider); expanded = false },
                 )
             }
         }

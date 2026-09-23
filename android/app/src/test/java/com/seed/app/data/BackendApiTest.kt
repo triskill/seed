@@ -216,4 +216,27 @@ class BackendApiTest {
         assertEquals("delayed", response.stdout)
         assertNotNull("request was received", server.takeRequest(1, TimeUnit.SECONDS))
     }
+
+    @Test
+    fun `models fetches configured provider catalog without credential`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(
+                    """{"models":[{"provider":"anthropic","id":"claude-test","name":"Claude Test","supportsThinking":true,"thinkingLevels":["off","low"]}]}""",
+                ),
+        )
+
+        val response = api.models(
+            "anthropic",
+            "Bearer capability",
+        )
+
+        assertEquals("claude-test", response.models.single().id)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/control/v1/models?refresh=true&provider=anthropic", request.path)
+        assertEquals("Bearer capability", request.getHeader("Authorization"))
+        assertEquals("", request.body.readUtf8())
+    }
 }

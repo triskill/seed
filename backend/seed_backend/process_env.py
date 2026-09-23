@@ -34,6 +34,8 @@ def untrusted_child_env() -> dict[str, str]:
     env = os.environ.copy()
     for name in PRIVATE_BACKEND_ENV_VARS:
         env.pop(name, None)
+    from seed_backend.pi_settings import agent_dir
+    env['PI_CODING_AGENT_DIR'] = str(agent_dir())
     return env
 
 

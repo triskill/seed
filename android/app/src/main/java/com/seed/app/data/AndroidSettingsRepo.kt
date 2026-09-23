@@ -14,8 +14,10 @@ import androidx.security.crypto.MasterKey
 import com.seed.app.ui.settings.LogLevel
 import com.seed.app.ui.settings.SettingsForm
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.io.File
 
 // Top-level DataStore name. The `preferencesDataStore`
 // delegate requires a `const val` String at
@@ -34,9 +36,7 @@ private val KEY_WEBAPP_PORT = intPreferencesKey("webapp_port")
 private val KEY_LOG_LEVEL = intPreferencesKey("log_level")
 private val KEY_THINKING_LEVEL = stringPreferencesKey("thinking_level")
 
-// SharedPreferences key for the API key. (Not a
-// DataStore key because we need encryption at rest
-// for this field.)
+// Key in the obsolete encrypted store, read only for migration.
 private const val KEY_API_KEY = "api_key"
 
 /**
@@ -52,35 +52,35 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
     name = DATASTORE_NAME,
 )
 
+/** Best-effort migration reader; never creates the encrypted store on new installs. */
+internal class LegacyCredential(
+    private val exists: () -> Boolean,
+    private val open: () -> SharedPreferences,
+) {
+    fun read(): String {
+        if (!exists()) return ""
+        return try {
+            open().getString(KEY_API_KEY, null).orEmpty()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    fun clear() {
+        if (!exists()) return
+        check(open().edit().remove(KEY_API_KEY).commit()) {
+            "Could not clear legacy Android credential"
+        }
+    }
+}
+
 /**
  * Production [SettingsRepo] backed by
- * `DataStore-Preferences` + `EncryptedSharedPreferences`.
- *
- * **Why two stores?** The Settings form has two
- * kinds of fields:
- *
- *   - **Non-secret** (provider, model, host, backend
- *     port, webapp port, log level) — stored in
- *     `DataStore-Preferences`, which is a
- *     coroutine-friendly, typed key-value store
- *     designed for preferences. The store is
- *     plain-text on disk (DataStore doesn't
- *     encrypt its file).
- *   - **Secret** (apiKey) — stored in
- *     `EncryptedSharedPreferences`, which
- *     AES-encrypts the prefs file at rest using a
- *     master key in the Android Keystore. The
- *     secret never touches the plain-text
- *     DataStore file.
- *
- * **Why not just DataStore for everything?** The
- * master-key scheme in `EncryptedSharedPreferences`
- * is the only built-in API for at-rest encryption
- * of preference values; DataStore doesn't have a
- * first-class encryption story. Keeping the secret
- * in a separate encrypted store is the cleanest
- * way to satisfy "API key at rest is encrypted"
- * without writing our own DataStore serializer.
+ * `DataStore-Preferences` for app preferences. Credentials belong to the
+ * backend; an existing encrypted Android credential is read only for a
+ * migration warning and retained until a successful backend import.
  *
  * **What "saved" means:** [load] returns `null`
  * on a fresh install (no `provider` key in
@@ -89,32 +89,24 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  * with default values" — the UI's "Modified" /
  * "Saved" status pill depends on this.
  *
- * **Why this is not unit-testable on the JVM:**
- * the constructor takes a `Context` (for
- * `DataStore` and `EncryptedSharedPreferences`),
- * and the encryption layer is in the Android
- * Keystore. The contract tests for [SettingsRepo]
- * live in `SettingsRepoTest` (using
- * [SettingsRepo.InMemory] + a `RecordingSettingsRepo`
- * in `SettingsViewModelTest`); this class is
- * exercised by the Phase 6+ instrumented tests.
  */
 class AndroidSettingsRepo(context: Context) : SettingsRepo {
 
     private val ds: DataStore<Preferences> = context.settingsDataStore
 
-    private val securePrefs: SharedPreferences = run {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            context,
-            SECURE_PREFS_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    }
+    private val legacyCredential = LegacyCredential(
+        exists = { File(context.applicationInfo.dataDir, "shared_prefs/$SECURE_PREFS_NAME.xml").exists() },
+        open = {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                context, SECURE_PREFS_NAME, masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        },
+    )
 
     override suspend fun load(): SettingsForm? {
         val prefs = ds.data.first()
@@ -126,39 +118,25 @@ class AndroidSettingsRepo(context: Context) : SettingsRepo {
         // is treated as not-saved — the user just
         // has to tap Save again. The cost is low and
         // it keeps the contract simple.
-        val apiKey = securePrefs.getString(KEY_API_KEY, null).orEmpty()
+        val apiKey = withContext(Dispatchers.IO) { legacyCredential.read() }
         return prefs.toSettingsForm(apiKey)
     }
 
-    override suspend fun saveCredentials(provider: String, apiKey: String) {
-        val current = load() ?: SettingsForm.DEFAULTS
-        save(current.copy(provider = provider, model = "", apiKey = apiKey, thinkingLevel = "off"))
+    override suspend fun clearLegacyCredential() {
+        withContext(Dispatchers.IO) {
+            legacyCredential.clear()
+        }
     }
 
     override suspend fun save(form: SettingsForm) {
-        // DataStore is the source of truth for the
-        // non-secret fields; EncryptedSharedPreferences
-        // for the secret. The two writes are not
-        // transactional across stores, but DataStore
-        // is atomic per-edit and SharedPreferences'
-        // checked `commit()` is synchronous, so callers
-        // never proceed while the key is only in memory.
-        // A crash mid-save would
-        // leave the stores in a consistent-enough
-        // state for the next `load()` to either
-        // succeed (if the DataStore edit landed)
-        // or return null (if it didn't) — no
-        // half-form is observable.
+        // Only app preferences are saved here. Never remove a legacy key
+        // until the backend has accepted a replacement credential.
         ds.edit { prefs -> prefs.putNonSecretSettings(form) }
-        withContext(Dispatchers.IO) {
-            check(securePrefs.edit().putString(KEY_API_KEY, form.apiKey).commit()) {
-                "Could not persist encrypted provider credential"
-            }
-        }
+
     }
 }
 
-/** Decode persisted non-secret settings and combine them with the encrypted key. */
+/** Decode app preferences and expose a legacy key only for migration. */
 internal fun Preferences.toSettingsForm(apiKey: String): SettingsForm? {
     val provider = this[KEY_PROVIDER] ?: return null
     val model = this[KEY_MODEL] ?: return null

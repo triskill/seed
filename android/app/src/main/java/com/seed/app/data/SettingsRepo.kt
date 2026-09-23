@@ -8,15 +8,11 @@ import com.seed.app.ui.settings.SettingsForm
  * Phase 5.7 introduces this interface so the
  * [com.seed.app.ui.settings.SettingsViewModel]
  * doesn't have to know whether the form is held in
- * memory, in a `DataStore`, or in an
- * `EncryptedSharedPreferences`. The two production
- * impls are:
+ * memory or in a `DataStore`. The implementations are:
  *
  *   - [AndroidSettingsRepo] — the real one, backed
- *     by `DataStore-Preferences` for the non-secret
- *     fields (provider, model, ports, log level) and
- *     `EncryptedSharedPreferences` for the API key
- *     (which lives in the Android keystore).
+ *     by `DataStore-Preferences` for app preferences.
+ *     Legacy encrypted credentials are read only for migration.
  *   - [SettingsRepo.InMemory] — a stateless no-op
  *     for tests, Compose previews, and the
  *     no-arg-constructor convenience overload of
@@ -26,12 +22,10 @@ import com.seed.app.ui.settings.SettingsForm
  *   - [load] returns the most recently saved
  *     [SettingsForm], or `null` if nothing has ever
  *     been saved. (A fresh install returns `null`.)
- *   - [save] persists [form]. The next [load] call
- *     — from the same or a later process — must
- *     return the same [form].
+ *   - [save] persists non-secret fields only; credentials are stored
+ *     by the backend, not in Android preferences.
  *
- * The interface is intentionally narrow (two
- * methods). A `Flow<SettingsForm>`-based design was
+ * A `Flow<SettingsForm>`-based design was
  * considered and rejected: the ViewModel only needs
  * a one-shot hydration on init and a write on save.
  * A continuous stream would either (a) re-emit on
@@ -53,15 +47,13 @@ interface SettingsRepo {
     suspend fun load(): SettingsForm?
 
     /**
-     * Persist [form]. After this returns, a
-     * subsequent [load] (in this process or a later
-     * one) returns [form].
+     * Persist non-secret fields from [form]. A legacy credential remains
+     * untouched until [clearLegacyCredential] follows a successful backend save.
      */
     suspend fun save(form: SettingsForm)
 
-    /** Persist credentials before model discovery; selection is filled in later. */
-    suspend fun saveCredentials(provider: String, apiKey: String) =
-        save(SettingsForm(provider = provider, model = "", apiKey = apiKey))
+    /** Remove the obsolete Android credential after successful backend import. */
+    suspend fun clearLegacyCredential() = Unit
 
     companion object {
         /**

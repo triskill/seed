@@ -175,6 +175,7 @@ class SeedTerminalManager(
      */
     @Synchronized
     private fun createSession(): TerminalSession {
+        GuestDns.sync(applicationContext, rootfsDir)
         // Resolve native proot installation
         val installation = NativeProot.resolve(nativeLibraryDir.absolutePath)
 

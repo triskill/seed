@@ -30,7 +30,7 @@ def test_only_selected_provider_credential_survives(monkeypatch):
 
     env = pi_env_for_role("middleman")
 
-    assert env.get("OPENAI_API_KEY") == "sk-openai"
+    assert "OPENAI_API_KEY" not in env
     assert "ANTHROPIC_API_KEY" not in env
     assert "GEMINI_API_KEY" not in env
     assert "SEED_RUNTIME_CAPABILITY" not in env
@@ -53,4 +53,4 @@ def test_provider_id_normalisation(monkeypatch):
 
     env = pi_env_for_role("middleman")
 
-    assert env.get("OPENAI_API_KEY") == "sk-openai"
+    assert "OPENAI_API_KEY" not in env

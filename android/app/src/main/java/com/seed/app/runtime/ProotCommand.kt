@@ -44,6 +44,14 @@ internal object ProotCommand {
         add("-b")
         add("/proc")
 
+        // Persist only Pi's shared configuration outside the replaceable rootfs.
+        val agentDir = File(rootfsDir.parentFile, "pi-agent")
+        check(agentDir.isDirectory || agentDir.mkdirs()) { "Pi agent host directory missing: $agentDir" }
+        val guestDir = File(rootfsDir, "home/seed/.pi/agent")
+        check(guestDir.isDirectory || guestDir.mkdirs()) { "Pi agent guest directory missing: $guestDir" }
+        add("-b")
+        add("${agentDir.absolutePath}:/home/seed/.pi/agent")
+
         // Kill child + descendants when PRoot exits. Prevents orphan
         // processes (uvicorn, /bin/sh, etc.) when the handle is destroyed.
         add("--kill-on-exit")

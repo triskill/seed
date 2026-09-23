@@ -68,6 +68,7 @@ class ProotRunnerTest {
                 // its own mount namespace otherwise).
                 "-b", "/dev",
                 "-b", "/proc",
+                "-b", "${requireNotNull(rootfs.parentFile).resolve("pi-agent").absolutePath}:/home/seed/.pi/agent",
                 // Kill child + descendants when proot exits; without
                 // it, killing the proot process leaves uvicorn (and
                 // the Flask subprocess it spawned) orphaned.

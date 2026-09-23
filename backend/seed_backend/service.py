@@ -24,6 +24,8 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from seed_backend.chat import handle_chat
@@ -35,6 +37,7 @@ from seed_backend.orchestrator import (
     pi_env_for_role,
 )
 from seed_backend.provider_allowlist import credential_env_for
+from seed_backend import pi_settings
 from seed_backend.pi_control import PiControlError, PiControlService
 from seed_backend.pi_runner import PiRunner
 from seed_backend.process_env import harden_process_visibility
@@ -92,6 +95,15 @@ class ModelsResponse(BaseModel):
     models: list[ModelOption]
 
 
+class ProviderModelsRequest(BaseModel):
+    """Provider credential used only by a short-lived catalog Pi process."""
+
+    provider: str = Field(min_length=1, max_length=100)
+    api_key: str = Field(alias="apiKey", min_length=1, repr=False)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class ThinkingLevelsResponse(BaseModel):
     provider: str
     model_id: str = Field(alias="modelId")
@@ -104,8 +116,7 @@ class SelectionRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=100)
     model_id: str = Field(alias="modelId", min_length=1, max_length=300)
     thinking_level: str | None = Field(default=None, alias="thinkingLevel", max_length=20)
-
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra='forbid')
 
 
 class SelectionResponse(BaseModel):
@@ -117,13 +128,7 @@ class SelectionResponse(BaseModel):
 
 
 class AgentApplyRequest(SelectionRequest):
-    """A validated selection plus its credential for a new Pi-agent generation.
-
-    The key is accepted only over the capability-protected loopback API, used
-    to construct child-only environments, and never stored by the backend.
-    """
-
-    api_key: str = Field(alias="apiKey", min_length=1, repr=False)
+    """A validated selection for a new Pi-agent generation."""
 
 
 class AgentApplyResponse(BaseModel):
@@ -176,6 +181,33 @@ async def _control_call(operation):
         raise HTTPException(status_code=502, detail="Pi control request failed") from exc
 
 
+def _new_control_service(
+    app_url: str,
+    *,
+    provider: str | None = None,
+) -> PiControlService:
+    """Build a lazy control Pi, optionally scoped to one saved provider."""
+    def runner() -> PiRunner:
+        command = (
+            pi_cmd_for_role("control", provider=provider)
+            if provider is not None
+            else pi_cmd_for_role("control")
+        )
+        environment = pi_env_for_role(
+            "control",
+            app_url=app_url,
+            provider=provider,
+        )
+        return PiRunner(
+            cmd=command,
+            role="control",
+            env=environment,
+            read_only_tools=set(),
+        )
+
+    return PiControlService(runner_factory=runner)
+
+
 def _new_orchestrator(
     app_url: str,
     selection: AgentApplyRequest | None = None,
@@ -186,9 +218,6 @@ def _new_orchestrator(
             command = pi_cmd_for_role(role)
             environment = pi_env_for_role(role, app_url=app_url)
         else:
-            credential_name = credential_env_for(selection.provider)
-            if credential_name is None:
-                raise ValueError("unsupported provider")
             command = pi_cmd_for_role(
                 role,
                 provider=selection.provider,
@@ -200,9 +229,6 @@ def _new_orchestrator(
                 app_url=app_url,
                 provider=selection.provider,
             )
-            # `pi_env_for_role` removes every other provider key. The submitted
-            # key reaches only these new Pi children, not Flask or the shell.
-            environment[credential_name] = selection.api_key
         return PiRunner(
             cmd=command,
             role=role,
@@ -220,13 +246,27 @@ async def _replace_agents(app: FastAPI, selection: AgentApplyRequest) -> None:
     """Stop the old chat agents and start configured replacements in-place."""
     async with app.state.agent_lock:
         previous = getattr(app.state, "orchestrator", None)
+        # Persist first: a failed write must never leave new agents running with
+        # the old default settings. Keep the snapshot for startup rollback.
+        before = pi_settings.read_json('settings.json')
+        pi_settings.save_selection(selection.provider, selection.model_id, selection.thinking_level)
+        replacement = _new_orchestrator(_app_url(), selection)
         if previous is not None:
             await previous.stop()
-        replacement = _new_orchestrator(_app_url(), selection)
         try:
             await replacement.start()
-        except Exception:
-            app.state.orchestrator = None
+        except BaseException:
+            await replacement.stop()
+            if previous is not None:
+                try:
+                    await previous.start()
+                    app.state.orchestrator = previous
+                except Exception:
+                    app.state.orchestrator = None
+            try:
+                pi_settings.restore_settings(before, selection)
+            except (OSError, pi_settings.ConfigConflictError):
+                log.exception('could not restore Pi settings after agent start failure')
             raise
         app.state.orchestrator = replacement
 
@@ -259,14 +299,7 @@ async def lifespan(app: FastAPI):
     app_url = _app_url()
     # Keep catalog/selection RPC isolated from chat's long-lived agents. The
     # service starts lazily when the protected control endpoint is requested.
-    control_service = PiControlService(
-        runner_factory=lambda: PiRunner(
-            cmd=pi_cmd_for_role("control"),
-            role="control",
-            env=pi_env_for_role("control", app_url=app_url),
-            read_only_tools=set(),
-        ),
-    )
+    control_service = _new_control_service(app_url)
     app.state.control_service = control_service
     app.state.agent_lock = asyncio.Lock()
     orchestrator = _new_orchestrator(app_url)
@@ -286,6 +319,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_validation_error(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith('/control/') or request.url.path.startswith('/api/control/'):
+        return JSONResponse(status_code=422, content={'detail': 'invalid control request'})
+    from fastapi.exception_handlers import request_validation_exception_handler
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.get("/health")
@@ -345,11 +386,34 @@ async def shell_exec(payload: ShellExecRequest, request: Request) -> ShellExecRe
     )
 
 
+@app.get('/control/v1/config')
+async def control_config(request: Request):
+    _require_control_access(request)
+    return pi_settings.config()
+
+
+@app.post('/control/v1/providers')
+async def control_save_provider(payload: ProviderModelsRequest, request: Request):
+    _require_control_access(request)
+    try:
+        pi_settings.save_provider(payload.provider, payload.api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail='unsupported provider') from exc
+    except pi_settings.ConfigConflictError as exc:
+        raise HTTPException(status_code=409, detail='Pi configuration changed; retry') from exc
+    return pi_settings.config()
+
+
 @app.get("/control/v1/models", response_model=ModelsResponse)
 @app.get("/api/control/v1/models", response_model=ModelsResponse, include_in_schema=False)
-async def control_models(request: Request) -> ModelsResponse:
+async def control_models(request: Request, provider: str | None = None, refresh: bool = False) -> ModelsResponse:
     _require_control_access(request)
-    result = await _control_call(request.app.state.control_service.get_available_models)
+    control = request.app.state.control_service
+    result = await _control_call(
+        (lambda: control.get_available_models(refresh=True)) if refresh else control.get_available_models
+    )
+    if provider is not None:
+        result = {'models': [model for model in result['models'] if model['provider'] == provider]}
     return ModelsResponse.model_validate(result)
 
 
@@ -376,11 +440,10 @@ async def control_validate_selection(
     request: Request,
 ) -> SelectionResponse:
     _require_control_access(request)
+    control_service = request.app.state.control_service
     result = await _control_call(
-        lambda: request.app.state.control_service.validate_selection(
-            payload.provider,
-            payload.model_id,
-            payload.thinking_level,
+        lambda: control_service.validate_selection(
+            payload.provider, payload.model_id, payload.thinking_level,
         ),
     )
     return SelectionResponse.model_validate(result)
@@ -393,12 +456,16 @@ async def control_apply_agents(
 ) -> AgentApplyResponse:
     """Apply saved settings by replacing only the two Pi chat agents."""
     _require_control_access(request)
-    if credential_env_for(payload.provider) is None:
-        raise HTTPException(status_code=422, detail="unsupported provider")
+    if not pi_settings.has_auth(payload.provider):
+        raise HTTPException(status_code=422, detail="provider authentication missing")
+    await _control_call(lambda: request.app.state.control_service.validate_selection(
+        payload.provider, payload.model_id, payload.thinking_level))
     try:
         await _replace_agents(request.app, payload)
     except asyncio.CancelledError:
         raise
+    except pi_settings.ConfigConflictError as exc:
+        raise HTTPException(status_code=409, detail="Pi configuration changed; retry") from exc
     except Exception as exc:
         # Do not expose Pi diagnostics or credential-bearing environment data.
         raise HTTPException(status_code=502, detail="could not apply agent settings") from exc

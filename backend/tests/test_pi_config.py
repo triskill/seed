@@ -23,16 +23,13 @@ from __future__ import annotations
 import pytest
 
 from seed_backend.orchestrator import (
-    _DEFAULT_PI_MODEL,
-    _DEFAULT_PI_PROVIDER,
-    _DEFAULT_PI_THINKING,
     MIDDLEMAN_READ_ONLY_TOOLS,
     pi_cmd_for_role,
     pi_env_for_role,
 )
 
 
-def test_pi_cmd_for_role_includes_provider_and_model():
+def test_pi_cmd_for_role_uses_native_settings_defaults():
     """The default argv pins both provider and model explicitly.
 
     The defaults are read from the `_DEFAULT_PI_*` constants
@@ -49,11 +46,10 @@ def test_pi_cmd_for_role_includes_provider_and_model():
     # read and easy to extend if more flags are added.
     expected_pairs = [
         ("--mode", "rpc"),
-        ("--provider", _DEFAULT_PI_PROVIDER),
-        ("--model", _DEFAULT_PI_MODEL),
-        ("--thinking", _DEFAULT_PI_THINKING),
         ("--no-session", None),
     ]
+    for flag in ("--provider", "--model", "--thinking"):
+        assert flag not in argv
     for flag, expected in expected_pairs:
         assert flag in argv, f"missing flag {flag} in {argv!r}"
         if expected is not None:
@@ -112,7 +108,7 @@ def test_pi_cmd_for_role_rejects_unknown_role():
         pi_cmd_for_role("")
 
 
-def test_pi_cmd_for_role_honors_seeds(monkeypatch):
+def test_pi_cmd_for_role_explicit_selection(monkeypatch):
     """SEED_PI_PROVIDER / SEED_PI_MODEL / SEED_PI_THINKING override the defaults.
 
     These are the knobs a developer uses to swap to a
@@ -123,7 +119,7 @@ def test_pi_cmd_for_role_honors_seeds(monkeypatch):
     monkeypatch.setenv("SEED_PI_PROVIDER", "anthropic")
     monkeypatch.setenv("SEED_PI_MODEL", "claude-haiku-4-5")
     monkeypatch.setenv("SEED_PI_THINKING", "off")
-    argv = pi_cmd_for_role("middleman")
+    argv = pi_cmd_for_role("middleman", provider="anthropic", model="claude-haiku-4-5", thinking="off")
     assert argv[argv.index("--provider") + 1] == "anthropic"
     assert argv[argv.index("--model") + 1] == "claude-haiku-4-5"
     assert argv[argv.index("--thinking") + 1] == "off"
@@ -133,8 +129,7 @@ def test_pi_env_for_role_sets_pi_coding_agent_dir():
     """The env dict overrides `PI_CODING_AGENT_DIR` to the project-local config."""
     env = pi_env_for_role("middleman")
     assert "PI_CODING_AGENT_DIR" in env
-    # The path is role-isolated so Pi auth.json cannot bleed between roles.
-    assert env["PI_CODING_AGENT_DIR"].endswith(".pi/agent/middleman"), env["PI_CODING_AGENT_DIR"]
+    assert env["PI_CODING_AGENT_DIR"] == pi_env_for_role('worker')['PI_CODING_AGENT_DIR']
     # And it should actually exist (the helper mkdirs it
     # on first call so a fresh clone works).
     import os
@@ -152,7 +147,7 @@ def test_pi_env_for_role_inherits_parent_env(monkeypatch):
     """
     monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-fake-key-for-unit-test")
     env = pi_env_for_role("worker")
-    assert env.get("OPENCODE_API_KEY") == "sk-test-fake-key-for-unit-test"
+    assert "OPENCODE_API_KEY" not in env
 
 
 def test_pi_env_for_role_rejects_unknown_role():

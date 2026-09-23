@@ -61,9 +61,10 @@ class NativeProotSmokeTest {
                 "-c",
                 """
                     import os
-                    assert os.environ["SEED_PI_PROVIDER"] == "opencode-go"
-                    assert os.environ["SEED_PI_MODEL"] == "deepseek-v4-flash"
-                    assert len(os.environ["OPENCODE_API_KEY"]) == 30
+                    assert os.environ["PI_CODING_AGENT_DIR"] == "/home/seed/.pi/agent"
+                    assert "SEED_PI_PROVIDER" not in os.environ
+                    assert "SEED_PI_MODEL" not in os.environ
+                    assert "OPENCODE_API_KEY" not in os.environ
                     print("APP_DOMAIN_PROOT_ENV_OK")
                 """.trimIndent(),
             ),
@@ -249,10 +250,11 @@ class NativeProotSmokeTest {
                 "-c",
                 """
                     import os
-                    assert os.environ["SEED_PI_PROVIDER"] == "opencode-go"
-                    assert os.environ["SEED_PI_MODEL"] == "deepseek-v4-flash"
-                    assert os.environ["SEED_PI_THINKING"] == "high"
-                    assert os.environ["OPENCODE_API_KEY"] == "instrumentation-not-a-real-key"
+                    assert os.environ["PI_CODING_AGENT_DIR"] == "/home/seed/.pi/agent"
+                    assert "SEED_PI_PROVIDER" not in os.environ
+                    assert "SEED_PI_MODEL" not in os.environ
+                    assert "SEED_PI_THINKING" not in os.environ
+                    assert "OPENCODE_API_KEY" not in os.environ
                     print("APP_DOMAIN_PERSIST_OK")
                 """.trimIndent(),
             ),

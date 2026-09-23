@@ -19,6 +19,14 @@ def test_untrusted_child_env_removes_every_pi_credential_and_capability(monkeypa
     assert "SEED_RUNTIME_CAPABILITY" not in child
 
 
+def test_terminal_and_pi_share_runtime_config_directory(monkeypatch, tmp_path):
+    monkeypatch.setenv('PI_CODING_AGENT_DIR', str(tmp_path / 'agent'))
+    from seed_backend.orchestrator import pi_env_for_role
+    assert untrusted_child_env()['PI_CODING_AGENT_DIR'] == pi_env_for_role('worker')['PI_CODING_AGENT_DIR']
+    monkeypatch.delenv('PI_CODING_AGENT_DIR')
+    assert untrusted_child_env()['PI_CODING_AGENT_DIR'] == pi_env_for_role('worker')['PI_CODING_AGENT_DIR']
+
+
 def test_pi_output_redacts_explicit_runner_environment():
     fixture = Path(__file__).parent / "fixtures" / "fake_pi.py"
 

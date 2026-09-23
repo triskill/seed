@@ -4,6 +4,9 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import android.os.IBinder
 import android.util.Base64
 import android.util.Log
@@ -25,6 +28,7 @@ class RuntimeService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var supervisor: RuntimeSupervisor
     private lateinit var terminalManager: SeedTerminalManager
+    private var dnsCallback: ConnectivityManager.NetworkCallback? = null
     private val binder by lazy {
         RuntimeBinder(
             supervisor = supervisor,
@@ -39,34 +43,37 @@ class RuntimeService : Service() {
         startForeground(NOTIFICATION_ID, runtimeNotification())
 
         terminalManager = SeedTerminalManager(this)
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        if (connectivity != null) {
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+                    // Do not let an obsolete network replace the active network's DNS.
+                    if (network == connectivity.activeNetwork) {
+                        try {
+                            GuestDns.write(File(filesDir, "$LINUX_DIRECTORY/$ROOTFS_DIRECTORY"), linkProperties.dnsServers)
+                        } catch (failure: Exception) {
+                            Log.w(TAG, "Could not update guest DNS", failure)
+                        }
+                    }
+                }
+            }
+            try {
+                connectivity.registerDefaultNetworkCallback(callback)
+                dnsCallback = callback
+            } catch (failure: Exception) {
+                Log.w(TAG, "Could not observe DNS changes", failure)
+            }
+        }
         supervisor = RuntimeSupervisor(
             scope = serviceScope,
             startProcess = {
-                // Loading is suspendable DataStore/Keystore I/O. RuntimeSupervisor
-                // invokes this lambda on the service's IO scope for every actual
-                // process generation, so a cold start or crash replacement picks
-                // up the latest encrypted provider settings without blocking the
-                // Android service main thread.
-                // First launch deliberately uses the packaged Pi defaults.
-                // Provider login and model selection are optional Settings work,
-                // never a gate before the user can reach the regular app.
-                val piEnvironment = try {
-                    AndroidSettingsRepo(applicationContext).load()
-                        .toPiRuntimeEnvironment(allowMissingModel = true)
-                } catch (failure: CancellationException) {
-                    throw failure
-                } catch (_: Exception) {
-                    // A transient Keystore/DataStore failure must not turn a
-                    // saved login into a first-launch crash loop. Start with
-                    // Pi defaults; Settings remains available to retry it.
-                    emptyMap()
-                }
                 val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
                 val runtimeDir = File(filesDir, LINUX_DIRECTORY)
+                GuestDns.sync(this@RuntimeService, File(runtimeDir, ROOTFS_DIRECTORY))
                 val baseEnvironment = ProotEnvironment.createBackend(
                     tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),
                     installation = nativeProot,
-                ) + piEnvironment + mapOf(
+                ) + mapOf(
                     "SEED_RUNTIME_CAPABILITY" to controlCapability,
                     // The FastAPI service passes this to both agents for generated
                     // app verification; Flask itself is a separate :7778 process.
@@ -90,6 +97,9 @@ class RuntimeService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        dnsCallback?.let { callback ->
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
+        }
         terminalManager.close()
         if (::supervisor.isInitialized) supervisor.stop()
         serviceScope.cancel()

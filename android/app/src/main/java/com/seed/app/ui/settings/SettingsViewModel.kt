@@ -11,6 +11,7 @@ import com.seed.app.data.AndroidSettingsRepo
 import com.seed.app.data.ApiModule
 import com.seed.app.data.BackendApi
 import com.seed.app.data.ModelOption
+import com.seed.app.data.ProviderModelsRequest
 import com.seed.app.data.SettingsRepo
 import com.seed.app.runtime.RuntimeService
 import kotlinx.coroutines.CancellationException
@@ -34,8 +35,8 @@ import kotlinx.coroutines.launch
  * (DataStore + EncryptedSharedPreferences).
  *
  * Provider login and model configuration are intentionally separate: Login
- * stores a credential without interrupting the running app, and the generic
- * Pi catalog is used to select a model. Saving replaces only the two Pi chat
+ * stores a credential without interrupting the running app, then loads that
+ * provider's Pi model catalog. Saving replaces only the two Pi chat
  * agents; FastAPI, Flask, and PRoot keep running. Neither action gates startup.
  *
  * The public API — [form], [lastSaved], the six
@@ -55,6 +56,12 @@ class SettingsViewModel(
     private val _lastSaved = MutableStateFlow<SettingsForm?>(null)
     val lastSaved: StateFlow<SettingsForm?> = _lastSaved.asStateFlow()
 
+    private val _configuredProviders = MutableStateFlow<List<String>>(emptyList())
+    val configuredProviders: StateFlow<List<String>> = _configuredProviders.asStateFlow()
+    private val _legacyKeyWarning = MutableStateFlow(false)
+    val legacyKeyWarning: StateFlow<Boolean> = _legacyKeyWarning.asStateFlow()
+    private var legacyCredentialProvider: String? = null
+
     private val _catalog = MutableStateFlow<List<ModelOption>>(emptyList())
     val catalog: StateFlow<List<ModelOption>> = _catalog.asStateFlow()
     private val _catalogLoading = MutableStateFlow(false)
@@ -72,23 +79,49 @@ class SettingsViewModel(
         viewModelScope.launch {
             val loaded = repo.load()
             if (loaded != null) {
-                _form.value = loaded
-                _lastSaved.value = loaded
+                if (loaded.apiKey.isNotBlank()) {
+                    legacyCredentialProvider = loaded.provider
+                    _legacyKeyWarning.value = true
+                }
+                _form.value = loaded.copy(apiKey = "")
+                _lastSaved.value = loaded.copy(apiKey = "")
             }
-            if (api != null) loadCatalog()
+            if (api != null) {
+                try {
+                    val config = api.config("Bearer ${RuntimeService.controlCapability}")
+                    _configuredProviders.value = config.providers
+                    val provider = config.defaultProvider ?: config.providers.firstOrNull().orEmpty()
+                    _form.update { it.copy(provider = provider, model = config.defaultModel.orEmpty(), thinkingLevel = config.defaultThinkingLevel ?: "off") }
+                    if (provider.isNotBlank()) loadCatalog()
+                } catch (_: Exception) {
+                    _catalogError.value = "Could not load Pi configuration. Retry."
+                }
+            }
+        }
+    }
+
+    /** Re-query Pi when Settings is entered; shell edits may have changed providers. */
+    fun refreshConfiguration() {
+        val service = api ?: return
+        viewModelScope.launch {
+            try {
+                val config = service.config("Bearer ${RuntimeService.controlCapability}")
+                _configuredProviders.value = config.providers
+                if (_form.value.provider in config.providers) loadCatalog()
+            } catch (_: Exception) {
+                _catalogError.value = "Could not load Pi configuration. Retry."
+            }
         }
     }
 
     fun onProviderChange(value: String) {
-        // The generic catalog comes from the running control Pi and is not
-        // credential-gated, so it can be queried before storing a login.
+        // Clear the previous provider's models; this provider's catalog is
+        // loaded after its API key is saved.
         _catalog.value = emptyList()
         _catalogError.value = null
         _loginStatus.value = null
         _form.update { it.copy(provider = value, model = "", apiKey = "", thinkingLevel = "off") }
-        // Pi's model registry is not credential-gated; use the running control
-        // process to populate selection immediately, before saving a login.
-        loadCatalog()
+        if (value in _configuredProviders.value) loadCatalog()
     }
 
     fun onModelChange(value: String) {
@@ -128,6 +161,11 @@ class SettingsViewModel(
         val service = api ?: return
         if (_catalogLoading.value) return
         val provider = _form.value.provider
+        if (provider !in _configuredProviders.value) {
+            _catalog.value = emptyList()
+            _catalogError.value = null
+            return
+        }
         viewModelScope.launch {
             _catalogLoading.value = true
             _catalogError.value = null
@@ -137,7 +175,7 @@ class SettingsViewModel(
                 // startup window instead of leaving Settings permanently empty.
                 repeat(CATALOG_ATTEMPTS) { attempt ->
                     try {
-                        val response = service.models("Bearer ${RuntimeService.controlCapability}")
+                        val response = service.models(provider, "Bearer ${RuntimeService.controlCapability}")
                         // Discard a response for a provider the user changed
                         // while this request was in flight.
                         if (_form.value.provider != provider) return@launch
@@ -150,26 +188,39 @@ class SettingsViewModel(
                         if (attempt < CATALOG_ATTEMPTS - 1) delay(CATALOG_RETRY_DELAY_MS)
                     }
                 }
-                _catalogError.value = "Could not load models. Check login and retry."
+                if (_form.value.provider == provider) {
+                    _catalogError.value = "Could not load models. Check login and retry."
+                }
             } finally {
                 _catalogLoading.value = false
+                // A provider change during this request could not start its own
+                // load while the loading guard was set. Fetch it now instead.
+                if (_form.value.provider != provider) loadCatalog()
             }
         }
     }
 
     /** Save a provider credential without disrupting the currently running app. */
-    fun login() {
+    fun login(provider: String = _form.value.provider) {
         if (_applying.value) return
         viewModelScope.launch {
             _applying.value = true
             _saveError.value = null
             try {
-                val credentials = _form.value.copy(model = "", thinkingLevel = "off")
+                val credentials = _form.value.copy(provider = provider, model = "", thinkingLevel = "off")
                 check(credentials.apiKey.isNotBlank()) { "Enter an API key before logging in" }
-                repo.save(credentials)
-                _form.value = credentials
-                _lastSaved.value = credentials
+                val service = api ?: error("Pi backend unavailable")
+                service.addProvider(ProviderModelsRequest(credentials.provider, credentials.apiKey), "Bearer ${RuntimeService.controlCapability}")
+                if (legacyCredentialProvider == credentials.provider) {
+                    repo.clearLegacyCredential()
+                    legacyCredentialProvider = null
+                    _legacyKeyWarning.value = false
+                }
+                _configuredProviders.value = service.config("Bearer ${RuntimeService.controlCapability}").providers
+                _form.value = credentials.copy(apiKey = "")
+                _lastSaved.value = _form.value
                 _loginStatus.value = "Login saved. Select a model, then save model settings."
+                loadCatalog()
             } catch (failure: CancellationException) {
                 throw failure
             } catch (_: Exception) {
@@ -192,7 +243,7 @@ class SettingsViewModel(
                     it.provider == current.provider && it.id == current.model
                 }
                 if (api != null) {
-                    check(option != null) { "Choose a model from the Pi catalog" }
+                    check(current.provider in _configuredProviders.value && option != null) { "Choose a configured provider and catalog model" }
                     val response = api.validateSelection(
                         com.seed.app.data.SelectionRequest(
                             current.provider,
@@ -203,14 +254,13 @@ class SettingsViewModel(
                     )
                     check(response.valid) { "Pi rejected this selection" }
                 }
-                repo.save(current)
+                repo.save(current.copy(apiKey = ""))
                 if (api != null) {
                     val applied = api.applyAgents(
                         AgentApplyRequest(
                             provider = current.provider,
                             modelId = current.model,
                             thinkingLevel = current.thinkingLevel,
-                            apiKey = current.apiKey,
                         ),
                         "Bearer ${RuntimeService.controlCapability}",
                     )

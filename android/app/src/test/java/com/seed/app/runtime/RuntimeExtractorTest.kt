@@ -113,6 +113,37 @@ class RuntimeExtractorTest {
     }
 
     @Test
+    fun upgradeMigratesPiAgentBeforeDeletingRootfsWithoutOverwritingPersistentFiles() = runTest {
+        val target = tempFolder.newFolder("linux")
+        val legacy = target.resolve("rootfs/home/seed/.pi/agent")
+        assertTrue(legacy.mkdirs())
+        legacy.resolve("auth.json").writeText("legacy-auth")
+        legacy.resolve("settings.json").writeText("legacy-settings")
+        val persistent = target.resolve("pi-agent")
+        assertTrue(persistent.mkdirs())
+        persistent.resolve("settings.json").writeText("new-settings")
+
+        RuntimeExtractor(MapAssetSource("rootfs.tar" to rootfsTar())).extract(target).toList()
+
+        assertEquals("legacy-auth", persistent.resolve("auth.json").readText())
+        assertEquals("new-settings", persistent.resolve("settings.json").readText())
+        assertTrue(target.resolve("rootfs/home/seed/.pi/agent").isDirectory)
+        assertFalse(target.resolve("rootfs/home/seed/.pi/agent/auth.json").exists())
+    }
+
+    @Test
+    fun sharedProotBaseBindsOnlyPersistentAgentForBackendAndTerminal() {
+        val target = tempFolder.newFolder("linux")
+        val rootfs = target.resolve("rootfs").apply { mkdirs() }
+        val backend = ProotCommand.base(tempFolder.newFile("proot"), rootfs)
+        val terminal = ProotCommand.base(tempFolder.newFile("terminal-proot"), rootfs)
+        val binding = "${target.resolve("pi-agent").absolutePath}:/home/seed/.pi/agent"
+        assertEquals(binding, backend[backend.indexOf("/proc") + 1 + 1])
+        assertEquals(binding, terminal[terminal.indexOf("/proc") + 1 + 1])
+        assertEquals(1, backend.count { it.contains(target.resolve("pi-agent").absolutePath) })
+    }
+
+    @Test
     fun rootfsReplacementRemovesProotInaccessibleDirectory() = runTest {
         val target = tempFolder.newFolder("linux")
         val staleDirectory = target.resolve("rootfs/host-rootfs")

@@ -149,7 +149,9 @@ class PiControlService:
             "thinkingLevels": PiControlService._thinking_levels(model),
         }
 
-    async def get_available_models(self) -> dict[str, Any]:
+    async def get_available_models(self, *, refresh: bool = False) -> dict[str, Any]:
+        if refresh:
+            await self.stop()
         response = await self._call("get_available_models")
         data = response.get("data")
         models = data.get("models") if isinstance(data, dict) else None

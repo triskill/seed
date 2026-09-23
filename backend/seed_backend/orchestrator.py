@@ -46,6 +46,7 @@ from seed_backend.middleman import extract_dispatch
 from seed_backend.pi_runner import PiRunner
 from seed_backend.process_env import PI_CREDENTIAL_ENV_VARS, SEED_CAPABILITY_ENV
 from seed_backend.provider_allowlist import credential_env_for
+from seed_backend.pi_settings import agent_dir
 
 log = logging.getLogger(__name__)
 
@@ -88,13 +89,6 @@ _PROMPTS_DIR = _REPO_ROOT / "backend" / "prompts"
 _MIDDLEMAN_PROMPT = _PROMPTS_DIR / "middleman.md"
 _WORKER_PROMPT = _PROMPTS_DIR / "worker.md"
 
-# Default provider / model for the v0.1 test stack. Both are
-# overridable via env so a developer can swap to a different
-# model without touching code (e.g. `SEED_PI_MODEL=claude-haiku-4-5`
-# for a slightly smarter / more expensive run).
-_DEFAULT_PI_PROVIDER = "opencode-go"
-_DEFAULT_PI_MODEL = "deepseek-v4-flash"
-_DEFAULT_PI_THINKING = "low"
 _DEFAULT_APP_URL = "http://127.0.0.1:7778"
 
 # The intent agent may inspect the app, but it must not mutate it.
@@ -112,9 +106,8 @@ def pi_cmd_for_role(
 ) -> list[str]:
     """Return the argv used to spawn the `pi` CLI for a given role.
 
-    Production default: real `pi` in RPC mode, pointed at
-    the cheap `deepseek-v4-flash` model on the `opencode-go`
-    provider. Tests monkey-patch this to return the
+    Production default: real `pi` in RPC mode, using Pi's native
+    settings for provider, model and thinking level. Tests monkey-patch this to return the
     in-tree `fake_pi*.py` fixture so the orchestrator can
     be exercised without an LLM or a `pi` install.
 
@@ -124,21 +117,9 @@ def pi_cmd_for_role(
                                (the wire format the
                                orchestrator's read loop
                                speaks — Task 2.2+).
-      * `--provider`         : overrides the default in
-                               `.pi/agent/settings.json` so
-                               a misconfigured local file
-                               can't silently route to a
-                               different model. Also
-                               makes the test explicit.
-      * `--model`            : same rationale as
-                               `--provider`. Cheap
-                               `deepseek-v4-flash` by
-                               default for testing.
-      * `--thinking`         : "low" for speed/cost; the
-                               model is a "flash" tier
-                               so high thinking is
-                               overkill for the
-                               orchestrator's prompts.
+      * `--provider`, `--model`, `--thinking`: passed only for an
+                               explicit selection; otherwise Pi reads
+                               its shared settings.json defaults.
       * `--tools` (middle-man only): limits the intent agent to
                                `read`, `grep`, `find`, and `ls`.
                                PiRunner enforces the same allowlist
@@ -193,32 +174,23 @@ def pi_cmd_for_role(
     """
     if role not in ("middleman", "worker", "control"):
         raise ValueError(f"unknown pi role: {role!r}")
-    selected_provider = (provider or os.environ.get(
-        "SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER,
-    )).strip()
-    configured_model = model if model is not None else os.environ.get("SEED_PI_MODEL")
-    selected_model = (
-        configured_model.strip()
-        if configured_model is not None
-        else ("" if role == "control" else _DEFAULT_PI_MODEL)
-    )
-    selected_thinking = (thinking or os.environ.get(
-        "SEED_PI_THINKING", _DEFAULT_PI_THINKING,
-    )).strip()
+    # An absent selection must defer entirely to Pi's shared settings.json.
     if role == "control":
         # The control process must be headless and must not load project
         # extensions, prompts, or tools.  During onboarding no model has been
         # chosen yet; --models provider/* lets Pi pick the first authenticated
         # model from its own bundled registry without inventing a model ID.
         argv = [
-            "pi", "--mode", "rpc", "--provider", selected_provider,
+            "pi", "--mode", "rpc",
             "--no-session", "--no-tools", "--no-extensions", "--no-skills",
             "--no-prompt-templates", "--no-themes", "--no-context-files",
         ]
-        if selected_model:
-            argv.extend(["--model", selected_model])
-        else:
-            argv.extend(["--models", f"{selected_provider}/*"])
+        if provider is not None:
+            argv.extend(["--provider", provider])
+        if model is not None:
+            argv.extend(["--model", model])
+        elif provider is not None:
+            argv.extend(["--models", f"{provider}/*"])
         return argv
     prompt_file = (
         _MIDDLEMAN_PROMPT if role == "middleman" else _WORKER_PROMPT
@@ -226,12 +198,12 @@ def pi_cmd_for_role(
     argv = [
         "pi",
         "--mode", "rpc",
-        "--provider", selected_provider,
-        "--model", selected_model,
-        "--thinking", selected_thinking,
         "--no-session",
         "--append-system-prompt", str(prompt_file),
     ]
+    for flag, value in (("--provider", provider), ("--model", model), ("--thinking", thinking)):
+        if value is not None:
+            argv.extend([flag, value])
     if role == "middleman":
         app_path = os.environ.get("SEED_APP_PATH", "/home/seed/app")
         argv.extend(
@@ -257,10 +229,8 @@ def pi_env_for_role(
 ) -> dict[str, str]:
     """Return the env dict passed to the child `pi` process.
 
-    Starts from the parent's environment so host API keys remain available to
-    the explicitly selected Pi child; credentials are never placed in argv.
-    Every role gets its own config directory, preventing stale interactive
-    ``auth.json`` state from crossing into another process.
+    Starts from the parent's environment but strips curated credential variables
+    and the runtime capability. All roles use the same native Pi config directory.
 
     Args:
         role: "middleman", "worker", or "control".
@@ -281,20 +251,10 @@ def pi_env_for_role(
     # The bearer capability belongs only to FastAPI's Android-facing boundary;
     # it must never be inherited by any Pi child process.
     env.pop(SEED_CAPABILITY_ENV, None)
-    selected_provider = (provider or os.environ.get(
-        "SEED_PI_PROVIDER", _DEFAULT_PI_PROVIDER,
-    )).strip().lower()
-    selected_key = credential_env_for(selected_provider)
     for name in PI_CREDENTIAL_ENV_VARS:
-        if name != selected_key:
-            env.pop(name, None)
-    # Ensure the role-isolated config dir exists. It is
-    # intentionally separate from the committed project
-    # defaults and any interactive auth.json.
-    # Role-specific dirs prevent stale auth.json from an interactive Pi
-    # session from silently becoming an Android credential source. Android
-    # provides the selected key through the explicit child environment only.
-    config_dir = _PI_AGENT_DIR / role
+        env.pop(name, None)
+    # All roles read the shared native Pi settings and auth files.
+    config_dir = agent_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
     env["PI_CODING_AGENT_DIR"] = str(config_dir)
     # Point the agent at the webapp. The middle-man and

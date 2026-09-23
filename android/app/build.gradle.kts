@@ -158,22 +158,11 @@ dependencies {
     // stored here. Typed key access
     // (stringPreferencesKey / intPreferencesKey) +
     // a coroutine-friendly read/write API. The
-    // API key is stored in EncryptedSharedPreferences
-    // (see security-crypto below) so the secret
-    // never touches the plain-text DataStore file.
+    // Credentials live in the backend, not in DataStore.
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
-    // Security-Crypto (Phase 5.7) — wraps
-    // `EncryptedSharedPreferences`, which AES-encrypts
-    // the prefs file at rest using a master key in
-    // the Android Keystore. We use this for the
-    // Settings form's `apiKey` field only (one
-    // key-value pair, but the encryption boundary
-    // is the whole prefs file so we pay no extra
-    // per-key cost). 1.1.0 is the stable release
-    // (March 2024) — the API has been stable since
-    // 1.0.0 (2020) and 1.1.0 only adds a few
-    // opt-in features we don't use.
+    // Security-Crypto is retained solely to read and clear credentials
+    // from older installs. New installs never open the encrypted store.
     implementation("androidx.security:security-crypto:1.1.0")
 
     // Phase 6.1: Retrofit + OkHttp + Moshi — the

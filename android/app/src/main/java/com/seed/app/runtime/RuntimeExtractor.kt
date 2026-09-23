@@ -73,6 +73,7 @@ class RuntimeExtractor(
 
     private suspend fun extractRootfs(input: InputStream, rootfsDir: File) {
         val root = rootfsDir.toPath().toAbsolutePath().normalize()
+        migratePiAgent(requireNotNull(rootfsDir.parentFile))
         deleteTree(root)
         Files.createDirectories(root)
         val extractedFiles = mutableSetOf<Path>()
@@ -88,6 +89,46 @@ class RuntimeExtractor(
         } catch (failure: Exception) {
             deleteTree(root)
             throw failure
+        }
+        // The bind target must exist even when an older archive lacks it.
+        val guestAgent = root.resolve("home/seed/.pi/agent")
+        ensureSafeDirectories(root, guestAgent)
+        guestAgent.toFile().apply {
+            if (!setReadable(true, false) || !setWritable(true, false) || !setExecutable(true, false)) {
+                throw IOException("Could not set Pi agent directory permissions: $guestAgent")
+            }
+        }
+    }
+
+    private fun migratePiAgent(targetDir: File) {
+        val legacy = targetDir.toPath().resolve("rootfs/home/seed/.pi/agent")
+        val persistent = targetDir.toPath().resolve("pi-agent")
+        if (!Files.isDirectory(legacy, NOFOLLOW_LINKS)) {
+            Files.createDirectories(persistent)
+            return
+        }
+        if (Files.isSymbolicLink(persistent)) throw IOException("Pi agent host directory is a symlink: $persistent")
+        Files.createDirectories(persistent)
+        // Never follow guest symlinks or overwrite files already saved on the host.
+        Files.walk(legacy).use { paths ->
+            paths.forEach { source ->
+                val destination = persistent.resolve(legacy.relativize(source))
+                when {
+                    Files.isSymbolicLink(source) -> Unit
+                    Files.isDirectory(source, NOFOLLOW_LINKS) -> {
+                        if (Files.exists(destination, NOFOLLOW_LINKS) &&
+                            !Files.isDirectory(destination, NOFOLLOW_LINKS)) return@forEach
+                        if (Files.isSymbolicLink(destination)) return@forEach
+                        Files.createDirectories(destination)
+                    }
+                    Files.isRegularFile(source, NOFOLLOW_LINKS) -> {
+                        if (Files.isDirectory(destination.parent, NOFOLLOW_LINKS) &&
+                            !Files.exists(destination, NOFOLLOW_LINKS)) {
+                            Files.copy(source, destination)
+                        }
+                    }
+                }
+            }
         }
     }
 

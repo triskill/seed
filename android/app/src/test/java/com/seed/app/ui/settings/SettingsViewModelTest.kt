@@ -1,6 +1,19 @@
 package com.seed.app.ui.settings
 
+import com.seed.app.data.AgentApplyRequest
+import com.seed.app.data.AgentApplyResponse
+import com.seed.app.data.BackendApi
+import com.seed.app.data.HealthResponse
+import com.seed.app.data.ModelsResponse
+import com.seed.app.data.PiModelDto
+import com.seed.app.data.ProviderModelsRequest
+import com.seed.app.data.SelectionRequest
+import com.seed.app.data.SelectionResponse
 import com.seed.app.data.SettingsRepo
+import com.seed.app.data.ShellExecRequest
+import com.seed.app.data.ShellExecResponse
+import com.seed.app.data.ThinkingLevelsResponse
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -144,11 +157,81 @@ class SettingsViewModelTest {
 
         vm.login()
 
-        assertEquals("opencode", repo.lastSaved?.provider)
-        assertEquals("", repo.lastSaved?.model)
-        assertEquals("key", repo.lastSaved?.apiKey)
-        assertEquals(repo.lastSaved, vm.lastSaved.value)
+        assertNull(repo.lastSaved)
+        assertEquals("key", vm.form.value.apiKey)
+        assertNull(vm.lastSaved.value)
+        assertEquals("Could not save provider login", vm.saveError.value)
+    }
+
+    @Test
+    fun successfulLoginRemovesLegacyKeyOnlyAfterBackendAcceptsCredential() {
+        val repo = RecordingSettingsRepo(nextLoad = SettingsForm(provider = "anthropic", apiKey = "old-key"))
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(repo = repo, api = api)
+        assertEquals(true, vm.legacyKeyWarning.value)
+        vm.onApiKeyChange("replacement")
+        vm.login("anthropic")
+        assertEquals(1, repo.clearLegacyCalls)
+        assertEquals(false, vm.legacyKeyWarning.value)
+    }
+
+    @Test
+    fun loggingIntoDifferentProviderPreservesOnlyLegacyCredential() {
+        val repo = RecordingSettingsRepo(nextLoad = SettingsForm(provider = "anthropic", apiKey = "old-key"))
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(repo = repo, api = api)
+        vm.onProviderChange("openai")
+        vm.onApiKeyChange("new-key")
+
+        vm.login()
+
+        assertEquals(0, repo.clearLegacyCalls)
+        assertEquals(true, vm.legacyKeyWarning.value)
+        assertEquals("", vm.form.value.apiKey)
         assertEquals("Login saved. Select a model, then save model settings.", vm.loginStatus.value)
+    }
+
+    @Test
+    fun refreshConfigurationFindsShellAddedProvider() {
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(api = api)
+        api.extraProvider = "openai"
+        vm.refreshConfiguration()
+        assertEquals(true, "openai" in vm.configuredProviders.value)
+    }
+
+    @Test
+    fun loginImmediatelyLoadsModelsForSavedProvider() {
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(repo = RecordingSettingsRepo(), api = api)
+        vm.onProviderChange("anthropic")
+        vm.onApiKeyChange("sk-test")
+
+        vm.login()
+
+        assertEquals(3, api.modelCalls)
+        assertEquals("anthropic", api.lastModelsRequest?.provider)
+        assertEquals("", api.lastModelsRequest?.apiKey)
+        assertEquals("", vm.form.value.apiKey)
+        assertEquals("claude-test", vm.catalog.value.single().id)
+    }
+
+    @Test
+    fun changingProviderDuringCatalogLoadFetchesNewProviderAndDiscardsOldResponse() {
+        val api = CatalogBackendApi()
+        api.extraProvider = "openai"
+        val pending = CompletableDeferred<Unit>()
+        api.beforeModelsReturn = { provider -> if (provider == "anthropic") pending.await() }
+        val vm = SettingsViewModel(api = api)
+        assertEquals(true, vm.catalogLoading.value)
+
+        vm.onProviderChange("openai")
+        pending.complete(Unit)
+
+        assertEquals("openai", vm.form.value.provider)
+        assertEquals("openai", api.lastModelsRequest?.provider)
+        assertEquals("openai", vm.catalog.value.single().provider)
+        assertEquals(false, vm.catalogLoading.value)
     }
 
     // --- Phase 5.7 (still relevant) -------------------------------
@@ -166,8 +249,9 @@ class SettingsViewModelTest {
         val repo = RecordingSettingsRepo(nextLoad = persisted)
         val vm = SettingsViewModel(repo = repo)
 
-        assertEquals(persisted, vm.form.value)
-        assertEquals(persisted, vm.lastSaved.value)
+        assertEquals(persisted.copy(apiKey = ""), vm.form.value)
+        assertEquals(persisted.copy(apiKey = ""), vm.lastSaved.value)
+        assertEquals(true, vm.legacyKeyWarning.value)
     }
 
     @Test
@@ -188,7 +272,7 @@ class SettingsViewModelTest {
 
         vm.save()
 
-        assertEquals(vm.form.value, repo.lastSaved)
+        assertEquals(vm.form.value.copy(apiKey = ""), repo.lastSaved)
     }
 
     @Test
@@ -220,6 +304,53 @@ class SettingsViewModelTest {
     }
 }
 
+private class CatalogBackendApi : BackendApi {
+    var extraProvider: String? = null
+    var modelCalls = 0
+    var lastModelsRequest: ProviderModelsRequest? = null
+    var beforeModelsReturn: suspend (String) -> Unit = {}
+
+    override suspend fun health() = HealthResponse("ok", "up")
+    override suspend fun shellExec(request: ShellExecRequest, authorization: String) =
+        ShellExecResponse("", "", 0)
+
+    override suspend fun config(authorization: String) = com.seed.app.data.PiConfigResponse(providers = listOf("anthropic") + listOfNotNull(extraProvider))
+    override suspend fun addProvider(request: ProviderModelsRequest, authorization: String) = com.seed.app.data.PiConfigResponse(providers = listOf(request.provider))
+    override suspend fun models(
+        provider: String,
+        authorization: String,
+    ): ModelsResponse {
+        modelCalls += 1
+        lastModelsRequest = ProviderModelsRequest(provider, "")
+        beforeModelsReturn(provider)
+        return ModelsResponse(
+            listOf(
+                PiModelDto(
+                    provider = provider,
+                    id = "claude-test",
+                    name = "Claude Test",
+                ),
+            ),
+        )
+    }
+
+    override suspend fun thinkingLevels(
+        provider: String,
+        modelId: String,
+        authorization: String,
+    ) = ThinkingLevelsResponse(provider, modelId, listOf("off"))
+
+    override suspend fun validateSelection(
+        request: SelectionRequest,
+        authorization: String,
+    ) = SelectionResponse(valid = true)
+
+    override suspend fun applyAgents(
+        request: AgentApplyRequest,
+        authorization: String,
+    ) = AgentApplyResponse(applied = true)
+}
+
 /**
  * Test fake for [SettingsRepo]. Scriptable via
  * [nextLoad] and observable via [lastSaved] / [saveCalls].
@@ -229,6 +360,8 @@ class SettingsViewModelTest {
 private class RecordingSettingsRepo(
     private var nextLoad: SettingsForm? = null,
 ) : SettingsRepo {
+    var clearLegacyCalls = 0
+    override suspend fun clearLegacyCredential() { clearLegacyCalls++ }
     var lastSaved: SettingsForm? = null
         private set
     var saveCalls: Int = 0

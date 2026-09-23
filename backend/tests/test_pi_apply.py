@@ -23,15 +23,12 @@ def test_normal_middleman_argv_omits_control_role_flags():
     argv = pi_cmd_for_role("middleman")
     assert "--no-tools" not in argv
     assert "--models" not in argv
-    # Sanity: middleman still receives --provider/--model/--thinking.
-    assert "--provider" in argv
-    assert "--model" in argv
-    assert "--thinking" in argv
+    for flag in ("--provider", "--model", "--thinking"):
+        assert flag not in argv
 
 
 def test_control_role_argv_uses_models_glob_when_model_unset(monkeypatch):
-    monkeypatch.setenv("SEED_PI_PROVIDER", "openai")
-    argv = pi_cmd_for_role("control")
+    argv = pi_cmd_for_role("control", provider="openai")
     assert "--no-tools" in argv
     assert "--no-session" in argv
     assert "--no-extensions" in argv
@@ -40,15 +37,22 @@ def test_control_role_argv_uses_models_glob_when_model_unset(monkeypatch):
 
 
 def test_control_role_argv_uses_explicit_model_when_set(monkeypatch):
-    monkeypatch.setenv("SEED_PI_PROVIDER", "openai")
-    monkeypatch.setenv("SEED_PI_MODEL", "gpt-4o")
-    argv = pi_cmd_for_role("control")
+    argv = pi_cmd_for_role("control", provider="openai", model="gpt-4o")
     # When the user has saved a model, control uses it like normal roles.
     assert "--model" in argv
     assert argv[argv.index("--model") + 1] == "gpt-4o"
     assert "--models" not in argv
     # Control role is still read-only / headless.
     assert "--no-tools" in argv
+
+
+def test_control_without_selection_does_not_pin_provider_or_model(monkeypatch):
+    monkeypatch.setenv("SEED_PI_PROVIDER", "openai")
+    monkeypatch.setenv("SEED_PI_MODEL", "gpt-4o")
+    monkeypatch.setenv("SEED_PI_THINKING", "high")
+    argv = pi_cmd_for_role("control")
+    for flag in ("--provider", "--model", "--thinking", "--models"):
+        assert flag not in argv
 
 
 def test_control_env_strips_runtime_capability(monkeypatch):
@@ -64,7 +68,7 @@ def test_normal_middleman_env_keeps_provider_credential_only(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
     monkeypatch.setenv("SEED_PI_PROVIDER", "openai")
     env = pi_env_for_role("middleman")
-    assert env.get("OPENAI_API_KEY") == "sk-openai"
+    assert "OPENAI_API_KEY" not in env
     assert "ANTHROPIC_API_KEY" not in env
 
 
@@ -72,7 +76,7 @@ def test_control_role_credential_allowlist_uses_provider_allowlist(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
     monkeypatch.setenv("SEED_PI_PROVIDER", "openai")
     env = pi_env_for_role("control")
-    assert env.get("OPENAI_API_KEY") == "sk-openai"
+    assert "OPENAI_API_KEY" not in env
 
 
 def test_unknown_role_raises_value_error():

@@ -85,9 +85,20 @@ interface BackendApi {
         @Header("Authorization") authorization: String = "",
     ): ShellExecResponse
 
-    /** Protected, non-secret catalog from the dedicated Pi control process. */
-    @GET("control/v1/models")
-    suspend fun models(@Header("Authorization") authorization: String): ModelsResponse
+    @GET("control/v1/config")
+    suspend fun config(@Header("Authorization") authorization: String): PiConfigResponse
+
+    @POST("control/v1/providers")
+    suspend fun addProvider(
+        @Body request: ProviderModelsRequest,
+        @Header("Authorization") authorization: String,
+    ): PiConfigResponse
+
+    @GET("control/v1/models?refresh=true")
+    suspend fun models(
+        @Query("provider") provider: String,
+        @Header("Authorization") authorization: String,
+    ): ModelsResponse
 
     /** Thinking capabilities are derived from the exact Pi model metadata. */
     @GET("control/v1/thinking-levels")
@@ -178,6 +189,18 @@ data class PiModelDto(
     )
 }
 
+data class ProviderModelsRequest(
+    val provider: String,
+    val apiKey: String,
+)
+
+data class PiConfigResponse(
+    val providers: List<String> = emptyList(),
+    val defaultProvider: String? = null,
+    val defaultModel: String? = null,
+    val defaultThinkingLevel: String? = null,
+)
+
 data class ModelsResponse(val models: List<PiModelDto> = emptyList())
 
 data class ThinkingLevelsResponse(
@@ -203,7 +226,6 @@ data class AgentApplyRequest(
     val provider: String,
     val modelId: String,
     val thinkingLevel: String,
-    val apiKey: String,
 )
 
 data class AgentApplyResponse(val applied: Boolean)

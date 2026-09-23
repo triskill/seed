@@ -34,6 +34,7 @@ class ProotEnvironmentTest {
         assertEquals(
             mapOf(
                 "HOME" to "/root",
+                "PI_CODING_AGENT_DIR" to "/home/seed/.pi/agent",
                 "LANG" to "C.UTF-8",
                 "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 "TERM" to "dumb",
@@ -43,6 +44,13 @@ class ProotEnvironmentTest {
             ),
             environment,
         )
+    }
+
+    @Test
+    fun terminalChildPiInheritsSharedAgentDirectory() {
+        val environment = ProotEnvironment.createTerminal(File(tempFolder.root, "terminal"), createInstallation()) +
+            mapOf("HOME" to "/home/seed", "PYTHONUNBUFFERED" to "1")
+        assertEquals("/home/seed/.pi/agent", environment["PI_CODING_AGENT_DIR"])
     }
 
     @Test

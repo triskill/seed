@@ -102,6 +102,7 @@ object ProotEnvironment {
 
         return mapOf(
             "HOME" to "/root",
+            "PI_CODING_AGENT_DIR" to "/home/seed/.pi/agent",
             "LANG" to "C.UTF-8",
             "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "PROOT_TMP_DIR" to tempDir.absolutePath,
