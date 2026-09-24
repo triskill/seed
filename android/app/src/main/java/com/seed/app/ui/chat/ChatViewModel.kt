@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import java.util.UUID
 
 /**
  * Drives the Chat tab.
@@ -88,9 +91,46 @@ class ChatViewModel(
     private val _taskStatus = MutableStateFlow<ChatEvent.TaskStatus?>(null)
     val taskStatus: StateFlow<ChatEvent.TaskStatus?> = _taskStatus.asStateFlow()
 
+    private val _roleHealth = MutableStateFlow<Map<String, String>>(emptyMap())
+    val roleHealth: StateFlow<Map<String, String>> = _roleHealth.asStateFlow()
+
     private val _debugMessages = MutableStateFlow<List<String>>(emptyList())
     val debugMessages: StateFlow<List<String>> = _debugMessages.asStateFlow()
     private val dispatchFilter = DispatchFenceFilter()
+    private val outcomeTaskIds = mutableSetOf<String>()
+    private val terminalStatuses = setOf("completed", "failed", "cancelled", "interrupted")
+    private val _sendPending = MutableStateFlow(false)
+    val sendPending: StateFlow<Boolean> = _sendPending.asStateFlow()
+    private var pendingId: String? = null
+    private var pendingText: String? = null
+    private var timeoutJob: Job? = null
+    private var unconfirmedId: String? = null
+    private var unconfirmedText: String? = null
+
+    private fun unconfirmPending() {
+        val text = pendingText ?: return
+        unconfirmedId = pendingId
+        unconfirmedText = text
+        pendingId = null
+        pendingText = null
+        timeoutJob?.cancel()
+        _sendPending.value = false
+        if (_inputText.value.isBlank()) _inputText.value = text
+        _messages.value += ChatMessage.System(kind = SystemEventKind.ERROR,
+            summary = "Delivery unconfirmed; message may have been accepted. Check chat before retrying")
+    }
+
+    private fun failPending(reason: String) {
+        val text = pendingText ?: return
+        pendingId = null
+        pendingText = null
+        timeoutJob?.cancel()
+        _sendPending.value = false
+        if (_inputText.value.isBlank()) _inputText.value = text
+        else if (_inputText.value.trim() != text) _messages.value += ChatMessage.User(text = text, failed = true)
+        _messages.value += ChatMessage.System(kind = SystemEventKind.ERROR,
+            summary = "Message not accepted: ${reason.take(120)}. Your text is saved; retry sending.")
+    }
 
     private fun recordDebug(text: String) {
         if (text.isEmpty()) return
@@ -116,13 +156,70 @@ class ChatViewModel(
         // cancelled if the ViewModel is cleared.
         chat.connect()
         viewModelScope.launch {
-            chat.state.collect { recordDebug("connection: ${it.name}") }
+            chat.state.collect {
+                recordDebug("connection: ${it.name}")
+                if (it == ChatWebSocket.ConnectionState.RECONNECTING ||
+                    (it == ChatWebSocket.ConnectionState.DISCONNECTED && pendingId != null)) {
+                    unconfirmPending()
+                }
+            }
         }
         viewModelScope.launch {
             chat.events.collect { event ->
+                if (event is ChatEvent.UserAck) {
+                    if (event.requestId == pendingId) {
+                        if (event.accepted) {
+                            val text = pendingText ?: return@collect
+                            timeoutJob?.cancel()
+                            pendingId = null
+                            pendingText = null
+                            unconfirmedId = null
+                            unconfirmedText = null
+                            _sendPending.value = false
+                            _messages.value += ChatMessage.User(text = text)
+                            if (_inputText.value.trim() == text) _inputText.value = ""
+                        } else {
+                            unconfirmedId = null
+                            unconfirmedText = null
+                            failPending(event.reason ?: "rejected by server")
+                        }
+                    } else if (event.requestId == unconfirmedId && event.accepted) {
+                        val text = unconfirmedText ?: return@collect
+                        unconfirmedId = null
+                        unconfirmedText = null
+                        _messages.value += ChatMessage.User(text = text)
+                        if (pendingId == null && _inputText.value.trim() == text) _inputText.value = ""
+                    }
+                    return@collect
+                }
                 if (event is ChatEvent.TaskStatus) {
-                    _taskStatus.value = event
+                    val current = _messages.value.filterIsInstance<ChatMessage.Task>().firstOrNull { it.taskId == event.taskId }
+                    if (current?.status !in terminalStatuses && event.taskId !in outcomeTaskIds) {
+                        _taskStatus.value = event
+                        upsertTask(event.taskId, event.status, event.summary, event.source)
+                    }
                     recordDebug("task_status: ${event.status} (task ${event.taskId})")
+                    return@collect
+                }
+                if (event is ChatEvent.TaskOutcome) {
+                    _taskStatus.value = ChatEvent.TaskStatus(event.taskId, event.status, event.summary, event.source)
+                    upsertTask(event.taskId, event.status, event.summary, event.source, outcome = true)
+                    return@collect
+                }
+                if (event is ChatEvent.RoleHealth) {
+                    _roleHealth.value = _roleHealth.value + (event.role to event.status)
+                    return@collect
+                }
+                if (event is ChatEvent.HistoryGap) {
+                    _messages.value += ChatMessage.System(kind = SystemEventKind.ERROR, summary = "Chat history incomplete. ${event.reason.orEmpty().take(120)}")
+                    event.task?.let { if (it.taskId !in outcomeTaskIds) {
+                        _taskStatus.value = it
+                        upsertTask(it.taskId, it.status, it.summary, it.source)
+                    } }
+                    event.outcome?.let {
+                        _taskStatus.value = ChatEvent.TaskStatus(it.taskId, it.status, it.summary, it.source)
+                        upsertTask(it.taskId, it.status, it.summary, it.source, outcome = true)
+                    }
                     return@collect
                 }
                 if (event is ChatEvent.WorkerLine) {
@@ -138,7 +235,11 @@ class ChatViewModel(
                     ChatEvent.MiddlemanLine(result.visible)
                 } else event
                 val message = translateEvent(displayEvent) ?: return@collect
-                _messages.value = _messages.value + message
+                val last = _messages.value.lastOrNull()
+                _messages.value = if (message is ChatMessage.Agent && message.role == AgentRole.MIDDLEMAN &&
+                    last is ChatMessage.Agent && last.role == AgentRole.MIDDLEMAN) {
+                    _messages.value.dropLast(1) + last.copy(text = last.text + message.text)
+                } else _messages.value + message
             }
         }
     }
@@ -177,6 +278,16 @@ class ChatViewModel(
      * buffer the prompt and resend on
      * reconnect.
      */
+    private fun upsertTask(id: String, status: String, summary: String?, source: String?, outcome: Boolean = false) {
+        val previous = _messages.value.filterIsInstance<ChatMessage.Task>().firstOrNull { it.taskId == id }
+        if (id in outcomeTaskIds && !outcome) return
+        if (previous?.status in terminalStatuses && !outcome) return
+        if (outcome) outcomeTaskIds.add(id)
+        val card = ChatMessage.Task(id, status, summary?.take(512) ?: previous?.summary,
+            source ?: previous?.source, timestamp = previous?.timestamp ?: ChatMessage.now())
+        _messages.value = if (previous == null) _messages.value + card else _messages.value.map { if (it === previous) card else it }
+    }
+
     fun stopTask() {
         if (_taskStatus.value?.status == "cancel_pending") return
         if (!chat.stopTask()) {
@@ -189,13 +300,28 @@ class ChatViewModel(
 
     fun send() {
         val text = _inputText.value.trim()
-        if (text.isEmpty()) return
-        _messages.value = _messages.value + ChatMessage.User(text = text)
-        _inputText.value = ""
-        if (!chat.send(text)) {
+        if (text.isEmpty() || pendingId != null) return
+        val id = if (unconfirmedText == text) unconfirmedId ?: UUID.randomUUID().toString()
+            else UUID.randomUUID().toString()
+        if (id == unconfirmedId) {
+            unconfirmedId = null
+            unconfirmedText = null
+        }
+        pendingId = id
+        pendingText = text
+        _sendPending.value = true
+        if (!chat.send(text, id)) {
+            pendingId = null
+            pendingText = null
+            _sendPending.value = false
             val error = "Message not sent: disconnected. Retry when connected."
             _messages.value = _messages.value + ChatMessage.System(kind = SystemEventKind.ERROR, summary = error)
             recordDebug("send failed: disconnected")
+            return
+        }
+        if (pendingId == id) timeoutJob = viewModelScope.launch {
+            delay(10_000)
+            if (pendingId == id) unconfirmPending()
         }
     }
 
@@ -225,7 +351,7 @@ class ChatViewModel(
             role = AgentRole.MIDDLEMAN,
             text = event.line,
         )
-        is ChatEvent.TaskStatus -> null
+        is ChatEvent.TaskStatus, is ChatEvent.TaskOutcome, is ChatEvent.RoleHealth, is ChatEvent.HistoryGap, is ChatEvent.UserAck -> null
         is ChatEvent.WorkerLine -> ChatMessage.Agent(
             role = AgentRole.WORKER,
             text = event.line,

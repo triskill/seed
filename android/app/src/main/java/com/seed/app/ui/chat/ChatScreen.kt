@@ -85,8 +85,10 @@ fun ChatScreen(
 ) {
     val messages by viewModel.messages.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
+    val sendPending by viewModel.sendPending.collectAsState()
     val taskStatus by viewModel.taskStatus.collectAsState()
     val debugMessages by viewModel.debugMessages.collectAsState()
+    val roleHealth by viewModel.roleHealth.collectAsState()
     var showDebug by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
@@ -109,6 +111,9 @@ fun ChatScreen(
             .fillMaxSize()
             .imePadding(),
     ) {
+        if (roleHealth.isNotEmpty()) {
+            Text(roleHealth.entries.joinToString(" · ") { "${it.key}: ${it.value}" }, modifier = Modifier.padding(8.dp))
+        }
         if (taskStatus?.status in listOf("pending", "running", "cancel_pending")) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(if (taskStatus?.status == "cancel_pending") "Stopping…" else "Work in progress", modifier = Modifier.weight(1f).padding(8.dp))
@@ -145,6 +150,7 @@ fun ChatScreen(
             value = inputText,
             onValueChange = viewModel::onInputChange,
             onSend = viewModel::send,
+            sendPending = sendPending,
         )
     }
 }
@@ -160,6 +166,7 @@ private fun ChatInputBar(
     value: String,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
+    sendPending: Boolean,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -193,12 +200,12 @@ private fun ChatInputBar(
                 // whitespace-only so the user can't
                 // send a blank bubble. We mirror the
                 // `send()` policy here.
-                enabled = value.isNotBlank(),
+                enabled = value.isNotBlank() && !sendPending,
                 modifier = Modifier.semantics { testTag = "chat-send" },
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
+                    contentDescription = if (sendPending) "Waiting for server acknowledgment" else "Send",
                 )
             }
         }

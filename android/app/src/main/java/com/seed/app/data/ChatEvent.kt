@@ -40,7 +40,11 @@ package com.seed.app.data
  *     is human-readable.
  */
 sealed class ChatEvent {
-    data class TaskStatus(val taskId: String, val status: String, val summary: String?) : ChatEvent()
+    data class UserAck(val requestId: String, val accepted: Boolean, val reason: String?) : ChatEvent()
+    data class TaskStatus(val taskId: String, val status: String, val summary: String?, val source: String? = null) : ChatEvent()
+    data class TaskOutcome(val taskId: String, val status: String, val summary: String?, val source: String?) : ChatEvent()
+    data class RoleHealth(val role: String, val status: String) : ChatEvent()
+    data class HistoryGap(val reason: String?, val task: TaskStatus? = null, val outcome: TaskOutcome? = null) : ChatEvent()
 
     /** A chunk of the middle-man's output. */
     data class MiddlemanLine(val line: String) : ChatEvent()

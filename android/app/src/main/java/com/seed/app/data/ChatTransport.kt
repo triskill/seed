@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.StateFlow
  * ViewModel) needs a single subscription shared
  * across the ViewModel's lifetime, and the
  * production impl uses a [SharedFlow] internally
- * for its backpressure behavior (DROP_OLDEST).
+ * for its bounded backpressure behavior (SUSPEND).
  */
 interface ChatTransport {
     val state: StateFlow<ChatWebSocket.ConnectionState>
@@ -52,7 +52,7 @@ interface ChatTransport {
      * to show a "Reconnecting..." affordance
      * or buffer the message for later).
      */
-    fun send(text: String): Boolean
+    fun send(text: String, requestId: String): Boolean
 
     /** Send cancellation directly, without a Middleman turn. */
     fun stopTask(): Boolean

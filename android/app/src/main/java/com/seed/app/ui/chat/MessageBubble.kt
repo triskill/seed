@@ -48,8 +48,12 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
 ) {
     when (message) {
+        is ChatMessage.Task -> Card(modifier = modifier.fillMaxWidth().padding(8.dp)) {
+            Text("Task ${message.status}", modifier = Modifier.padding(8.dp))
+            message.summary?.let { Text(it, modifier = Modifier.padding(8.dp)) }
+        }
         is ChatMessage.User ->
-            UserMessageBubble(text = message.text, modifier = modifier)
+            UserMessageBubble(text = message.text, failed = message.failed, modifier = modifier)
         is ChatMessage.Agent ->
             AgentMessageCard(
                 role = message.role,
@@ -68,6 +72,7 @@ fun MessageBubble(
 @Composable
 private fun UserMessageBubble(
     text: String,
+    failed: Boolean,
     modifier: Modifier = Modifier,
 ) {
     // Outer Row aligns the bubble to the end
@@ -90,7 +95,7 @@ private fun UserMessageBubble(
             ),
         ) {
             Text(
-                text = text,
+                text = if (failed) "$text\nNot sent — copy and retry" else text,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }

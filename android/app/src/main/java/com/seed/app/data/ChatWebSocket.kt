@@ -77,10 +77,8 @@ import okio.ByteString
  * collector dance. The buffer of 64 lets
  * the ViewModel fall a few frames behind the
  * producer without backpressure; if it falls
- * further behind, oldest events are dropped
- * (the chat UI prefers a fresh agent reply to
- * a complete archive of the agent's
- * chain-of-thought).
+ * further behind, the socket reconnects from
+ * the last successfully enqueued cursor.
  *
  * **Why a per-instance [scope]:** the
  * WebSocket + reconnect loop should be tied
@@ -139,13 +137,18 @@ class ChatWebSocket(
     private val _events = MutableSharedFlow<ChatEvent>(
         replay = 0,
         extraBufferCapacity = 64,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        onBufferOverflow = BufferOverflow.SUSPEND,
     )
     override val events: SharedFlow<ChatEvent> = _events.asSharedFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
     private var ws: WebSocket? = null
+    private val cursorLock = Any()
+    private var generationId: String? = null
+    private var eventId: Long? = null
+    private val retiredGenerations = mutableSetOf<String>()
+    private var emittedGapFor: Pair<String, Long>? = null
 
     private val backoff = ReconnectBackoff()
     private val userMessageAdapter = moshi.adapter(UserMessage::class.java)
@@ -206,9 +209,9 @@ class ChatWebSocket(
      * newlines, and backslashes in the input
      * are safe to send.
      */
-    override fun send(text: String): Boolean {
+    override fun send(text: String, requestId: String): Boolean {
         val socket = ws ?: return false
-        return socket.send(userMessageAdapter.toJson(UserMessage(type = USER_MESSAGE_TYPE, text = text)))
+        return socket.send(userMessageAdapter.toJson(UserMessage(type = USER_MESSAGE_TYPE, text = text, requestId = requestId)))
     }
 
     override fun stopTask(): Boolean = ws?.send("{\"type\":\"stop_task\"}") ?: false
@@ -238,30 +241,52 @@ class ChatWebSocket(
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 backoff.reset()
+                val resume = synchronized(cursorLock) {
+                    val generation = generationId
+                    val id = eventId
+                    if (generation == null || id == null) "{\"type\":\"resume\"}"
+                    else "{\"type\":\"resume\",\"generationId\":${moshi.adapter(String::class.java).toJson(generation)},\"eventId\":$id}"
+                }
+                webSocket.send(resume)
                 _state.value = ConnectionState.CONNECTED
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val event = parseEvent(text) ?: return
-                // `tryEmit` is synchronous and
-                // thread-safe; the SharedFlow's
-                // internal buffer lock serialises
-                // concurrent calls, so the order
-                // of `tryEmit` calls is the order
-                // of `onMessage` calls. We avoid
-                // the suspending `emit` (which
-                // would need a `scope.launch`
-                // wrapper) because OkHttp invokes
-                // `onMessage` on its own
-                // dispatcher thread and we don't
-                // want the dispatcher to wait on
-                // our internal scope. With
-                // `BufferOverflow.DROP_OLDEST` and
-                // a 64-slot buffer, `tryEmit`
-                // always succeeds (it drops the
-                // oldest event if the consumer
-                // can't keep up).
-                _events.tryEmit(event)
+                val obj = try {
+                    @Suppress("UNCHECKED_CAST")
+                    moshi.adapter(Map::class.java).fromJson(text) as? Map<String, Any?>
+                } catch (_: Exception) { null }
+                val generation = obj?.get("generationId") as? String
+                val id = (obj?.get("eventId") as? Number)?.toLong()
+                synchronized(cursorLock) {
+                    if (generation != null && id != null) {
+                        if (generation in retiredGenerations) return
+                        val previous = if (generation == generationId) eventId else null
+                        if (id <= (previous ?: -1L)) return
+                        if (previous != null && id > previous + 1 && emittedGapFor != generation to id) {
+                            if (!_events.tryEmit(ChatEvent.HistoryGap("Missing chat events"))) {
+                                webSocket.cancel()
+                                return
+                            }
+                            emittedGapFor = generation to id
+                        }
+                    }
+                    if (!_events.tryEmit(event)) {
+                        // SUSPEND never evicts a queued terminal event. Resume from the
+                        // last successfully enqueued cursor on the next connection.
+                        webSocket.cancel()
+                        return
+                    }
+                    if (generation != null && id != null) {
+                        if (generation != generationId) {
+                            generationId?.let { retiredGenerations.add(it) }
+                            generationId = generation
+                        }
+                        eventId = id
+                        emittedGapFor = null
+                    }
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -352,11 +377,36 @@ class ChatWebSocket(
             EVENT_TYPE_WORKER_LINE -> ChatEvent.WorkerLine(line = obj["line"] as? String ?: "")
             EVENT_TYPE_COMPLETE -> ChatEvent.Complete(summary = obj["summary"] as? String)
             EVENT_TYPE_ERROR -> ChatEvent.Error(message = obj["message"] as? String ?: "unknown error")
+            "user_ack" -> ChatEvent.UserAck(
+                obj["requestId"] as? String ?: return null,
+                obj["accepted"] as? Boolean ?: return null,
+                obj["reason"] as? String,
+            )
             "task_status" -> {
                 val id = obj["taskId"] as? String ?: return null
                 val status = obj["status"] as? String ?: return null
                 if (status !in setOf("pending", "running", "cancel_pending", "completed", "failed", "cancelled", "interrupted")) return null
-                ChatEvent.TaskStatus(id, status, obj["summary"] as? String)
+                ChatEvent.TaskStatus(id, status, obj["summary"] as? String, obj["source"] as? String)
+            }
+            "task_outcome" -> {
+                val id = obj["taskId"] as? String ?: return null
+                val status = obj["status"] as? String ?: return null
+                if (status !in setOf("completed", "failed", "cancelled", "interrupted")) return null
+                ChatEvent.TaskOutcome(id, status, obj["summary"] as? String, obj["source"] as? String)
+            }
+            "role_health" -> ChatEvent.RoleHealth(obj["role"] as? String ?: return null, obj["status"] as? String ?: return null)
+            "history_gap" -> {
+                val task = obj["task"] as? Map<*, *>
+                val snapshot = if (task?.get("taskId") is String && task["status"] is String)
+                    ChatEvent.TaskStatus(task["taskId"] as String, task["status"] as String, task["summary"] as? String, task["source"] as? String)
+                else null
+                val outcome = obj["outcome"] as? Map<*, *>
+                val restoredOutcome = if (outcome?.get("taskId") is String &&
+                    outcome["status"] in setOf("completed", "failed", "cancelled", "interrupted"))
+                    ChatEvent.TaskOutcome(outcome["taskId"] as String, outcome["status"] as String,
+                        outcome["summary"] as? String, outcome["source"] as? String)
+                else null
+                ChatEvent.HistoryGap(obj["reason"] as? String, snapshot, restoredOutcome)
             }
             else -> null
         }
@@ -441,4 +491,5 @@ internal class ReconnectBackoff {
 internal data class UserMessage(
     val type: String,
     val text: String,
+    val requestId: String,
 )

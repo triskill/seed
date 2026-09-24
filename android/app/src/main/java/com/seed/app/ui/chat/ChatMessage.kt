@@ -63,6 +63,7 @@ sealed class ChatMessage {
     data class User(
         override val id: String = Companion.newId(),
         val text: String,
+        val failed: Boolean = false,
         override val timestamp: Long = Companion.now(),
     ) : ChatMessage()
 
@@ -71,6 +72,15 @@ sealed class ChatMessage {
         override val id: String = Companion.newId(),
         val role: AgentRole,
         val text: String,
+        override val timestamp: Long = Companion.now(),
+    ) : ChatMessage()
+
+    data class Task(
+        val taskId: String,
+        val status: String,
+        val summary: String?,
+        val source: String?,
+        override val id: String = "task:$taskId",
         override val timestamp: Long = Companion.now(),
     ) : ChatMessage()
 
