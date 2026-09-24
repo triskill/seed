@@ -231,7 +231,7 @@ class SettingsViewModel(
         }
     }
 
-    /** Validate, persist, and replace only the two Pi chat agents. */
+    /** Validate and apply Pi agents before persisting local non-secret preferences. */
     fun save() {
         if (_applying.value) return
         viewModelScope.launch {
@@ -254,7 +254,6 @@ class SettingsViewModel(
                     )
                     check(response.valid) { "Pi rejected this selection" }
                 }
-                repo.save(current.copy(apiKey = ""))
                 if (api != null) {
                     val applied = api.applyAgents(
                         AgentApplyRequest(
@@ -266,7 +265,33 @@ class SettingsViewModel(
                     )
                     check(applied.applied) { "Pi agents rejected settings" }
                 }
-                _lastSaved.value = current
+                val saved = if (api != null) {
+                    try {
+                        val config = api.config("Bearer ${RuntimeService.controlCapability}")
+                        _configuredProviders.value = config.providers
+                        current.copy(
+                            provider = config.defaultProvider ?: current.provider,
+                            model = config.defaultModel ?: current.model,
+                            thinkingLevel = config.defaultThinkingLevel ?: current.thinkingLevel,
+                            apiKey = "",
+                        )
+                    } catch (failure: CancellationException) {
+                        throw failure
+                    } catch (_: Exception) {
+                        // Apply succeeded; inability to refresh must not be reported as apply failure.
+                        _saveError.value = "Pi settings applied, but configuration could not be refreshed"
+                        current.copy(apiKey = "")
+                    }
+                } else current.copy(apiKey = "")
+                if (api != null) _form.value = saved
+                try {
+                    repo.save(saved)
+                    _lastSaved.value = if (api == null) current else saved
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (_: Exception) {
+                    _saveError.value = "Pi settings applied, but local preferences could not be saved"
+                }
             } catch (failure: CancellationException) {
                 throw failure
             } catch (_: Exception) {

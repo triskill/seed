@@ -234,6 +234,40 @@ class SettingsViewModelTest {
         assertEquals(false, vm.catalogLoading.value)
     }
 
+    @Test
+    fun rejectedApplyLeavesPersistedSettingsAndLastSavedUnchanged() {
+        val previous = SettingsForm(provider = "anthropic", model = "old")
+        val repo = RecordingSettingsRepo(nextLoad = previous)
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(repo = repo, api = api)
+        vm.onModelChange("claude-test")
+        api.rejectApply = true
+
+        vm.save()
+
+        assertEquals(0, repo.saveCalls)
+        assertEquals(previous.copy(apiKey = ""), vm.lastSaved.value)
+        assertEquals("Could not validate or apply settings", vm.saveError.value)
+    }
+
+    @Test
+    fun persistenceFailureAfterApplyReportsWarningRatherThanApplyFailure() {
+        val repo = RecordingSettingsRepo()
+        repo.failSave = true
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(repo = repo, api = api)
+        vm.onModelChange("claude-test")
+
+        vm.save()
+
+        assertEquals(1, api.applyCalls)
+        assertNull(vm.lastSaved.value)
+        assertEquals("Pi settings applied, but local preferences could not be saved", vm.saveError.value)
+        repo.failSave = false
+        vm.save()
+        assertEquals(vm.form.value, vm.lastSaved.value)
+    }
+
     // --- Phase 5.7 (still relevant) -------------------------------
 
     @Test
@@ -307,6 +341,8 @@ class SettingsViewModelTest {
 private class CatalogBackendApi : BackendApi {
     var extraProvider: String? = null
     var modelCalls = 0
+    var applyCalls = 0
+    var rejectApply = false
     var lastModelsRequest: ProviderModelsRequest? = null
     var beforeModelsReturn: suspend (String) -> Unit = {}
 
@@ -348,7 +384,10 @@ private class CatalogBackendApi : BackendApi {
     override suspend fun applyAgents(
         request: AgentApplyRequest,
         authorization: String,
-    ) = AgentApplyResponse(applied = true)
+    ): AgentApplyResponse {
+        applyCalls++
+        return AgentApplyResponse(applied = !rejectApply)
+    }
 }
 
 /**
@@ -360,6 +399,7 @@ private class CatalogBackendApi : BackendApi {
 private class RecordingSettingsRepo(
     private var nextLoad: SettingsForm? = null,
 ) : SettingsRepo {
+    var failSave = false
     var clearLegacyCalls = 0
     override suspend fun clearLegacyCredential() { clearLegacyCalls++ }
     var lastSaved: SettingsForm? = null
@@ -370,6 +410,7 @@ private class RecordingSettingsRepo(
     override suspend fun load(): SettingsForm? = nextLoad
 
     override suspend fun save(form: SettingsForm) {
+        if (failSave) error("disk unavailable")
         lastSaved = form
         saveCalls += 1
         // Mirror the persistence into nextLoad so a
