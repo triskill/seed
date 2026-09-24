@@ -173,7 +173,7 @@ def test_translate_thinking_delta_is_hidden_by_default():
     assert text == ""
 
 
-def test_translate_tool_execution_start_emits_json_line():
+def test_translate_tool_execution_start_does_not_expose_arguments():
     """A tool call starts as a line carrying the full
     event JSON (so the chat UI can render "running
     <tool>" and the in-stream tool filter (Task 2.4)
@@ -187,14 +187,22 @@ def test_translate_tool_execution_start_emits_json_line():
         }
     )
     events, text = translate_pi_line(line, role="middleman")
-    assert events is not None
-    assert len(events) == 1
-    assert events[0]["type"] == "middleman_line"
-    # The line field is the original event JSON (so the
-    # chat UI / filter can parse it the same way they
-    # parse raw pi output).
-    assert json.loads(events[0]["line"])["toolName"] == "bash"
+    assert events is None
     assert text == ""
+
+
+@pytest.mark.parametrize("event", [
+    {"type": "tool_execution_end", "result": {"secret": "private"}},
+    {"type": "agent_start", "credential": "private"},
+    {"type": "message_update", "assistantMessageEvent": {"type": "toolcall_delta", "delta": "private"}},
+])
+def test_translate_internal_events_never_reach_chat(event):
+    assert translate_pi_line(json.dumps(event), role="worker") == (None, "")
+
+
+def test_translate_message_end_only_accepts_assistant_text():
+    event = {"type": "message_end", "message": {"role": "toolResult", "content": [{"type": "text", "text": "private"}]}}
+    assert translate_pi_line(json.dumps(event)) == (None, "")
 
 
 def test_translate_turn_end_returns_none():
@@ -229,12 +237,7 @@ def test_translate_failed_response_surfaces_chat_error():
         }
     )
     events, text = translate_pi_line(line, role="middleman")
-    assert events == [
-        {
-            "type": "error",
-            "message": "No API key found for opencode-go.",
-        }
-    ]
+    assert events == [{"type": "error", "message": "Assistant request failed."}]
     assert text == ""
 
 
@@ -263,14 +266,12 @@ def test_translate_unknown_json_falls_through_with_text_field():
         {"type": "progress", "kind": "thought", "text": "step 1"}
     )
     events, text = translate_pi_line(line, role="middleman")
-    assert events is not None
-    assert events[0]["type"] == "middleman_line"
-    assert json.loads(events[0]["line"])["text"] == "step 1"
+    assert events is None
     # The accumulated text is the `text` field (with a
     # trailing newline so the dispatch regex sees line
     # boundaries). This is what makes the fake pi
     # dispatch fixture work with the new RPC wrapper.
-    assert text == "step 1\n"
+    assert text == ""
 
 
 def test_translate_unknown_json_without_text_field_uses_raw_line():
@@ -278,9 +279,8 @@ def test_translate_unknown_json_without_text_field_uses_raw_line():
     to the raw line for text accumulation."""
     line = json.dumps({"type": "progress", "kind": "edit"})
     events, text = translate_pi_line(line, role="worker")
-    assert events[0]["type"] == "worker_line"
-    # Raw line is the fallback.
-    assert text == line + "\n"
+    assert events is None
+    assert text == ""
 
 
 def test_translate_worker_role_tags_worker_line():
@@ -288,14 +288,14 @@ def test_translate_worker_role_tags_worker_line():
     (chat UI distinguishes the two agents)."""
     line = json.dumps({"type": "progress", "text": "x"})
     events, _ = translate_pi_line(line, role="worker")
-    assert events[0]["type"] == "worker_line"
+    assert events is None
 
 
 def test_translate_middleman_role_tags_middleman_line():
     """role=middleman tags all broadcasts as `middleman_line`."""
     line = json.dumps({"type": "progress", "text": "x"})
     events, _ = translate_pi_line(line, role="middleman")
-    assert events[0]["type"] == "middleman_line"
+    assert events is None
 
 
 def test_translate_defaults_to_middleman_role():

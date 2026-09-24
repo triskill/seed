@@ -33,10 +33,13 @@ import asyncio
 import json
 import logging
 import os
+import time
+import uuid
 from pathlib import Path
 
 from seed_backend.events import (
     parse_task_done,
+    TASK_PROGRESS_RE,
     translate_pi_line,
     WS_TYPE_COMPLETE,
     WS_TYPE_MIDDLEMAN_LINE,
@@ -47,6 +50,7 @@ from seed_backend.pi_runner import PiRunner
 from seed_backend.process_env import PI_CREDENTIAL_ENV_VARS, SEED_CAPABILITY_ENV
 from seed_backend.provider_allowlist import credential_env_for
 from seed_backend.pi_settings import agent_dir
+from seed_backend.task_store import TaskStore
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +107,8 @@ def pi_cmd_for_role(
     provider: str | None = None,
     model: str | None = None,
     thinking: str | None = None,
+    session_dir: Path | None = None,
+    session_id: str | None = None,
 ) -> list[str]:
     """Return the argv used to spawn the `pi` CLI for a given role.
 
@@ -198,7 +204,8 @@ def pi_cmd_for_role(
     argv = [
         "pi",
         "--mode", "rpc",
-        "--no-session",
+        "--session-dir", str(session_dir or (agent_dir() / 'role-sessions' / role)),
+        "--session-id", session_id or str(uuid.uuid5(uuid.NAMESPACE_URL, f'seed:{role}')),
         "--append-system-prompt", str(prompt_file),
     ]
     for flag, value in (("--provider", provider), ("--model", model), ("--thinking", thinking)):
@@ -295,15 +302,38 @@ class Orchestrator:
         worker:    The `PiRunner` driving the builder agent.
     """
 
+    @staticmethod
+    def role_session_id(role: str) -> str:
+        if role not in ('middleman', 'worker'):
+            raise ValueError('unknown persistent role')
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f'seed:{role}'))
+
     # Cap on the per-subscriber queue. Slow clients drop events
     # rather than backpressure the reader tasks; the chat UI
     # would rather see a gap than freeze. 256 is a comfortable
     # headroom for the 3-5 events a typical turn emits.
     _SUBSCRIBER_QUEUE_MAXSIZE: int = 256
 
-    def __init__(self, middleman: PiRunner, worker: PiRunner) -> None:
+    def __init__(self, middleman: PiRunner, worker: PiRunner, task_store: TaskStore | None = None) -> None:
         self.middleman = middleman
         self.worker = worker
+        self.task_store = task_store
+        self.task_status: dict | None = task_store.load() if task_store else None
+        if self.task_status and self.task_status['status'] in ('pending', 'running', 'cancel_pending'):
+            self.task_status = {**self.task_status, 'status': 'interrupted', 'summary': 'Task interrupted by restart'}
+            task_store.save(self.task_status)
+        self._worker_report = ""
+        self._worker_text = ""
+        self._cancel_requested = False
+        self._cancel_timeout_task: asyncio.Task | None = None
+        self._abort_task: asyncio.Task | None = None
+        self._last_progress_at = 0.0
+        self._last_progress = ""
+        self._last_agent_error = False
+        self._last_agent_text = ""
+        self._agent_ended = False
+        self._worker_retry_pending = False
+        self._worker_blocked = False
         # Each chat WS client subscribes by calling subscribe();
         # the orchestrator hands them a private queue and tracks
         # it in this set for broadcast. The set itself is mutated
@@ -372,6 +402,12 @@ class Orchestrator:
                     pass
         self._read_middleman_task = None
         self._read_worker_task = None
+        if self._cancel_timeout_task is not None:
+            self._cancel_timeout_task.cancel()
+            self._cancel_timeout_task = None
+        if self._abort_task is not None:
+            self._abort_task.cancel()
+            self._abort_task = None
         await self.middleman.stop()
         await self.worker.stop()
 
@@ -388,6 +424,8 @@ class Orchestrator:
             maxsize=self._SUBSCRIBER_QUEUE_MAXSIZE
         )
         self._subscribers.add(q)
+        if self.task_status is not None:
+            q.put_nowait(dict(self.task_status))
         return q
 
     def unsubscribe(self, queue: asyncio.Queue[dict]) -> None:
@@ -431,10 +469,80 @@ class Orchestrator:
         dispatch JSON block that the orchestrator
         forwards to the worker (Task 3.4).
         """
-        cmd = (
-            json.dumps({"type": "prompt", "message": message}) + "\n"
-        )
-        await self.middleman.send(cmd)
+        await self._rpc(self.middleman, {"type": "prompt", "message": message, "streamingBehavior": "followUp"})
+
+    @staticmethod
+    async def _rpc(runner: PiRunner, command: dict) -> dict:
+        response = await runner.rpc_request(command)
+        if response.get("success") is not True:
+            raise RuntimeError("pi command rejected")
+        return response
+
+    @property
+    def _active(self) -> bool:
+        return self.task_status is not None and self.task_status["status"] in ("pending", "running", "cancel_pending")
+
+    async def _status(self, status: str, summary: str | None = None) -> None:
+        if self.task_status is None:
+            return
+        self.task_status = {"type": "task_status", "taskId": self.task_status["taskId"], "status": status}
+        if summary:
+            self.task_status["summary"] = summary[:2048]
+        if self.task_store:
+            self.task_store.save(self.task_status)
+        await self._broadcast(dict(self.task_status))
+
+    async def stop_task(self) -> None:
+        if not self._active or self._cancel_requested:
+            return
+        self._cancel_requested = True
+        await self._status('cancel_pending')
+        task_id = self.task_status['taskId']
+        async def abort() -> None:
+            try:
+                await asyncio.wait_for(self._rpc(self.worker, {"type": "abort"}), timeout=2)
+            except (Exception, asyncio.CancelledError):
+                log.warning("worker abort command could not be delivered")
+        self._abort_task = asyncio.create_task(abort())
+        self._cancel_timeout_task = asyncio.create_task(self._cancel_fallback(task_id))
+
+    async def _cancel_fallback(self, task_id: str, delay: float = 5) -> None:
+        try:
+            await asyncio.sleep(delay)
+            if not (self._active and self.task_status['taskId'] == task_id and self._cancel_requested):
+                return
+            self._worker_blocked = True
+            old = self.worker
+            if self._abort_task is not None:
+                self._abort_task.cancel()
+            if self._read_worker_task is not None:
+                self._read_worker_task.cancel()
+                try:
+                    await self._read_worker_task
+                except asyncio.CancelledError:
+                    pass
+                self._read_worker_task = None
+            await old.stop()  # Reaps the process before the slot is released.
+            await self._status('interrupted', 'Worker did not confirm stopping')
+            if isinstance(old, PiRunner):
+                self.worker = PiRunner(old.cmd, old.role, strip_ansi=old.strip_ansi,
+                    read_only_tools=old.read_only_tools, system_prompt=old.system_prompt,
+                    auto_restart=old.auto_restart, max_restarts=old.max_restarts, env=old.env)
+            await self.worker.start()
+            self._read_worker_task = asyncio.create_task(self._read_worker_loop())
+            self._cancel_requested = False
+            self._worker_blocked = False
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            log.exception('worker restart after cancellation failed; dispatch remains blocked')
+
+    async def _report_to_middleman(self, text: str) -> None:
+        try:
+            await self._rpc(self.middleman, {"type": "prompt", "message": text, "streamingBehavior": "followUp"})
+        except Exception as exc:
+            log.warning("middleman report failed: %r", exc)
+            await self._broadcast({"type": "error", "message": "Middleman unavailable for task report"})
 
     async def _read_middleman_loop(self) -> None:
         """Read lines from the middle-man and broadcast chat events.
@@ -471,11 +579,49 @@ class Orchestrator:
         translation failures are logged before the loop exits.
         """
         buffer = ""
+        streamed = ""
+        middleman_failure: str | None = None
         try:
             async for line in self.middleman.read_lines():
                 if line is None:
                     # EOF — child closed its output pipe. Done.
                     break
+                try:
+                    wire = json.loads(line)
+                except ValueError:
+                    wire = None
+                if isinstance(wire, dict):
+                    if wire.get("type") == "agent_end":
+                        errors = [m.get("errorMessage", "") for m in wire.get("messages", [])
+                                  if isinstance(m, dict) and m.get("role") == "assistant"
+                                  and m.get("stopReason") == "error"]
+                        if errors:
+                            diagnostic = " ".join(str(error).lower() for error in errors)
+                            middleman_failure = (
+                                "Selected model rejected the request (context/output limit). Choose another model or reduce its max output."
+                                if "context length" in diagnostic or "max_tokens" in diagnostic
+                                else "Model request failed. Check the selected provider and model."
+                            )
+                        else:
+                            middleman_failure = None
+                        if not wire.get("willRetry") and middleman_failure:
+                            await self._broadcast({"type": "error", "message": middleman_failure})
+                            middleman_failure = None
+                        if wire.get("willRetry"):
+                            middleman_failure = None
+                    elif wire.get("type") == "agent_settled":
+                        if middleman_failure:
+                            await self._broadcast({"type": "error", "message": middleman_failure})
+                            middleman_failure = None
+                    if wire.get("type") == "message_update" and wire.get("assistantMessageEvent", {}).get("type") == "text_delta":
+                        streamed += wire["assistantMessageEvent"].get("delta", "")
+                    elif wire.get("type") == "message_end":
+                        content = wire.get("message", {}).get("content", [])
+                        full = "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+                        if streamed and full == streamed:
+                            streamed = ""
+                            continue
+                        streamed = ""
                 events, text_chunk = translate_pi_line(line, role="middleman")
                 if events:
                     for ev in events:
@@ -502,9 +648,17 @@ class Orchestrator:
                     # Drop the completed malformed block. Keeping it would
                     # make every later scan fail on the same first match.
                     buffer = ""
+                    await self._send_dispatch_to_worker({})
                     continue
                 if dispatch is not None:
-                    await self._send_dispatch_to_worker(dispatch)
+                    if dispatch.get("type") == "steer_worker":
+                        if self._active and dispatch.get("taskId") == self.task_status["taskId"] and isinstance(dispatch.get("message"), str) and dispatch["message"].strip():
+                            try:
+                                await self._rpc(self.worker, {"type": "steer", "message": dispatch["message"]})
+                            except Exception:
+                                log.warning("worker steer rejected", exc_info=True)
+                    else:
+                        await self._send_dispatch_to_worker(dispatch)
                     # Clear the buffer past the match so a
                     # second dispatch in the same turn is
                     # detected (and so a half-formed block
@@ -516,34 +670,33 @@ class Orchestrator:
             log.exception("middleman read loop crashed: %r", exc)
 
     async def _send_dispatch_to_worker(self, dispatch: dict) -> None:
-        """Forward a parsed dispatch dict to the worker pi.
-
-        Wraps the JSON in a pi RPC `prompt` command (the
-        shape pi expects on stdin in `--mode rpc`) and
-        writes it to the worker's stdin. The worker's
-        `worker.md` prompt tells the agent to read the
-        dispatch spec and execute it.
-
-        Worker send failures (worker not running, broken
-        pipe, etc.) are logged and swallowed — the chat
-        stream must not die because the worker is
-        unhealthy. The middle-man has already emitted
-        its dispatch; if the worker is down, the user
-        sees the dispatch as a card and an error log.
-        A retry / reconnect is a future task.
-        """
+        if self._active or self._worker_blocked:
+            await self._broadcast({"type": "error", "message": "Worker unavailable for a new task"})
+            return
+        if not isinstance(dispatch, dict) or dispatch.get("intent") not in ("build_feature", "fix_bug", "refactor") or not all(isinstance(dispatch.get(key), str) and dispatch[key].strip() for key in ("feature", "spec")):
+            self.task_status = {"type": "task_status", "taskId": uuid.uuid4().hex, "status": "pending"}
+            await self._status("failed", "Invalid dispatch")
+            return
+        self.task_status = {"type": "task_status", "taskId": uuid.uuid4().hex, "status": "pending"}
+        self._worker_report = ""
+        self._worker_text = ""
+        self._cancel_requested = False
+        self._last_agent_error = False
+        self._last_agent_text = ""
+        self._agent_ended = False
+        self._worker_retry_pending = False
+        self._last_progress_at = 0.0
+        self._last_progress = ""
+        if self.task_store:
+            self.task_store.save(self.task_status)
+        await self._broadcast(dict(self.task_status))
         try:
-            cmd = (
-                json.dumps(
-                    {"type": "prompt", "message": json.dumps(dispatch)}
-                )
-                + "\n"
-            )
-            await self.worker.send(cmd)
+            await self._rpc(self.worker, {"type": "prompt", "message": json.dumps({**dispatch, "taskId": self.task_status["taskId"]})})
+            await self._status("running")
         except Exception as exc:
-            log.warning(
-                "dispatch forward to worker failed: %r", exc
-            )
+            log.warning("dispatch forward to worker failed: %r", exc)
+            await self._status("failed", "Worker unavailable")
+            await self._report_to_middleman("Worker task failed: Worker unavailable")
 
     async def _read_worker_loop(self) -> None:
         """Read lines from the worker and broadcast each one.
@@ -577,25 +730,86 @@ class Orchestrator:
                 events, text_chunk = translate_pi_line(line, role="worker")
                 if events:
                     for ev in events:
-                        await self._broadcast(ev)
-                # Check both the raw line and the text
-                # chunk for the marker. The fake fixture
-                # writes the marker as its own line; real
-                # pi streams it as the end of a text
-                # delta.
-                for candidate in (line, text_chunk):
-                    summary = parse_task_done(candidate)
-                    if summary is None:
-                        continue
-                    # The task marker is a control signal, not a worker line.
-                    await self._broadcast(
-                        {
-                            "type": WS_TYPE_COMPLETE,
-                            "summary": summary or _DEFAULT_COMPLETE_SUMMARY,
-                        }
-                    )
-                    break  # one marker is enough
+                        if ev.get("type") != "error":
+                            await self._broadcast(ev)
+                if not self._active:
+                    continue
+                try:
+                    pi_event = json.loads(line)
+                except ValueError:
+                    pi_event = {}
+                if not isinstance(pi_event, dict):
+                    pi_event = {}
+                if pi_event.get("type") == "response":
+                    if pi_event.get("success") is False and not self._cancel_requested:
+                        await self._status("failed", "Worker could not start the task")
+                        await self._report_to_middleman("Worker could not start the task. Tell the user it failed without exposing provider diagnostics.")
+                    continue
+                if pi_event.get("type") == "agent_end":
+                    self._worker_retry_pending = bool(pi_event.get("willRetry", False))
+                    self._agent_ended = not self._worker_retry_pending
+                    # agent_end is a turn boundary, not a task boundary: queued
+                    # follow-ups or retries may still be processed before settlement.
+                    messages = pi_event.get("messages")
+                    if isinstance(messages, list):
+                        assistant = [m for m in messages if isinstance(m, dict) and m.get("role") == "assistant"]
+                        if assistant:
+                            last = assistant[-1]
+                            self._last_agent_error = any(m.get('stopReason') in ('error', 'aborted') or bool(m.get('errorMessage')) for m in assistant)
+                            content = last.get("content")
+                            if isinstance(content, list):
+                                self._last_agent_text = "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str))[-2048:]
+                    if self._agent_ended:
+                        await self._finalize_worker_turn()
+                    continue
+                if pi_event.get("type") == "agent_settled":
+                    if not self._worker_retry_pending:
+                        await self._finalize_worker_turn()
+                    continue
+                # Plain-text fake Pi fixtures use the same task-report marker.
+                if not pi_event and text_chunk:
+                    marker = parse_task_done(text_chunk)
+                    if marker is not None:
+                        self._worker_report = marker[:2048]
+                # Only assistant text deltas count: message_end duplicates streamed
+                # content and arbitrary tool/unknown RPC events are not progress.
+                if pi_event.get("type") == "message_update" and pi_event.get("assistantMessageEvent", {}).get("type") == "text_delta":
+                    self._worker_text = (self._worker_text + text_chunk)[-8192:]
+                    summary = parse_task_done(self._worker_text)
+                    if summary is not None:
+                        self._worker_report = summary[:2048]
+                    for match in TASK_PROGRESS_RE.finditer(self._worker_text):
+                        if match.end() <= len(self._worker_text) - len(text_chunk):
+                            continue
+                        if match.group("task_id") != self.task_status["taskId"]:
+                            continue
+                        progress = match.group("text").strip()
+                        now = time.monotonic()
+                        if progress and progress != self._last_progress and (not self._last_progress_at or now - self._last_progress_at >= 2):
+                            self._last_progress_at = now
+                            self._last_progress = progress
+                            await self._report_to_middleman(f"Worker progress for task {self.task_status['taskId']}: {progress}")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             log.exception("worker read loop crashed: %r", exc)
+        if self._active:
+            await self._status("cancelled" if self._cancel_requested else "failed", None if self._cancel_requested else "Worker exited")
+            if not self._cancel_requested:
+                await self._report_to_middleman("Worker exited before completing the task")
+
+    async def _finalize_worker_turn(self) -> None:
+        if not self._active:
+            return
+        if self._cancel_timeout_task is not None:
+            self._cancel_timeout_task.cancel()
+            self._cancel_timeout_task = None
+        if self._cancel_requested:
+            await self._status("cancelled")
+        elif self._last_agent_error or not self._agent_ended or not (self._worker_report or parse_task_done(self._last_agent_text) is not None):
+            await self._status("failed", "Worker failed")
+            await self._report_to_middleman(f"Worker task {self.task_status['taskId']} failed. Explain the failure to the user without provider diagnostics.")
+        else:
+            summary = self._worker_report or parse_task_done(self._last_agent_text) or "Task complete"
+            await self._status("completed", summary)
+            await self._report_to_middleman(f"Worker task {self.task_status['taskId']} completed: {summary[:2048]}. Summarize the result for the user.")

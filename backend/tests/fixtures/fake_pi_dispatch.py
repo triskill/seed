@@ -35,7 +35,18 @@ def main() -> int:
     # line so the output pipe flushes promptly; the prompt contents are
     # irrelevant for this fixture (it always emits the same
     # canned dispatch).
-    sys.stdin.readline()
+    dispatched = False
+    for line in sys.stdin:
+        cmd = json.loads(line)
+        print(json.dumps({"type": "response", "command": cmd["type"], "id": cmd.get("id"), "success": True}), flush=True)
+        if cmd["type"] != "prompt" or dispatched:
+            continue
+        dispatched = True
+        emit_dispatch()
+    return 0
+
+
+def emit_dispatch() -> None:
 
     # A preamble line — this should be broadcast as a normal
     # middleman_line and must NOT be mistaken for a dispatch
@@ -53,14 +64,13 @@ def main() -> int:
         "spec": spec,
     }
     sys.stdout.write("```json\n")
-    sys.stdout.write(json.dumps(dispatch) + "\n")
+    sys.stdout.write(json.dumps({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": json.dumps(dispatch) + "\n"}}) + "\n")
     sys.stdout.write("```\n")
     sys.stdout.flush()
 
     # Turn-boundary marker (plain text, like fake_pi.py).
     sys.stdout.write("done\n")
     sys.stdout.flush()
-    return 0
 
 
 if __name__ == "__main__":

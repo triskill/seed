@@ -46,7 +46,7 @@ def test_pi_cmd_for_role_uses_native_settings_defaults():
     # read and easy to extend if more flags are added.
     expected_pairs = [
         ("--mode", "rpc"),
-        ("--no-session", None),
+        ("--session-id", None),
     ]
     for flag in ("--provider", "--model", "--thinking"):
         assert flag not in argv

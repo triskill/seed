@@ -16,6 +16,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +28,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
@@ -80,6 +85,9 @@ fun ChatScreen(
 ) {
     val messages by viewModel.messages.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
+    val taskStatus by viewModel.taskStatus.collectAsState()
+    val debugMessages by viewModel.debugMessages.collectAsState()
+    var showDebug by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     // Auto-scroll to the bottom whenever the list
@@ -101,6 +109,22 @@ fun ChatScreen(
             .fillMaxSize()
             .imePadding(),
     ) {
+        if (taskStatus?.status in listOf("pending", "running", "cancel_pending")) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (taskStatus?.status == "cancel_pending") "Stopping…" else "Work in progress", modifier = Modifier.weight(1f).padding(8.dp))
+                Button(onClick = viewModel::stopTask, enabled = taskStatus?.status != "cancel_pending", modifier = Modifier.semantics { testTag = "chat-stop-task" }) {
+                    Text("Stop")
+                }
+            }
+        }
+        TextButton(onClick = { showDebug = !showDebug }, modifier = Modifier.semantics { testTag = "chat-debug-toggle" }) {
+            Text(if (showDebug) "Hide debug" else "Show debug")
+        }
+        if (showDebug) {
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(0.35f).semantics { testTag = "chat-debug-log" }) {
+                items(debugMessages) { Text(it, modifier = Modifier.padding(8.dp)) }
+            }
+        }
         LazyColumn(
             modifier = Modifier
                 .weight(1f)

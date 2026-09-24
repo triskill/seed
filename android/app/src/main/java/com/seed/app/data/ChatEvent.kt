@@ -40,6 +40,7 @@ package com.seed.app.data
  *     is human-readable.
  */
 sealed class ChatEvent {
+    data class TaskStatus(val taskId: String, val status: String, val summary: String?) : ChatEvent()
 
     /** A chunk of the middle-man's output. */
     data class MiddlemanLine(val line: String) : ChatEvent()

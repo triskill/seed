@@ -80,6 +80,61 @@ def test_apply_write_failure_keeps_existing_agents(monkeypatch, tmp_path):
     assert app.state.orchestrator is not None
 
 
+def test_apply_preserves_live_subscribers_and_interrupts_only_active_task(monkeypatch, tmp_path):
+    from seed_backend.orchestrator import Orchestrator
+    monkeypatch.setenv('PI_CODING_AGENT_DIR', str(tmp_path))
+    class Runner:
+        async def start(self): pass
+        async def stop(self): pass
+    old = Orchestrator(Runner(), Runner())
+    old.task_status = {'type': 'task_status', 'taskId': 'task-1', 'status': 'running'}
+    queue = old.subscribe()
+    queue.get_nowait()
+    replacement = Orchestrator(Runner(), Runner())
+    monkeypatch.setattr(service, '_new_orchestrator', lambda *args: replacement)
+    app = FastAPI()
+    app.state.agent_lock = asyncio.Lock()
+    app.state.orchestrator = old
+    asyncio.run(service._replace_agents(app, service.AgentApplyRequest(provider='openai', modelId='test')))
+    assert queue.get_nowait()['status'] == 'interrupted'
+    assert replacement._subscribers is old._subscribers
+    assert replacement.task_status['status'] == 'interrupted'
+    asyncio.run(replacement._broadcast({'type': 'worker_line', 'text': 'new'}))
+    assert queue.get_nowait()['text'] == 'new'
+
+
+def test_apply_retains_active_snapshot_when_stop_clears_it(monkeypatch, tmp_path):
+    from seed_backend.orchestrator import Orchestrator
+    monkeypatch.setenv('PI_CODING_AGENT_DIR', str(tmp_path))
+    class Runner:
+        def __init__(self): self.lines = asyncio.Queue()
+        async def start(self): pass
+        async def stop(self): await self.lines.put(None)
+        async def read_lines(self):
+            while (line := await self.lines.get()) is not None: yield line
+    async def scenario():
+        old = Orchestrator(Runner(), Runner())
+        await old.start()
+        old.task_status = {'type': 'task_status', 'taskId': 'live', 'status': 'running'}
+        queue = old.subscribe()
+        queue.get_nowait()
+        original_stop = old.stop
+        async def stopping():
+            await original_stop()
+            old.task_status = None
+        old.stop = stopping
+        replacement = Orchestrator(Runner(), Runner())
+        monkeypatch.setattr(service, '_new_orchestrator', lambda *args: replacement)
+        app = FastAPI()
+        app.state.agent_lock = asyncio.Lock()
+        app.state.orchestrator = old
+        await service._replace_agents(app, service.AgentApplyRequest(provider='openai', modelId='test'))
+        assert queue.get_nowait()['status'] == 'interrupted'
+        assert replacement.task_status['taskId'] == 'live'
+        await replacement.stop()
+    asyncio.run(scenario())
+
+
 def test_apply_accepts_native_oauth_provider_in_catalog(monkeypatch, tmp_path):
     monkeypatch.setenv('PI_CODING_AGENT_DIR', str(tmp_path))
     monkeypatch.setenv('SEED_RUNTIME_CAPABILITY', 'capability-test')

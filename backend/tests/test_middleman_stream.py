@@ -39,10 +39,11 @@ def _fake_pi_cmd() -> list[str]:
 
 
 @pytest.fixture
-def stream_client(monkeypatch):
+def stream_client(monkeypatch, tmp_path):
     """TestClient wired to a lifespan that spawns the basic fake pi
     (3 progress events + done) for both roles."""
     monkeypatch.setattr(service, "pi_cmd_for_role", lambda role: _fake_pi_cmd())
+    monkeypatch.setattr(service.pi_settings, 'agent_dir', lambda: tmp_path)
     with TestClient(app) as client:
         yield client
 

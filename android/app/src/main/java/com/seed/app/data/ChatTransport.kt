@@ -1,6 +1,7 @@
 package com.seed.app.data
 
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The narrow contract the ChatViewModel
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.SharedFlow
  * for its backpressure behavior (DROP_OLDEST).
  */
 interface ChatTransport {
+    val state: StateFlow<ChatWebSocket.ConnectionState>
 
     /**
      * Start the connection. Idempotent: a second
@@ -51,6 +53,9 @@ interface ChatTransport {
      * or buffer the message for later).
      */
     fun send(text: String): Boolean
+
+    /** Send cancellation directly, without a Middleman turn. */
+    fun stopTask(): Boolean
 
     /**
      * The hot stream of [ChatEvent]s the

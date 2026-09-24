@@ -134,7 +134,7 @@ class ChatWebSocket(
     enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING }
 
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
-    val state: StateFlow<ConnectionState> = _state.asStateFlow()
+    override val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
     private val _events = MutableSharedFlow<ChatEvent>(
         replay = 0,
@@ -210,6 +210,8 @@ class ChatWebSocket(
         val socket = ws ?: return false
         return socket.send(userMessageAdapter.toJson(UserMessage(type = USER_MESSAGE_TYPE, text = text)))
     }
+
+    override fun stopTask(): Boolean = ws?.send("{\"type\":\"stop_task\"}") ?: false
 
     private suspend fun runConnectionLoop() {
         while (currentCoroutineContext().isActive) {
@@ -350,6 +352,12 @@ class ChatWebSocket(
             EVENT_TYPE_WORKER_LINE -> ChatEvent.WorkerLine(line = obj["line"] as? String ?: "")
             EVENT_TYPE_COMPLETE -> ChatEvent.Complete(summary = obj["summary"] as? String)
             EVENT_TYPE_ERROR -> ChatEvent.Error(message = obj["message"] as? String ?: "unknown error")
+            "task_status" -> {
+                val id = obj["taskId"] as? String ?: return null
+                val status = obj["status"] as? String ?: return null
+                if (status !in setOf("pending", "running", "cancel_pending", "completed", "failed", "cancelled", "interrupted")) return null
+                ChatEvent.TaskStatus(id, status, obj["summary"] as? String)
+            }
             else -> null
         }
     }

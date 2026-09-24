@@ -374,6 +374,44 @@ and left""")
         collector.cancel()
     }
 
+    @Test
+    fun `stop sends direct control frame and snapshot parses`() = runBlocking {
+        val socket = CompletableDeferred<WebSocket>()
+        val received = CompletableDeferred<String>()
+        val event = testScope.launch {
+            val snapshot = chat.events.first { it is ChatEvent.TaskStatus } as ChatEvent.TaskStatus
+            assertEquals("task-1", snapshot.taskId)
+            assertEquals("running", snapshot.status)
+        }
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { socket.complete(webSocket) }
+            override fun onMessage(webSocket: WebSocket, text: String) { received.complete(text) }
+        }))
+        chat.connect()
+        withTimeout(2_000) { chat.state.first { it == ChatWebSocket.ConnectionState.CONNECTED } }
+        withTimeout(2_000) { socket.await() }.send("""{"type":"task_status","taskId":"task-1","status":"running"}""")
+        event.join()
+        assertTrue(chat.stopTask())
+        assertEquals("""{"type":"stop_task"}""", withTimeout(2_000) { received.await() })
+    }
+
+    @Test
+    fun `cancel pending task status is delivered`() = runBlocking {
+        val socket = CompletableDeferred<WebSocket>()
+        val event = testScope.launch {
+            val status = chat.events.first { it is ChatEvent.TaskStatus } as ChatEvent.TaskStatus
+            assertEquals("cancel_pending", status.status)
+            assertEquals("task-1", status.taskId)
+        }
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { socket.complete(webSocket) }
+        }))
+        chat.connect()
+        withTimeout(2_000) { chat.state.first { it == ChatWebSocket.ConnectionState.CONNECTED } }
+        withTimeout(2_000) { socket.await() }.send("""{"type":"task_status","taskId":"task-1","status":"cancel_pending"}""")
+        withTimeout(2_000) { event.join() }
+    }
+
     // ---- Reconnect -----------------------------------------------
 
     @Test

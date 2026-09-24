@@ -52,10 +52,11 @@ def test_complete_signal_emits_complete_event(complete_signal_client):
         # captures both. (Calling `collect_by_type` twice in
         # a row would race: the second call's queue is empty
         frames = collect_all(rcv, timeout_s=5.0)
-        complete_frames = filter_by_type(frames, "complete")
+        pending_ids = {f["taskId"] for f in filter_by_type(frames, "task_status") if f["status"] == "pending"}
+        complete_frames = [f for f in filter_by_type(frames, "task_status") if f["status"] == "completed" and f["taskId"] in pending_ids]
 
     assert len(complete_frames) == 1, (
-        f"expected exactly 1 'complete' frame, got {complete_frames!r}"
+        f"expected exactly 1 completed task_status frame, got {frames!r}"
     )
     assert "summary" in complete_frames[0], complete_frames[0]
     # Phase 4: the worker emits a `<task:done summary="..."/>`
@@ -95,7 +96,8 @@ def test_complete_signal_fans_out_to_multiple_clients(complete_signal_client):
             chat_frames = collect_all(chat_rcv, timeout_s=5.0)
             app_frames = collect_all(app_rcv, timeout_s=2.0)
 
-    chat_complete = filter_by_type(chat_frames, "complete")
-    app_complete = filter_by_type(app_frames, "complete")
+    chat_pending = {f["taskId"] for f in filter_by_type(chat_frames, "task_status") if f["status"] == "pending"}
+    chat_complete = [f for f in filter_by_type(chat_frames, "task_status") if f["status"] == "completed" and f["taskId"] in chat_pending]
+    app_complete = [f for f in filter_by_type(app_frames, "task_status") if f["status"] == "completed" and f["taskId"] in chat_pending]
     assert len(chat_complete) >= 1, chat_complete
     assert len(app_complete) >= 1, app_complete

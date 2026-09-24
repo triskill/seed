@@ -26,7 +26,16 @@ def main() -> int:
     # `{"type":"prompt","message":"<dispatch json>"}`. We
     # accept both the wrapped form (real orchestrator) and
     # the bare form (older tests).
-    line = sys.stdin.readline()
+    for line in sys.stdin:
+        cmd = json.loads(line)
+        print(json.dumps({"type": "response", "command": cmd["type"], "id": cmd.get("id"), "success": True}), flush=True)
+        if cmd["type"] != "prompt":
+            continue
+        emit_progress(line)
+    return 0
+
+
+def emit_progress(line: str) -> None:
     prompt = ""
     if line:
         try:
@@ -44,7 +53,7 @@ def main() -> int:
             "kind": "edit",
             "text": f"worker step {i + 1} of 3 (prompt was {prompt!r})",
         }
-        sys.stdout.write(json.dumps(event) + "\n")
+        sys.stdout.write(json.dumps({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": json.dumps(event)}}) + "\n")
         sys.stdout.flush()
         time.sleep(0.1)
 
@@ -60,8 +69,9 @@ def main() -> int:
     sys.stdout.write(
         '<task:done summary="Built /habits page with 3 progress steps."/>\n'
     )
+    sys.stdout.write(json.dumps({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": '<task:done summary="Built /habits page with 3 progress steps."/>'}]}]}) + "\n")
+    sys.stdout.write(json.dumps({"type": "agent_settled"}) + "\n")
     sys.stdout.flush()
-    return 0
 
 
 if __name__ == "__main__":

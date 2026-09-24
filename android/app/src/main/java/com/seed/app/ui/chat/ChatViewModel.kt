@@ -85,6 +85,26 @@ class ChatViewModel(
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
+    private val _taskStatus = MutableStateFlow<ChatEvent.TaskStatus?>(null)
+    val taskStatus: StateFlow<ChatEvent.TaskStatus?> = _taskStatus.asStateFlow()
+
+    private val _debugMessages = MutableStateFlow<List<String>>(emptyList())
+    val debugMessages: StateFlow<List<String>> = _debugMessages.asStateFlow()
+    private val dispatchFilter = DispatchFenceFilter()
+
+    private fun recordDebug(text: String) {
+        if (text.isEmpty()) return
+        // Never expose provider request payloads or credentials in the diagnostic panel.
+        val safe = if (Regex("(?i)provider.{0,20}(request|dump)|request.{0,20}(body|dump)").containsMatchIn(text)) {
+            "[provider request omitted]"
+        } else {
+            text.replace(Regex("(?i)(bearer\\s+)[^\\s\\\"',}]+"), "$1[redacted]")
+                .replace(Regex("(?i)((?:api[_-]?key|authorization|token|password|secret)\\s*[:=]\\s*[\\\"']?)[^\\s\\\"',}]+"), "$1[redacted]")
+                .replace(Regex("\\bsk-[A-Za-z0-9_-]+"), "[redacted]")
+        }
+        _debugMessages.value = (_debugMessages.value + safe.take(512)).takeLast(100)
+    }
+
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText.asStateFlow()
 
@@ -96,8 +116,28 @@ class ChatViewModel(
         // cancelled if the ViewModel is cleared.
         chat.connect()
         viewModelScope.launch {
+            chat.state.collect { recordDebug("connection: ${it.name}") }
+        }
+        viewModelScope.launch {
             chat.events.collect { event ->
-                val message = translateEvent(event) ?: return@collect
+                if (event is ChatEvent.TaskStatus) {
+                    _taskStatus.value = event
+                    recordDebug("task_status: ${event.status} (task ${event.taskId})")
+                    return@collect
+                }
+                if (event is ChatEvent.WorkerLine) {
+                    recordDebug(event.line)
+                    return@collect
+                }
+                if (event is ChatEvent.Complete) return@collect // Middleman supplies the final reply.
+                if (event is ChatEvent.Error) recordDebug("error: ${event.message}")
+                val displayEvent = if (event is ChatEvent.MiddlemanLine) {
+                    val result = dispatchFilter.accept(event.line)
+                    recordDebug(result.debug)
+                    if (result.visible.isEmpty()) return@collect
+                    ChatEvent.MiddlemanLine(result.visible)
+                } else event
+                val message = translateEvent(displayEvent) ?: return@collect
                 _messages.value = _messages.value + message
             }
         }
@@ -137,12 +177,26 @@ class ChatViewModel(
      * buffer the prompt and resend on
      * reconnect.
      */
+    fun stopTask() {
+        if (_taskStatus.value?.status == "cancel_pending") return
+        if (!chat.stopTask()) {
+            _messages.value = _messages.value + ChatMessage.System(
+                kind = SystemEventKind.ERROR,
+                summary = "Could not stop task: disconnected. Retry when connected.",
+            )
+        }
+    }
+
     fun send() {
         val text = _inputText.value.trim()
         if (text.isEmpty()) return
         _messages.value = _messages.value + ChatMessage.User(text = text)
         _inputText.value = ""
-        chat.send(text)
+        if (!chat.send(text)) {
+            val error = "Message not sent: disconnected. Retry when connected."
+            _messages.value = _messages.value + ChatMessage.System(kind = SystemEventKind.ERROR, summary = error)
+            recordDebug("send failed: disconnected")
+        }
     }
 
     /**
@@ -171,6 +225,7 @@ class ChatViewModel(
             role = AgentRole.MIDDLEMAN,
             text = event.line,
         )
+        is ChatEvent.TaskStatus -> null
         is ChatEvent.WorkerLine -> ChatMessage.Agent(
             role = AgentRole.WORKER,
             text = event.line,

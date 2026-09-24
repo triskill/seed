@@ -22,8 +22,9 @@ class RecordingWorker:
     def __init__(self) -> None:
         self.sent: list[str] = []
 
-    async def send(self, command: str) -> None:
+    async def rpc_request(self, command: dict, *, timeout: float = 30.0) -> dict:
         self.sent.append(command)
+        return {"type": "response", "success": True}
 
 
 def test_malformed_dispatch_does_not_stop_middleman_loop(caplog) -> None:
@@ -33,7 +34,7 @@ def test_malformed_dispatch_does_not_stop_middleman_loop(caplog) -> None:
         "```",
         "still streaming",
         "```json",
-        '{"intent": "build_feature", "feature": "notes"}',
+        json.dumps({'type': 'message_update', 'assistantMessageEvent': {'type': 'text_delta', 'delta': '{"intent": "build_feature", "feature": "notes", "spec": "Add notes"}\n'}}),
         "```",
     ]
     middleman = StubMiddleman(lines)
@@ -48,15 +49,20 @@ def test_malformed_dispatch_does_not_stop_middleman_loop(caplog) -> None:
     while not subscriber.empty():
         events.append(subscriber.get_nowait())
 
-    assert events == [
-        {"type": WS_TYPE_MIDDLEMAN_LINE, "line": line}
+    assert [e for e in events if e["type"] == WS_TYPE_MIDDLEMAN_LINE] == [
+        {"type": WS_TYPE_MIDDLEMAN_LINE, "line": (
+            json.loads(line)["assistantMessageEvent"]["delta"] if "message_update" in line else line
+        )}
         for line in lines
     ]
+    assert [e["status"] for e in events if e["type"] == "task_status"] == ["failed", "pending", "running"]
     assert len(worker.sent) == 1
-    command = json.loads(worker.sent[0])
+    command = worker.sent[0]
     assert command["type"] == "prompt"
     assert json.loads(command["message"]) == {
         "intent": "build_feature",
         "feature": "notes",
+        "spec": "Add notes",
+        "taskId": orchestrator.task_status["taskId"],
     }
     assert "malformed middle-man dispatch" in caplog.text

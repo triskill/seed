@@ -33,7 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -44,7 +44,8 @@ log = logging.getLogger(__name__)
 
 
 async def handle_chat(
-    websocket: WebSocket, orchestrator: Orchestrator
+    websocket: WebSocket, orchestrator: Orchestrator,
+    current_orchestrator: Callable[[], Orchestrator] | None = None,
 ) -> None:
     """Handle one WebSocket connection.
 
@@ -96,7 +97,9 @@ async def handle_chat(
                     continue
                 msg_type = msg.get("type")
                 if msg_type == "user_message":
-                    await _handle_user_message(websocket, orchestrator, msg)
+                    await _handle_user_message(websocket, current_orchestrator() if current_orchestrator else orchestrator, msg)
+                elif msg_type == "stop_task":
+                    await (current_orchestrator() if current_orchestrator else orchestrator).stop_task()
                 else:
                     log.warning("chat: unknown message type")
         except WebSocketDisconnect:
@@ -193,7 +196,7 @@ async def _handle_user_message(
         return
     try:
         await orchestrator.send_to_middleman(text)
-    except PiRunnerNotRunning as exc:
+    except (PiRunnerNotRunning, RuntimeError) as exc:
         log.warning("chat: middleman not running: %s", exc)
         try:
             await websocket.send_text(

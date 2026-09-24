@@ -40,6 +40,7 @@ from seed_backend.provider_allowlist import credential_env_for
 from seed_backend import pi_settings
 from seed_backend.pi_control import PiControlError, PiControlService
 from seed_backend.pi_runner import PiRunner
+from seed_backend.task_store import TaskStore
 from seed_backend.process_env import harden_process_visibility
 from seed_backend.shell import ShellSession
 
@@ -213,6 +214,8 @@ def _new_orchestrator(
     selection: AgentApplyRequest | None = None,
 ) -> Orchestrator:
     """Build the two chat agents without replacing FastAPI, Flask, or PRoot."""
+    from seed_backend.pi_settings import agent_dir
+    persistent_dir = agent_dir()
     def runner(role: str, *, read_only_tools: set[str] | None = None) -> PiRunner:
         if selection is None:
             command = pi_cmd_for_role(role)
@@ -239,6 +242,7 @@ def _new_orchestrator(
     return Orchestrator(
         middleman=runner("middleman", read_only_tools=set(MIDDLEMAN_READ_ONLY_TOOLS)),
         worker=runner("worker"),
+        task_store=TaskStore(persistent_dir),
     )
 
 
@@ -251,6 +255,7 @@ async def _replace_agents(app: FastAPI, selection: AgentApplyRequest) -> None:
         before = pi_settings.read_json('settings.json')
         pi_settings.save_selection(selection.provider, selection.model_id, selection.thinking_level)
         replacement = _new_orchestrator(_app_url(), selection)
+        active_task = dict(previous.task_status) if previous is not None and previous._active else None
         if previous is not None:
             await previous.stop()
         try:
@@ -268,6 +273,14 @@ async def _replace_agents(app: FastAPI, selection: AgentApplyRequest) -> None:
             except (OSError, pi_settings.ConfigConflictError):
                 log.exception('could not restore Pi settings after agent start failure')
             raise
+        if previous is not None:
+            # Existing chat forwarders retain their subscriber queues. Share the
+            # registry so new agent events still reach already-open sockets.
+            replacement._subscribers = previous._subscribers
+            app.state.orchestrator = replacement
+            if active_task is not None:
+                replacement.task_status = active_task
+                await replacement._status('interrupted', 'Task interrupted by model change')
         app.state.orchestrator = replacement
 
 
@@ -496,4 +509,4 @@ async def chat_endpoint(websocket: WebSocket) -> None:
     if orchestrator is None:
         await websocket.close(code=1011, reason="orchestrator not initialized")
         return
-    await handle_chat(websocket, orchestrator)
+    await handle_chat(websocket, orchestrator, lambda: websocket.app.state.orchestrator)

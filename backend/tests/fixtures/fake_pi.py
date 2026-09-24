@@ -39,7 +39,21 @@ def main() -> int:
     # the wrapped form (real orchestrator) and the bare form
     # (older tests, manual usage) so this fixture is robust
     # to caller shape.
-    line = sys.stdin.readline()
+    for line in sys.stdin:
+        try:
+            cmd = json.loads(line)
+        except json.JSONDecodeError:
+            emit_progress(line, rpc=False)
+            continue
+        if not isinstance(cmd, dict):
+            continue
+        print(json.dumps({"type": "response", "command": cmd.get("type"), "id": cmd.get("id"), "success": True}), flush=True)
+        if cmd.get("type") == "prompt":
+            emit_progress(line, rpc=True)
+    return 0
+
+
+def emit_progress(line: str, *, rpc: bool) -> None:
     prompt = ""
     if line:
         try:
@@ -60,7 +74,8 @@ def main() -> int:
             "kind": "thought",
             "text": f"step {i + 1} of 3 for: {prompt!r}",
         }
-        sys.stdout.write(json.dumps(event) + "\n")
+        output = {"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": json.dumps(event)}} if rpc else event
+        sys.stdout.write(json.dumps(output) + "\n")
         sys.stdout.flush()
         time.sleep(0.1)
 
@@ -68,7 +83,6 @@ def main() -> int:
     # "is this a JSON event or control text?" check is trivial.
     sys.stdout.write("done\n")
     sys.stdout.flush()
-    return 0
 
 
 if __name__ == "__main__":

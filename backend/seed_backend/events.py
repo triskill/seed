@@ -55,6 +55,10 @@ TASK_DONE_MARKER = "<task:done/>"
 #     quotes, or self-closing-with-content (`<.../>` only);
 #     the worker prompt is the spec.
 #   * DOTALL not needed (the value is on one line).
+TASK_PROGRESS_RE = re.compile(
+    r'<task:progress taskId="(?P<task_id>[a-f0-9]{32})">(?P<text>[^<>]{1,1024})</task:progress>'
+)
+
 TASK_DONE_RE = re.compile(
     r'<task:done(?P<attrs>(?:\s+[a-zA-Z_][\w-]*="[^"]*")*)\s*/>'
 )
@@ -100,6 +104,7 @@ def parse_task_done(line: str) -> Optional[str]:
 WS_TYPE_MIDDLEMAN_LINE = "middleman_line"
 WS_TYPE_WORKER_LINE = "worker_line"
 WS_TYPE_COMPLETE = "complete"
+WS_TYPE_TASK_STATUS = "task_status"
 WS_TYPE_ERROR = "error"
 
 # Pi RPC command shape (Phase 4). The orchestrator wraps
@@ -229,10 +234,7 @@ def translate_pi_line(
         # responses (missing API key, invalid model/provider, etc.) must reach
         # Android; otherwise the user sees a silent, permanently idle chat.
         if event.get("success") is False:
-            message = event.get("error")
-            if not isinstance(message, str) or not message:
-                message = "pi command failed"
-            return ([{"type": WS_TYPE_ERROR, "message": message}], "")
+            return ([{"type": WS_TYPE_ERROR, "message": "Assistant request failed."}], "")
         return (None, "")
 
     if t == PI_EVENT_EXTENSION_UI_REQUEST:
@@ -287,7 +289,11 @@ def translate_pi_line(
         # non-streaming models. The thinking-vs-text
         # split is the only important filter.
         msg = event.get("message", {})
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            return (None, "")
         content = msg.get("content", [])
+        if not isinstance(content, list):
+            return (None, "")
         text_chunks = []
         for block in content:
             if not isinstance(block, dict):
@@ -306,23 +312,8 @@ def translate_pi_line(
         return (None, "")
 
     # ---- Tool call lifecycle -----------------------------------
-    if t == PI_EVENT_TOOL_START:
-        # Surface as a line so the chat UI can show
-        # "reading app.py..." and the in-stream tool
-        # filter (Task 2.4) can block disallowed
-        # tools. The filter still works because the
-        # JSON it expects is exactly what pi emits.
-        return (
-            [{"type": ws_type, "line": json.dumps(event)}],
-            "",
-        )
-    if t == PI_EVENT_TOOL_END:
-        # Same — broadcast as a line so the UI can
-        # show the result.
-        return (
-            [{"type": ws_type, "line": json.dumps(event)}],
-            "",
-        )
+    if t in (PI_EVENT_TOOL_START, PI_EVENT_TOOL_END):
+        return (None, "")
 
     # ---- Anything else (agent_start, turn_start, fake
     # fixtures, future pi versions, extensions) ---------
@@ -341,9 +332,4 @@ def translate_pi_line(
     # text); fall back to the raw line. We append "\n"
     # so the dispatch regex's line-oriented ` ```json\n
     # ...\n``` ` pattern sees boundaries.
-    text_field = event.get("text")
-    text_chunk = text_field if isinstance(text_field, str) else raw_line
-    return (
-        [{"type": ws_type, "line": raw_line}],
-        text_chunk + "\n",
-    )
+    return (None, "")
