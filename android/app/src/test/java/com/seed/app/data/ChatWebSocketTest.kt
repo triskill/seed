@@ -188,7 +188,7 @@ class ChatWebSocketTest {
                         opened.complete(Unit)
                     }
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        received.add(text)
+                        if (!text.contains("\"type\":\"resume\"")) received.add(text)
                     }
                 },
             ),
@@ -199,7 +199,7 @@ class ChatWebSocketTest {
         // on the server side before we send.
         delay(50)
 
-        val accepted = chat.send("hello world")
+        val accepted = chat.send("hello world", "req-1")
         assertTrue("send should report accepted", accepted)
         // Wait briefly for the server handler
         // to record the message.
@@ -208,7 +208,7 @@ class ChatWebSocketTest {
         }
         assertEquals(
             "expected a single user_message frame",
-            listOf("""{"type":"user_message","text":"hello world"}"""),
+            listOf("""{"type":"user_message","text":"hello world","requestId":"req-1"}"""),
             received,
         )
     }
@@ -217,7 +217,7 @@ class ChatWebSocketTest {
     fun `send returns false when not connected`() = runBlocking {
         // No server.enqueue(wsUpgrade()) — the
         // client has nothing to talk to.
-        val accepted = chat.send("nobody home")
+        val accepted = chat.send("nobody home", "req-1")
         assertFalse("send should report not accepted", accepted)
     }
 
@@ -232,7 +232,7 @@ class ChatWebSocketTest {
                         opened.complete(Unit)
                     }
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        received.add(text)
+                        if (!text.contains("\"type\":\"resume\"")) received.add(text)
                     }
                 },
             ),
@@ -242,7 +242,7 @@ class ChatWebSocketTest {
         delay(50)
 
         chat.send("""he said "hi"
-and left""")
+and left""", "req-1")
         withTimeout(2_000) {
             while (received.isEmpty()) delay(20)
         }
@@ -253,7 +253,7 @@ and left""")
         // our own JSON serialization.
         assertEquals(
             listOf(
-                """{"type":"user_message","text":"he said \"hi\"\nand left"}""",
+                """{"type":"user_message","text":"he said \"hi\"\nand left","requestId":"req-1"}""",
             ),
             received,
         )
@@ -385,7 +385,7 @@ and left""")
         }
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) { socket.complete(webSocket) }
-            override fun onMessage(webSocket: WebSocket, text: String) { received.complete(text) }
+            override fun onMessage(webSocket: WebSocket, text: String) { if (!text.contains("\"type\":\"resume\"")) received.complete(text) }
         }))
         chat.connect()
         withTimeout(2_000) { chat.state.first { it == ChatWebSocket.ConnectionState.CONNECTED } }
@@ -412,6 +412,104 @@ and left""")
         withTimeout(2_000) { event.join() }
     }
 
+    @Test fun `resume cursor and deduplication on reconnect`() = runBlocking {
+        val first = CompletableDeferred<WebSocket>()
+        val second = CompletableDeferred<WebSocket>()
+        val firstResume = CompletableDeferred<String>()
+        val secondResume = CompletableDeferred<String>()
+        val events = mutableListOf<ChatEvent>()
+        val collector = testScope.launch { chat.events.collect { events.add(it) } }
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { first.complete(webSocket) }
+            override fun onMessage(webSocket: WebSocket, text: String) { firstResume.complete(text) }
+        }))
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { second.complete(webSocket) }
+            override fun onMessage(webSocket: WebSocket, text: String) { secondResume.complete(text) }
+        }))
+        chat.connect()
+        assertEquals("{\"type\":\"resume\"}", withTimeout(2_000) { firstResume.await() })
+        first.await().send("""{"type":"task_status","taskId":"a","status":"running","generationId":"g","eventId":1}""")
+        withTimeout(2_000) { while (events.isEmpty()) delay(20) }
+        first.await().close(1000, "retry")
+        withTimeout(4_000) { second.await() }
+        assertEquals("{\"type\":\"resume\",\"generationId\":\"g\",\"eventId\":1}", withTimeout(2_000) { secondResume.await() })
+        second.await().send("""{"type":"task_status","taskId":"a","status":"running","generationId":"g","eventId":1}""")
+        second.await().send("""{"type":"task_outcome","taskId":"a","status":"completed","summary":"done","source":"backend","generationId":"g","eventId":2}""")
+        withTimeout(2_000) { while (events.size < 2) delay(20) }
+        assertEquals(2, events.size)
+        assertTrue(events.last() is ChatEvent.TaskOutcome)
+        collector.cancel()
+    }
+
+    @Test fun `gap envelope restores task and outcome at one cursor and ignores old generation`() = runBlocking {
+        val socket = CompletableDeferred<WebSocket>()
+        val events = mutableListOf<ChatEvent>()
+        val collector = testScope.launch { chat.events.collect { events.add(it) } }
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { socket.complete(webSocket) }
+        }))
+        chat.connect()
+        val peer = withTimeout(2_000) { socket.await() }
+        peer.send("""{"type":"task_status","taskId":"a","status":"running","generationId":"old","eventId":8}""")
+        withTimeout(2_000) { while (events.size < 1) delay(20) }
+        peer.send("""{"type":"history_gap","reason":"expired","task":{"taskId":"a","status":"running","summary":"work"},"outcome":{"taskId":"a","status":"completed","summary":"done","source":"worker"},"generationId":"new","eventId":1}""")
+        withTimeout(2_000) { while (events.size < 2) delay(20) }
+        val gap = events.last() as ChatEvent.HistoryGap
+        assertEquals("work", gap.task?.summary)
+        assertEquals("done", gap.outcome?.summary)
+        peer.send("""{"type":"task_status","taskId":"a","status":"running","generationId":"old","eventId":9}""")
+        delay(100)
+        assertEquals(2, events.size)
+        collector.cancel()
+    }
+
+    @Test fun `user ack parses request id acceptance and reason`() = runBlocking {
+        val socket = CompletableDeferred<WebSocket>()
+        val ack = testScope.launch {
+            val event = chat.events.first { it is ChatEvent.UserAck } as ChatEvent.UserAck
+            assertEquals("req-1", event.requestId)
+            assertFalse(event.accepted)
+            assertEquals("busy", event.reason)
+        }
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { socket.complete(webSocket) }
+        }))
+        chat.connect()
+        withTimeout(2_000) { socket.await() }.send("""{"type":"user_ack","requestId":"req-1","accepted":false,"reason":"busy"}""")
+        withTimeout(2_000) { ack.join() }
+    }
+
+    @Test fun `full event buffer reconnects from last queued cursor without dropping terminal event`() = runBlocking {
+        val first = CompletableDeferred<WebSocket>()
+        val resumed = CompletableDeferred<String>()
+        val gate = CompletableDeferred<Unit>()
+        val received = java.util.Collections.synchronizedList(mutableListOf<ChatEvent>())
+        val collector = testScope.launch {
+            chat.events.collect {
+                received.add(it)
+                if (received.size == 1) gate.await()
+            }
+        }
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { first.complete(webSocket) }
+        }))
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) { resumed.complete(text) }
+        }))
+        chat.connect()
+        val peer = withTimeout(2_000) { first.await() }
+        peer.send("""{"type":"middleman_line","line":"start","generationId":"g","eventId":1}""")
+        withTimeout(2_000) { while (received.isEmpty()) delay(10) }
+        for (id in 2..65) peer.send("""{"type":"middleman_line","line":"$id","generationId":"g","eventId":$id}""")
+        peer.send("""{"type":"task_outcome","taskId":"task","status":"completed","generationId":"g","eventId":66}""")
+        assertEquals("""{"type":"resume","generationId":"g","eventId":65}""", withTimeout(5_000) { resumed.await() })
+        gate.complete(Unit)
+        withTimeout(2_000) { while (received.size < 65) delay(10) }
+        assertTrue(received.none { it is ChatEvent.TaskOutcome })
+        collector.cancel()
+    }
+
     // ---- Reconnect -----------------------------------------------
 
     @Test
@@ -429,7 +527,7 @@ and left""")
                         firstOpened.complete(Unit)
                     }
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        webSocket.close(1000, "bye")
+                        if (!text.contains("\"type\":\"resume\"")) webSocket.close(1000, "bye")
                     }
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                         firstClose.complete(Unit)
@@ -448,7 +546,7 @@ and left""")
                         secondOpened.complete(Unit)
                     }
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        secondReceived.add(text)
+                        if (!text.contains("\"type\":\"resume\"")) secondReceived.add(text)
                     }
                 },
             ),
@@ -460,7 +558,7 @@ and left""")
         // sending a message (the handler
         // closes the WebSocket on any inbound
         // text).
-        chat.send("trigger")
+        chat.send("trigger", "req-1")
         withTimeout(2_000) { firstClose.await() }
 
         // The client should reconnect within
@@ -472,11 +570,11 @@ and left""")
 
         // The second connection is
         // functional: send works through it.
-        chat.send("after reconnect")
+        chat.send("after reconnect", "req-2")
         withTimeout(2_000) {
             while (secondReceived.isEmpty()) delay(20)
         }
-        assertEquals(listOf("""{"type":"user_message","text":"after reconnect"}"""), secondReceived)
+        assertEquals(listOf("""{"type":"user_message","text":"after reconnect","requestId":"req-2"}"""), secondReceived)
     }
 
     @Test

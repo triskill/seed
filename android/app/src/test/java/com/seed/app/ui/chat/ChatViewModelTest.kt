@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -93,13 +95,186 @@ class ChatViewModelTest {
         assertTrue(!history.contains("secret-body"))
     }
 
+    @Test fun `ack accepts pending message and clears only its original draft`() = runTest {
+        fakeChat.autoAck = false
+        val vm = ChatViewModel(chat = fakeChat)
+        vm.onInputChange("original")
+        vm.send()
+        assertEquals("original", vm.inputText.value)
+        assertTrue(vm.sendPending.value)
+        vm.onInputChange("new draft")
+        fakeChat.emit(ChatEvent.UserAck(fakeChat.requestIds.single(), true, null))
+        assertEquals("new draft", vm.inputText.value)
+        assertTrue(!vm.sendPending.value)
+        assertEquals("original", vm.messages.value.filterIsInstance<ChatMessage.User>().single().text)
+    }
+
+    @Test fun `rejected ack preserves draft and permits retry`() = runTest {
+        fakeChat.autoAck = false
+        val vm = ChatViewModel(chat = fakeChat)
+        vm.onInputChange("important prompt")
+        vm.send()
+        fakeChat.emit(ChatEvent.UserAck("wrong", true, null))
+        assertTrue(vm.sendPending.value)
+        fakeChat.emit(ChatEvent.UserAck(fakeChat.requestIds.single(), false, "busy"))
+        assertEquals("important prompt", vm.inputText.value)
+        assertTrue(!vm.sendPending.value)
+        assertTrue(vm.messages.value.any { it is ChatMessage.System && it.summary?.contains("busy") == true })
+        vm.send()
+        assertEquals(2, fakeChat.sent.size)
+    }
+
+    @Test fun `reconnect leaves delivery unconfirmed and retry reuses id without duplicate bubble`() = runTest {
+        fakeChat.autoAck = false
+        val vm = ChatViewModel(chat = fakeChat)
+        vm.onInputChange("important")
+        vm.send()
+        val id = fakeChat.requestIds.single()
+        fakeChat.state.value = ChatWebSocket.ConnectionState.RECONNECTING
+        assertTrue(!vm.sendPending.value)
+        assertEquals("important", vm.inputText.value)
+        assertTrue(vm.messages.value.none { it is ChatMessage.User })
+        assertTrue(vm.messages.value.any { it is ChatMessage.System && it.summary ==
+            "Delivery unconfirmed; message may have been accepted. Check chat before retrying" })
+        vm.send()
+        assertEquals(listOf(id, id), fakeChat.requestIds)
+        fakeChat.emit(ChatEvent.UserAck(id, true, null))
+        assertTrue(!vm.sendPending.value)
+        assertEquals(1, vm.messages.value.filterIsInstance<ChatMessage.User>().size)
+    }
+
+    @Test fun `timeout preserves draft and late ack resolves retry safely`() = runTest {
+        fakeChat.autoAck = false
+        val vm = ChatViewModel(chat = fakeChat)
+        vm.onInputChange("important")
+        vm.send()
+        val id = fakeChat.requestIds.single()
+        advanceTimeBy(10_001)
+        runCurrent()
+        assertTrue(!vm.sendPending.value)
+        assertEquals("important", vm.inputText.value)
+        vm.send()
+        assertEquals(listOf(id, id), fakeChat.requestIds)
+        fakeChat.emit(ChatEvent.UserAck(id, true, null))
+        fakeChat.emit(ChatEvent.UserAck(id, true, null))
+        assertTrue(!vm.sendPending.value)
+        assertEquals(1, vm.messages.value.filterIsInstance<ChatMessage.User>().size)
+    }
+
+    @Test fun `late accepted A does not disturb pending B and B still accepts`() = runTest {
+        fakeChat.autoAck = false
+        val vm = ChatViewModel(chat = fakeChat)
+        vm.onInputChange("A")
+        vm.send()
+        val a = fakeChat.requestIds.last()
+        advanceTimeBy(10_001)
+        runCurrent()
+        vm.onInputChange("B")
+        vm.send()
+        val b = fakeChat.requestIds.last()
+        assertTrue(a != b)
+        fakeChat.emit(ChatEvent.UserAck(a, true, null))
+        assertEquals("B", vm.inputText.value)
+        assertTrue(vm.sendPending.value)
+        assertEquals(listOf("A"), vm.messages.value.filterIsInstance<ChatMessage.User>().map { it.text })
+        fakeChat.emit(ChatEvent.UserAck(b, true, null))
+        assertEquals("", vm.inputText.value)
+        assertTrue(!vm.sendPending.value)
+        assertEquals(listOf("A", "B"), vm.messages.value.filterIsInstance<ChatMessage.User>().map { it.text })
+    }
+
+    @Test fun `late accepted A leaves B timeout and rejection draft intact`() = runTest {
+        fakeChat.autoAck = false
+        val vm = ChatViewModel(chat = fakeChat)
+        vm.onInputChange("A")
+        vm.send()
+        val a = fakeChat.requestIds.last()
+        advanceTimeBy(10_001)
+        runCurrent()
+        vm.onInputChange("B")
+        vm.send()
+        val b = fakeChat.requestIds.last()
+        fakeChat.emit(ChatEvent.UserAck(a, true, null))
+        fakeChat.emit(ChatEvent.UserAck(b, false, "busy"))
+        assertEquals("B", vm.inputText.value)
+        assertTrue(!vm.sendPending.value)
+        assertEquals(listOf("A"), vm.messages.value.filterIsInstance<ChatMessage.User>().map { it.text })
+        assertTrue(vm.messages.value.any { it is ChatMessage.System && it.summary?.contains("busy") == true })
+    }
+
     @Test fun `disconnected send immediately reports failure`() = runTest {
         val vm = ChatViewModel(chat = fakeChat)
         fakeChat.sendAccepted = false
         vm.onInputChange("hello")
         vm.send()
-        assertEquals("hello", (vm.messages.value.first() as ChatMessage.User).text)
+        assertEquals("hello", vm.inputText.value)
+        assertTrue(vm.messages.value.none { it is ChatMessage.User })
         assertEquals(SystemEventKind.ERROR, (vm.messages.value.last() as ChatMessage.System).kind)
+    }
+
+    @Test fun `history gap restores task and outcome together without allowing stale status`() = runTest {
+        val vm = ChatViewModel(chat = fakeChat)
+        fakeChat.emit(ChatEvent.TaskStatus("task-1", "running", "old"))
+        fakeChat.emit(ChatEvent.HistoryGap("expired", ChatEvent.TaskStatus("task-1", "running", "working"),
+            ChatEvent.TaskOutcome("task-1", "completed", "final", "worker")))
+        fakeChat.emit(ChatEvent.TaskStatus("task-1", "running", "delayed"))
+        val card = vm.messages.value.filterIsInstance<ChatMessage.Task>().single()
+        assertEquals("completed", card.status)
+        assertEquals("final", card.summary)
+        assertEquals("completed", vm.taskStatus.value?.status)
+    }
+
+    @Test fun `terminal outcome is rendered once despite replay`() = runTest {
+        val vm = ChatViewModel(chat = fakeChat)
+        val outcome = ChatEvent.TaskOutcome("task-1", "completed", "Done", "backend")
+        fakeChat.emit(outcome)
+        fakeChat.emit(outcome)
+        assertEquals(1, vm.messages.value.filterIsInstance<ChatMessage.Task>().size)
+    }
+
+    @Test fun `terminal snapshot is enriched once by outcome and cannot regress`() = runTest {
+        val vm = ChatViewModel(chat = fakeChat)
+        fakeChat.emit(ChatEvent.TaskStatus("task-1", "running", "working"))
+        fakeChat.emit(ChatEvent.TaskOutcome("task-1", "completed", null, null))
+        fakeChat.emit(ChatEvent.TaskOutcome("task-1", "completed", "Final summary", "worker"))
+        fakeChat.emit(ChatEvent.TaskStatus("task-1", "running", "stale"))
+        fakeChat.emit(ChatEvent.TaskOutcome("task-1", "completed", "Final summary", "worker"))
+        val cards = vm.messages.value.filterIsInstance<ChatMessage.Task>()
+        assertEquals(1, cards.size)
+        assertEquals("completed", cards.single().status)
+        assertEquals("Final summary", cards.single().summary)
+        assertEquals("worker", cards.single().source)
+        assertEquals("completed", vm.taskStatus.value?.status)
+    }
+
+    @Test fun `streamed middleman chunks form one bubble across reconnect and filtered dispatch`() = runTest {
+        val vm = ChatViewModel(chat = fakeChat)
+        fakeChat.emit(ChatEvent.MiddlemanLine("Hel"))
+        fakeChat.state.value = ChatWebSocket.ConnectionState.RECONNECTING
+        fakeChat.emit(ChatEvent.MiddlemanLine("lo\n```json\n{\"worker\":\"build\"}\n```\n"))
+        fakeChat.emit(ChatEvent.MiddlemanLine("Done"))
+        val replies = vm.messages.value.filterIsInstance<ChatMessage.Agent>()
+        assertEquals(1, replies.size)
+        assertEquals("Hello\nDone", replies.single().text)
+    }
+
+    @Test fun `user message and task card split assistant turns`() = runTest {
+        val vm = ChatViewModel(chat = fakeChat)
+        fakeChat.emit(ChatEvent.MiddlemanLine("first"))
+        vm.onInputChange("next")
+        vm.send()
+        fakeChat.emit(ChatEvent.MiddlemanLine("second"))
+        fakeChat.emit(ChatEvent.TaskStatus("task-1", "running", null))
+        fakeChat.emit(ChatEvent.MiddlemanLine("third"))
+        assertEquals(listOf("first", "second", "third"),
+            vm.messages.value.filterIsInstance<ChatMessage.Agent>().map { it.text })
+        assertEquals(5, vm.messages.value.size)
+    }
+
+    @Test fun `role availability is independent of task progress`() = runTest {
+        val vm = ChatViewModel(chat = fakeChat)
+        fakeChat.emit(ChatEvent.RoleHealth("worker", "unavailable"))
+        assertEquals("unavailable", vm.roleHealth.value["worker"])
     }
 
     @Test fun `status snapshot drives work indicator and stop is direct`() = runTest {
@@ -122,11 +297,12 @@ class ChatViewModelTest {
         fakeChat.emit(ChatEvent.Complete("worker report"))
         fakeChat.emit(ChatEvent.MiddlemanLine("Finished the change"))
         fakeChat.emit(ChatEvent.Error("problem"))
-        assertEquals(listOf("I'll handle this\n", "Finished the change", "problem"),
+        assertEquals(listOf("I'll handle this\nFinished the change", "problem"),
             vm.messages.value.map { when (it) {
                 is ChatMessage.Agent -> it.text
                 is ChatMessage.System -> it.summary
                 is ChatMessage.User -> it.text
+                is ChatMessage.Task -> it.summary
             } })
         assertTrue(vm.debugMessages.value.joinToString("").contains("\"worker\""))
         assertTrue(vm.debugMessages.value.contains("tool output"))
@@ -362,6 +538,8 @@ class FakeChatTransport : ChatTransport {
     var stopCalls = 0
     var stopAccepted = true
     var sendAccepted = true
+    var autoAck = true
+    val requestIds = mutableListOf<String>()
     override val state = MutableStateFlow(ChatWebSocket.ConnectionState.DISCONNECTED)
     override fun stopTask(): Boolean { stopCalls++; return stopAccepted }
 
@@ -376,8 +554,10 @@ class FakeChatTransport : ChatTransport {
         connectCalled = true
     }
 
-    override fun send(text: String): Boolean {
+    override fun send(text: String, requestId: String): Boolean {
+        requestIds.add(requestId)
         sent.add(text)
+        if (sendAccepted && autoAck) emit(ChatEvent.UserAck(requestId, true, null))
         // We pretend the send always succeeds;
         // the ViewModel doesn't use the return
         // value for v0.1 (a future task may).
