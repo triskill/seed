@@ -91,16 +91,21 @@ def test_apply_preserves_live_subscribers_and_interrupts_only_active_task(monkey
     queue = old.subscribe()
     queue.get_nowait()
     replacement = Orchestrator(Runner(), Runner())
+    old._acceptances['request-1'] = b'fingerprint'
     monkeypatch.setattr(service, '_new_orchestrator', lambda *args: replacement)
     app = FastAPI()
     app.state.agent_lock = asyncio.Lock()
     app.state.orchestrator = old
     asyncio.run(service._replace_agents(app, service.AgentApplyRequest(provider='openai', modelId='test')))
     assert queue.get_nowait()['status'] == 'interrupted'
+    assert queue.get_nowait()['type'] == 'task_outcome'
     assert replacement._subscribers is old._subscribers
+    assert replacement._acceptances is old._acceptances
+    assert replacement._acceptance_lock is old._acceptance_lock
+    assert replacement._acceptances['request-1'] == b'fingerprint'
     assert replacement.task_status['status'] == 'interrupted'
     asyncio.run(replacement._broadcast({'type': 'worker_line', 'text': 'new'}))
-    assert queue.get_nowait()['text'] == 'new'
+    assert any(event.get('text') == 'new' for event in (queue.get_nowait() for _ in range(queue.qsize())))
 
 
 def test_apply_retains_active_snapshot_when_stop_clears_it(monkeypatch, tmp_path):

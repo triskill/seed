@@ -76,11 +76,8 @@ async def handle_chat(
     """
     await websocket.accept()
     log.info("chat: client connected")
-    subscriber_queue = orchestrator.subscribe()
-    forwarder_task = asyncio.create_task(
-        _forward_events(websocket, subscriber_queue),
-        name="chat-forwarder",
-    )
+    subscriber_queue = None
+    forwarder_task = None
     try:
         try:
             async for raw in _iter_text_frames(websocket):
@@ -96,8 +93,19 @@ async def handle_chat(
                     log.warning("chat: dropping non-object frame")
                     continue
                 msg_type = msg.get("type")
+                if msg_type in ("user_message", "resume") and subscriber_queue is None:
+                    orchestrator = current_orchestrator() if current_orchestrator else orchestrator
+                    if msg_type == "resume":
+                        subscriber_queue = orchestrator.subscribe(msg.get('generationId'), msg.get('eventId'))
+                    else:
+                        subscriber_queue = orchestrator.subscribe()
+                    forwarder_task = asyncio.create_task(
+                        _forward_events(websocket, subscriber_queue), name="chat-forwarder"
+                    )
                 if msg_type == "user_message":
                     await _handle_user_message(websocket, current_orchestrator() if current_orchestrator else orchestrator, msg)
+                elif msg_type == "resume":
+                    pass
                 elif msg_type == "stop_task":
                     await (current_orchestrator() if current_orchestrator else orchestrator).stop_task()
                 else:
@@ -110,12 +118,14 @@ async def handle_chat(
         # immediately on cancel, and the unsubscribe
         # is idempotent. Doing it in `finally` makes the
         # cleanup path robust to early returns.
-        forwarder_task.cancel()
-        try:
-            await forwarder_task
-        except (asyncio.CancelledError, Exception):
-            pass
-        orchestrator.unsubscribe(subscriber_queue)
+        if forwarder_task is not None:
+            forwarder_task.cancel()
+            try:
+                await forwarder_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if subscriber_queue is not None:
+            orchestrator.unsubscribe(subscriber_queue)
         log.info("chat: client torn down")
 
 
@@ -191,22 +201,30 @@ async def _handle_user_message(
         msg:          The decoded user_message dict.
     """
     text = msg.get("text", "")
+    request_id = msg.get("requestId")
+    wants_ack = isinstance(request_id, str)
+    if 'requestId' in msg and (not wants_ack or not request_id or len(request_id) > 256):
+        log.warning('chat: invalid request ID')
+        return
     if not isinstance(text, str):
         log.warning("chat: user_message.text is not a string")
+        if wants_ack:
+            await websocket.send_text(json.dumps({'type': 'user_ack', 'requestId': request_id,
+                                                  'accepted': False, 'reason': 'Invalid message'}))
         return
     try:
-        await orchestrator.send_to_middleman(text)
-    except (PiRunnerNotRunning, RuntimeError) as exc:
-        log.warning("chat: middleman not running: %s", exc)
-        try:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "message": "orchestrator not running",
-                    }
-                )
-            )
-        except Exception:
-            # Connection is gone or broken; nothing to do.
-            pass
+        accepted = (await orchestrator.accept_user_message(request_id, text)
+                    if wants_ack else (await orchestrator.send_to_middleman(text)) is None)
+    except Exception:
+        log.warning("chat: middleman prompt rejected", exc_info=True)
+        if wants_ack:
+            await websocket.send_text(json.dumps({'type': 'user_ack', 'requestId': request_id,
+                                                  'accepted': False, 'reason': 'Middleman unavailable'}))
+        else:
+            await orchestrator._broadcast({'type': 'error', 'message': 'Middleman unavailable'})
+    else:
+        if wants_ack:
+            reply = {'type': 'user_ack', 'requestId': request_id, 'accepted': accepted}
+            if not accepted:
+                reply['reason'] = 'Request ID already used for different text'
+            await websocket.send_text(json.dumps(reply))

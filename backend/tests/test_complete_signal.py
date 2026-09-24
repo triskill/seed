@@ -92,6 +92,7 @@ def test_complete_signal_fans_out_to_multiple_clients(complete_signal_client):
         # should also receive the broadcast.
         time.sleep(0.2)
         with client.websocket_connect("/chat") as app_ws:
+            app_ws.send_text(json.dumps({"type": "resume"}))
             app_rcv = Receiver(app_ws)
             chat_frames = collect_all(chat_rcv, timeout_s=5.0)
             app_frames = collect_all(app_rcv, timeout_s=2.0)

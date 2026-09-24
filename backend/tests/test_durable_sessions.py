@@ -51,7 +51,7 @@ def test_active_task_interrupted_on_restart_and_snapshot(tmp_path):
         assert json.loads((tmp_path / 'task-status.json').read_text())['status'] == 'running'
         await first.stop()
         second = Orchestrator(Runner(), Runner(), task_store=store)
-        assert second.subscribe().get_nowait() == {'type': 'task_status', 'taskId': task_id, 'status': 'interrupted', 'summary': 'Task interrupted by restart'}
+        assert {k: v for k, v in second.subscribe().get_nowait().items() if k not in ('generationId', 'eventId')} == {'type': 'task_status', 'taskId': task_id, 'status': 'interrupted', 'summary': 'Task interrupted by restart'}
         await second.start()
         assert second.worker.sent == []
         await second.stop()

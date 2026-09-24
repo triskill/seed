@@ -49,7 +49,7 @@ def test_malformed_dispatch_does_not_stop_middleman_loop(caplog) -> None:
     while not subscriber.empty():
         events.append(subscriber.get_nowait())
 
-    assert [e for e in events if e["type"] == WS_TYPE_MIDDLEMAN_LINE] == [
+    assert [{k: v for k, v in e.items() if k not in ('generationId', 'eventId')} for e in events if e["type"] == WS_TYPE_MIDDLEMAN_LINE] == [
         {"type": WS_TYPE_MIDDLEMAN_LINE, "line": (
             json.loads(line)["assistantMessageEvent"]["delta"] if "message_update" in line else line
         )}

@@ -21,16 +21,37 @@ class TaskStore:
             return None
         return data
 
+    def load_events(self) -> list[dict]:
+        try:
+            data = json.loads((self.directory / 'task-events.json').read_text(encoding='utf-8'))
+            return data if isinstance(data, list) else []
+        except (OSError, ValueError):
+            return []
+
+    def save_events(self, events: list[dict]) -> None:
+        allowed = {
+            'task_status': ('type', 'taskId', 'status'),
+            'task_outcome': ('type', 'taskId', 'status', 'source'),
+            'role_health': ('type', 'role', 'status'),
+            'error': ('type',),
+        }
+        safe = [{key: event[key] for key in allowed[event['type']] if key in event}
+                for event in events if isinstance(event, dict) and event.get('type') in allowed]
+        self._atomic_save(self.directory / 'task-events.json', safe[-512:])
+
     def save(self, status: dict) -> None:
+        self._atomic_save(self.path, {k: v for k, v in status.items() if k in ('type', 'taskId', 'status')})
+
+    def _atomic_save(self, path: Path, payload: object) -> None:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix='.task-', dir=self.directory)
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
                 os.fchmod(stream.fileno(), 0o600)
-                json.dump(status, stream)
+                json.dump(payload, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(name, self.path)
+            os.replace(name, path)
             directory_fd = os.open(self.directory, os.O_RDONLY)
             try:
                 os.fsync(directory_fd)

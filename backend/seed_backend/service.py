@@ -277,6 +277,8 @@ async def _replace_agents(app: FastAPI, selection: AgentApplyRequest) -> None:
             # Existing chat forwarders retain their subscriber queues. Share the
             # registry so new agent events still reach already-open sockets.
             replacement._subscribers = previous._subscribers
+            replacement._acceptances = previous._acceptances
+            replacement._acceptance_lock = previous._acceptance_lock
             app.state.orchestrator = replacement
             if active_task is not None:
                 replacement.task_status = active_task

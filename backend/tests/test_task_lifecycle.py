@@ -56,7 +56,7 @@ async def _test_dispatch_snapshot_progress_and_settlement():
         assert [event['status'] for event in (q.get_nowait() for _ in range(q.qsize())) if event['type'] == 'task_status'] == ['pending', 'running']
         task_id = orch.task_status['taskId']
         snapshot = orch.subscribe().get_nowait()
-        assert snapshot == {'type': 'task_status', 'taskId': task_id, 'status': 'running'}
+        assert {k: v for k, v in snapshot.items() if k not in ('generationId', 'eventId')} == {'type': 'task_status', 'taskId': task_id, 'status': 'running'}
         await worker.lines.put(json.dumps({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':'<task:done summary="Fixed"/>'}}))
         await tick()
         assert orch.task_status['status'] == 'running'

@@ -30,9 +30,12 @@ forwarding (Task 3.4) are added on top of this skeleton.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from collections import deque, OrderedDict
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -70,6 +73,16 @@ _MIDDLEMAN_SCAN_BUFFER_MAX = 64 * 1024
 # forgets the summary attribute still produces a usable
 # event.
 _DEFAULT_COMPLETE_SUMMARY = "Task complete"
+
+_CREDENTIAL_RE = re.compile(
+    r'(?i)\b(?:bearer\s+|(?:token|api[_-]?key|password|secret|authorization)\s*[:=]\s*)'
+    r'[^\s,;]+|\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,})'
+)
+
+
+def _safe_text(value: object) -> str:
+    return _CREDENTIAL_RE.sub('[REDACTED]', str(value)[:2048])
+
 
 # Project-local pi config directory. pi's `--config-dir`
 # (env: `PI_CODING_AGENT_DIR`) defaults to `~/.pi/agent`.
@@ -315,9 +328,24 @@ class Orchestrator:
     _SUBSCRIBER_QUEUE_MAXSIZE: int = 256
 
     def __init__(self, middleman: PiRunner, worker: PiRunner, task_store: TaskStore | None = None) -> None:
+        self.generation_id = uuid.uuid4().hex
+        self._event_id = 0
+        self._journal: deque[dict] = deque(maxlen=512)
+        self._terminal_tasks: set[str] = set()
+        self._pending_outcome: dict | None = None
+        self._outcome_timer: asyncio.Task | None = None
+        self._report_tag: str | None = None
+        self._report_seen = False
         self.middleman = middleman
         self.worker = worker
+        # Runtime-only acceptance receipts; never persisted or journaled.
+        self._acceptances: OrderedDict[str, bytes] = OrderedDict()
+        self._acceptance_lock = asyncio.Lock()
         self.task_store = task_store
+        # Disk contains metadata from an earlier generation, never replayable IDs.
+        # Purge legacy journals that may contain unsafe text or stale coordinates.
+        if task_store and task_store.load_events():
+            task_store.save_events([])
         self.task_status: dict | None = task_store.load() if task_store else None
         if self.task_status and self.task_status['status'] in ('pending', 'running', 'cancel_pending'):
             self.task_status = {**self.task_status, 'status': 'interrupted', 'summary': 'Task interrupted by restart'}
@@ -334,6 +362,7 @@ class Orchestrator:
         self._agent_ended = False
         self._worker_retry_pending = False
         self._worker_blocked = False
+        self._middleman_unavailable = False
         # Each chat WS client subscribes by calling subscribe();
         # the orchestrator hands them a private queue and tracks
         # it in this set for broadcast. The set itself is mutated
@@ -362,8 +391,18 @@ class Orchestrator:
         themselves idempotent, and the read tasks are only
         created if `self._read_*_task` is None).
         """
-        await self.middleman.start()
-        await self.worker.start()
+        await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'starting'})
+        await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'starting'})
+        try:
+            await self.middleman.start()
+            await self.worker.start()
+        except Exception:
+            await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'unavailable'})
+            await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'unavailable'})
+            raise
+        self._middleman_unavailable = False
+        await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'ready'})
+        await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'ready'})
         if self._read_middleman_task is None:
             self._read_middleman_task = asyncio.create_task(
                 self._read_middleman_loop(),
@@ -408,10 +447,13 @@ class Orchestrator:
         if self._abort_task is not None:
             self._abort_task.cancel()
             self._abort_task = None
+        if self._outcome_timer is not None:
+            self._outcome_timer.cancel()
+            self._outcome_timer = None
         await self.middleman.stop()
         await self.worker.stop()
 
-    def subscribe(self) -> asyncio.Queue[dict]:
+    def subscribe(self, generation_id: str | None = None, event_id: int | None = None) -> asyncio.Queue[dict]:
         """Register a new chat client. Returns a private queue
         the orchestrator will publish events to.
 
@@ -424,9 +466,43 @@ class Orchestrator:
             maxsize=self._SUBSCRIBER_QUEUE_MAXSIZE
         )
         self._subscribers.add(q)
-        if self.task_status is not None:
-            q.put_nowait(dict(self.task_status))
+        if generation_id is not None and event_id is not None:
+            missing = [event for event in self._journal if event['eventId'] > event_id]
+            gap = (generation_id != self.generation_id or event_id > self._event_id
+                   or (missing[0]['eventId'] != event_id + 1 if missing else event_id != self._event_id)
+                   or len(missing) > q.maxsize)
+            if gap:
+                q.put_nowait(self._gap())
+            else:
+                for event in missing:
+                    q.put_nowait(dict(event))
+        else:
+            gap = True
+        if self.task_status is not None and gap and generation_id is None:
+            # Initial snapshots are unsequenced; they must not impersonate a live event.
+            q.put_nowait({**self._snapshot_task(), 'generationId': self.generation_id, 'eventId': 0})
         return q
+
+    def _snapshot_task(self) -> dict:
+        return {k: _safe_text(v) if k == 'summary' else v
+                for k, v in self.task_status.items() if k in ('type', 'taskId', 'status', 'summary')}
+
+    def _gap(self) -> dict:
+        # A gap is private to one subscriber, not part of the broadcast sequence.
+        gap = {'type': 'history_gap', 'generationId': self.generation_id}
+        if self.task_status:
+            gap['task'] = self._snapshot_task()
+            outcome = next((e for e in reversed(self._journal)
+                            if e['type'] == 'task_outcome' and e['taskId'] == self.task_status['taskId']), None)
+            if outcome is None and self.task_status['status'] in ('completed', 'failed', 'cancelled', 'interrupted'):
+                outcome = {'type': 'task_outcome', 'taskId': self.task_status['taskId'],
+                           'status': self.task_status['status'], 'source': 'backend'}
+            if outcome:
+                gap['outcome'] = {k: v for k, v in outcome.items() if k not in ('eventId', 'generationId')}
+        return gap
+
+    def _stamp(self, event: dict) -> dict:
+        return {**event, 'generationId': self.generation_id, 'eventId': self._event_id}
 
     def unsubscribe(self, queue: asyncio.Queue[dict]) -> None:
         """Remove a subscriber. Idempotent; unknown queues are
@@ -443,13 +519,58 @@ class Orchestrator:
         `complete` event. The list() copy avoids "set changed during
         iteration" if a subscribe/unsubscribe races the broadcast.
         """
+        # Only explicitly safe display fields may enter the private journal.
+        kind = event.get('type')
+        safe = {'type': kind}
+        fields = {
+            'middleman_line': ('line',), 'worker_line': ('line', 'text'),
+            'task_status': ('taskId', 'status', 'summary'),
+            'task_outcome': ('taskId', 'status', 'summary', 'source'),
+            'role_health': ('role', 'status'), 'error': ('message',),
+            'complete': ('summary',), 'history_gap': (),
+        }.get(kind, ())
+        for key in fields:
+            if key in event:
+                if kind == 'error' and key == 'message':
+                    safe[key] = (event[key] if event[key] in (
+                        'Selected model rejected the request (context/output limit). Choose another model or reduce its max output.',
+                        'Model request failed. Check the selected provider and model.',
+                    ) else 'Assistant request failed.')
+                else:
+                    safe[key] = _safe_text(event[key])
+        self._event_id += 1
+        safe = self._stamp(safe)
+        self._journal.append(safe)
+        if self.task_store and kind in ('task_status', 'task_outcome', 'role_health', 'error'):
+            # Never write model text or replay coordinates to disk.
+            metadata = [{k: e[k] for k in ('type', 'taskId', 'status', 'source', 'role') if k in e}
+                        for e in self._journal if e['type'] in ('task_status', 'task_outcome', 'role_health', 'error')]
+            self.task_store.save_events(metadata)
         for q in list(self._subscribers):
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                # Drop for slow consumer. The chat client will
-                # see a gap; the reader keeps moving.
-                pass
+            if q.full():
+                while not q.empty():
+                    q.get_nowait()
+                q.put_nowait(self._gap())
+            else:
+                q.put_nowait(dict(safe))
+
+    async def accept_user_message(self, request_id: str, message: str) -> bool:
+        """Accept once per ID/text pair; False means the ID belongs to different text.
+
+        Serialize the RPC and cache update together so concurrent sockets cannot
+        forward the same prompt twice. Failed RPCs leave no receipt.
+        """
+        fingerprint = hashlib.sha256(message.encode('utf-8')).digest()
+        async with self._acceptance_lock:
+            existing = self._acceptances.get(request_id)
+            if existing is not None:
+                self._acceptances.move_to_end(request_id)
+                return existing == fingerprint
+            await self.send_to_middleman(message)
+            self._acceptances[request_id] = fingerprint
+            if len(self._acceptances) > 512:
+                self._acceptances.popitem(last=False)
+            return True
 
     async def send_to_middleman(self, message: str) -> None:
         """Forward a user message to the middle-man pi.
@@ -469,6 +590,10 @@ class Orchestrator:
         dispatch JSON block that the orchestrator
         forwards to the worker (Task 3.4).
         """
+        if self._middleman_unavailable:
+            raise RuntimeError('Middleman unavailable')
+        if self._pending_outcome:
+            await self._emit_outcome('backend')
         await self._rpc(self.middleman, {"type": "prompt", "message": message, "streamingBehavior": "followUp"})
 
     @staticmethod
@@ -483,14 +608,54 @@ class Orchestrator:
         return self.task_status is not None and self.task_status["status"] in ("pending", "running", "cancel_pending")
 
     async def _status(self, status: str, summary: str | None = None) -> None:
-        if self.task_status is None:
+        if self.task_status is None or self.task_status['taskId'] in self._terminal_tasks:
             return
         self.task_status = {"type": "task_status", "taskId": self.task_status["taskId"], "status": status}
         if summary:
-            self.task_status["summary"] = summary[:2048]
+            self.task_status["summary"] = _safe_text(summary)
         if self.task_store:
             self.task_store.save(self.task_status)
         await self._broadcast(dict(self.task_status))
+        if status in ('completed', 'failed', 'cancelled', 'interrupted'):
+            task_id = self.task_status['taskId']
+            if task_id not in self._terminal_tasks:
+                self._terminal_tasks.add(task_id)
+                self._pending_outcome = {'type': 'task_outcome', 'taskId': task_id, 'status': status,
+                                         'summary': {'completed': 'Task complete', 'failed': 'Task failed', 'cancelled': 'Task stopped', 'interrupted': 'Task interrupted'}[status]}
+                if status != 'completed':
+                    await self._emit_outcome('backend')
+
+    async def _emit_outcome(self, source: str) -> None:
+        outcome = self._pending_outcome
+        if outcome is None:
+            return
+        self._pending_outcome = None
+        self._report_tag = None
+        if self._outcome_timer:
+            self._outcome_timer.cancel()
+            self._outcome_timer = None
+        await self._broadcast({**outcome, 'source': source})
+
+    async def _await_report_timeout(self) -> None:
+        try:
+            await asyncio.sleep(10)
+            await self._emit_outcome('backend')
+        except asyncio.CancelledError:
+            pass
+
+    async def _send_terminal_report(self, text: str) -> None:
+        if not self._pending_outcome:
+            await self._report_to_middleman(text)
+            return
+        self._report_tag = self._pending_outcome['taskId']
+        self._report_seen = False
+        try:
+            await self._rpc(self.middleman, {'type': 'prompt', 'message': text, 'streamingBehavior': 'followUp'})
+        except Exception:
+            await self._emit_outcome('backend')
+            await self._broadcast({'type': 'error', 'message': 'Middleman unavailable for task report'})
+            return
+        self._outcome_timer = asyncio.create_task(self._await_report_timeout())
 
     async def stop_task(self) -> None:
         if not self._active or self._cancel_requested:
@@ -591,7 +756,28 @@ class Orchestrator:
                 except ValueError:
                     wire = None
                 if isinstance(wire, dict):
+                    if wire.get('type') == 'message_start' and self._report_tag:
+                        message = wire.get('message', {})
+                        if message.get('role') == 'user':
+                            content = message.get('content', [])
+                            text = ''.join(b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text') if isinstance(content, list) else str(content)
+                            self._report_seen = f'task {self._report_tag}' in text
                     if wire.get("type") == "agent_end":
+                        if self._pending_outcome and not wire.get('willRetry'):
+                            messages = wire.get('messages', [])
+                            users = [m for m in messages if isinstance(m, dict) and m.get('role') == 'user']
+                            if users:
+                                content = users[-1].get('content', [])
+                                text = ''.join(b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text') if isinstance(content, list) else str(content)
+                                self._report_seen = f'task {self._report_tag}' in text
+                            assistants = [m for m in messages if isinstance(m, dict) and m.get('role') == 'assistant']
+                            if self._report_seen:
+                                final = next(( ''.join(b['text'] for b in m.get('content', [])
+                                    if isinstance(b, dict) and b.get('type') == 'text' and isinstance(b.get('text'), str))
+                                    for m in reversed(assistants) if m.get('stopReason') not in ('error', 'aborted')), '')
+                                if final.strip():
+                                    self._pending_outcome['summary'] = _safe_text(final.strip())
+                                    await self._emit_outcome('middleman')
                         errors = [m.get("errorMessage", "") for m in wire.get("messages", [])
                                   if isinstance(m, dict) and m.get("role") == "assistant"
                                   and m.get("stopReason") == "error"]
@@ -668,11 +854,18 @@ class Orchestrator:
             raise
         except Exception as exc:
             log.exception("middleman read loop crashed: %r", exc)
+        self._middleman_unavailable = True
+        await self._emit_outcome('backend')
+        await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'unavailable'})
+        await self._broadcast({'type': 'error', 'message': 'Middleman unavailable'})
 
     async def _send_dispatch_to_worker(self, dispatch: dict) -> None:
         if self._active or self._worker_blocked:
             await self._broadcast({"type": "error", "message": "Worker unavailable for a new task"})
             return
+        # The next task must not replace the only pending outcome.
+        if self._pending_outcome:
+            await self._emit_outcome('backend')
         if not isinstance(dispatch, dict) or dispatch.get("intent") not in ("build_feature", "fix_bug", "refactor") or not all(isinstance(dispatch.get(key), str) and dispatch[key].strip() for key in ("feature", "spec")):
             self.task_status = {"type": "task_status", "taskId": uuid.uuid4().hex, "status": "pending"}
             await self._status("failed", "Invalid dispatch")
@@ -793,6 +986,7 @@ class Orchestrator:
             raise
         except Exception as exc:
             log.exception("worker read loop crashed: %r", exc)
+        await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'unavailable'})
         if self._active:
             await self._status("cancelled" if self._cancel_requested else "failed", None if self._cancel_requested else "Worker exited")
             if not self._cancel_requested:
@@ -812,4 +1006,4 @@ class Orchestrator:
         else:
             summary = self._worker_report or parse_task_done(self._last_agent_text) or "Task complete"
             await self._status("completed", summary)
-            await self._report_to_middleman(f"Worker task {self.task_status['taskId']} completed: {summary[:2048]}. Summarize the result for the user.")
+            await self._send_terminal_report(f"Worker task {self.task_status['taskId']} completed: {summary[:2048]}. Summarize the result for the user.")
