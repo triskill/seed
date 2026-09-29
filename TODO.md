@@ -497,8 +497,9 @@ Android tooling only; Python dependencies come from
 - **Verification is still incomplete at the connected-device boundary.**
   GitHub Actions now runs Python suites, scoped static checks, Android JVM tests,
   debug lint and a tracked-HEAD secret scan; `make verify` runs the same code
-  checks locally. On 2026-09-29, `make verify` passed (264 Python tests plus
-  Android JVM/lint); the static checks passed. This is not device acceptance.
+  checks locally. On 2026-09-29, `make verify` passed (276 Python tests plus
+  Android JVM/lint); the static checks and pinned HEAD secret scan passed.
+  This is not device acceptance.
   The 2-class / 6-method instrumentation APK compiles. On the ARM64 Moto G32,
   the QEMU smoke test confirms extraction and guest Python, then Pi's real RPC
   path does not emit its expected JSONL response before the 20-second smoke
