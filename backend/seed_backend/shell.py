@@ -1,34 +1,17 @@
-"""Host-side shell subprocess execution.
+"""Shell subprocess execution with piped, merged stdout and stderr.
 
-Task 1.1 added the smallest useful `exec_command`: a subprocess
-with piped stdout/stderr. Task 1.2 swaps that for a PTY-backed
-implementation so ANSI color codes are preserved end-to-end —
-programs like `ls --color=auto` (and anything else that auto-
-detects TTY, e.g. `git`, `diff`, `ls`) only emit color escapes
-when they detect a terminal, and a PIPE is not a terminal.
-
-Task 1.5 wraps the executor in a `ShellSession` class that
-remembers a per-session working directory. v0.1 is a heuristic:
-when a command starts with `cd <path>`, we resolve and update
-`cwd` ourselves, then run whatever's left. There's no real
-persistent shell process — every `exec` is a fresh `sh -c`
-subprocess — so the heuristic is a thin convention on top of
-the existing PTY executor. Limitations spelled out on
-`ShellSession`.
-
-Security note: this orchestrator is intended to run on a trusted
-LAN with the Android client as the only caller; the endpoint is
-unauthenticated by design for v0.1.
+ShellSession runs each expression in a fresh shell and uses private
+files to carry the final cwd and OLDPWD across serialized calls.
 """
 from __future__ import annotations
 
 import asyncio
 import os
-import pty
 import re
 import signal
 import subprocess
-import tty
+import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,16 +46,7 @@ def strip_ansi(text: str) -> str:
 
 
 class ExecCancelled(Exception):
-    """Raised when an in-flight `exec_command` is cancelled by its caller.
-
-    Task 1.4: the caller passes an `asyncio.Event` as the `cancel`
-    argument. When the event is set, the executor sends SIGTERM
-    to the child's process group, closes the PTY master fd to
-    unblock the read loop, waits a brief grace period, then
-    SIGKILLs the process group as a fallback before raising
-    this exception. Distinct from `asyncio.TimeoutError` so the
-    route layer (and tests) can tell the two apart.
-    """
+    """Raised when an optional cancellation event aborts a command."""
 
 
 @dataclass
@@ -119,69 +93,9 @@ class ExecResult:
     truncated: bool = False
 
 
-async def _cancel_consumer(
-    cancel_evt: asyncio.Event | None,
-    state: dict,
-) -> None:
-    """Watcher coroutine that kills the child when the user sets `cancel_evt`.
-
-    Task 1.4: lives alongside the executor and races it via
-    `asyncio.wait`. Three outcomes:
-
-    * `cancel_evt is None` — the user didn't ask for cancellation.
-      Block forever; the main coroutine cancels us once the
-      executor returns. (We never raise.)
-    * `cancel_evt` is set before we get cancelled by the main
-      coroutine — send SIGTERM, close the master fd, then raise
-      `ExecCancelled` so the race in the main coroutine surfaces
-      it. The main coroutine then waits a 1 s grace period and
-      SIGKILLs the process group as a fallback (in case SIGTERM
-      was ignored — `sleep` does this by default). The split is
-      deliberate: raising immediately after the SIGTERM means
-      `asyncio.wait(..., FIRST_COMPLETED)` sees the cancel_task
-      as done first, before the executor thread's `waitpid` can
-      return and the executor's future can win the race.
-    * We get cancelled (because the executor won the race) —
-      the executor's `waitpid` has already reaped the child, so
-      there's nothing to clean up; just return.
-
-    Best-effort error handling throughout: the OS may already
-    have cleaned things up, and we don't care.
-    """
-    if cancel_evt is None:
-        # Block forever; main coroutine cancels us on success.
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            return
-        return
-
-    try:
-        await cancel_evt.wait()
-    except asyncio.CancelledError:
-        # Executor won the race; its waitpid already reaped
-        # the child, so nothing to clean up.
-        return
-
-    # User signalled cancel. Kill the child process group (the
-    # child + any helpers it spawned, like the `sleep 60` child
-    # of `sh -c "sleep 60"`) and close the master fd so the
-    # in-flight `os.read` in the executor thread unblocks. The
-    # grace period + SIGKILL fallback happens in the main
-    # coroutine's exception handler — see `exec_command`.
-    pid = state.get("pid")
-    if pid is not None:
-        try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
-    master_fd = state.get("master_fd")
-    if master_fd is not None:
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
-
+async def _cancel_consumer(cancel_evt: asyncio.Event) -> None:
+    """Race the cancellation event against subprocess completion."""
+    await cancel_evt.wait()
     raise ExecCancelled()
 
 
@@ -192,78 +106,36 @@ async def _exec_command_impl(
     timeout: float | None = None,
     capture_ansi: bool = True,
     cancel: asyncio.Event | None = None,
+    shell_args: tuple[str, ...] | None = None,
+    oldpwd: str | None = None,
 ) -> ExecResult:
-    """Run `cmd` via `sh -c` under a PTY and return the captured output.
+    """Run a shell expression with merged stdout/stderr in a pipe.
 
-    The command is passed to `sh -c`, so shell features (pipes,
-    `&&`, glob expansion, etc.) work. The command runs with its
-    stdin/stdout/stderr all attached to the slave end of a
-    freshly-opened PTY; we read from the master end until the
-    child exits. Because the slave looks like a terminal to the
-    child, programs that auto-detect TTY (e.g. `ls --color=auto`)
-    emit color escape sequences — which is the whole point of
-    this task.
-
-    The PTY is put into raw mode (OPOST off, ICANON off) before
-    the child execs, so output bytes come through verbatim.
-    Without that, the line discipline would turn every `\\n` into
-    `\\r\\n` and a plain `echo hi` would arrive as `hi\\r\\n`,
-    breaking every test that asserts a `hi\\n` shape.
-
-    stderr is NOT separate from stdout in this model: both fd 1
-    and fd 2 are dup2'd onto the same slave fd, so anything the
-    command writes to either ends up interleaved in the same
-    stream. `result.stderr` is therefore always `""`.
-
-    On timeout, the child is its own session leader (via
-    `os.setsid`), so we can `killpg` the entire group. Some
-    shells spawn helpers — `sh -c "sleep 5"` is the canonical
-    example — and killing only the leader would leave the
-    helpers running.
-
-    The fork+wait+read sequence is blocking, so it runs in the
-    default thread-pool executor via `run_in_executor`. The
-    timeout handler then needs a way to kill the in-flight
-    child, so we pass a small shared dict that the executor
-    thread fills in with the child pid and master fd as soon as
-    the fork returns.
-
-    Args:
-        cmd:          The shell command to run.
-        cwd:          Optional working directory for the subprocess.
-        timeout:      Optional wall-clock timeout in seconds. On
-                      expiry, the child's process group is
-                      SIGKILL'd and `asyncio.TimeoutError` is
-                      re-raised.
-        capture_ansi: If True (default), ANSI escape sequences in
-                      the output are preserved. If False, they
-                      are stripped via `strip_ansi` before
-                      returning.
-        cancel:       Optional `asyncio.Event` the caller can
-                      set to abort the in-flight command. On
-                      set, the child's process group is
-                      SIGTERM'd (followed by SIGKILL after a
-                      1-second grace period) and `ExecCancelled`
-                      is raised. The route in `service.py`
-                      doesn't currently wire this up — the
-                      capability lives on the function for
-                      future use (e.g. aborting on client
-                      disconnect).
-
-    Returns:
-        ExecResult with decoded merged stdout, an empty stderr,
-        the exit code, and a `captured_ansi` flag mirroring the
-        input.
+    Popen is used for PRoot compatibility (fork/PTY is unavailable there).
+    The process runs in its own group for timeout/cancellation cleanup.
+    shell_args supplies positional arguments to sh -c for the session's
+    private reporting files; oldpwd carries the previous directory.
+    ANSI bytes written explicitly by commands are preserved by default.
     """
     loop = asyncio.get_running_loop()
-    # Shared between the executor thread and the asyncio event
-    # loop thread. The thread writes `pid` after forking and
-    # `master_fd` after opening the PTY; the timeout handler
-    # reads them to send SIGKILL to the process group and to
-    # close the master fd so the in-flight read unblocks.
-    # CPython's GIL makes plain dict[int|None] writes atomic, so
-    # no extra locking is needed.
-    state: dict = {"pid": None, "master_fd": None}
+    # Shared with the executor thread for process-group cleanup.
+    if cancel is not None and cancel.is_set():
+        raise ExecCancelled()
+    state: dict = {"pid": None}
+    state_lock = threading.Lock()
+    stopped = threading.Event()
+
+    def stop_child() -> None:
+        # Never hold the lock during Popen or a blocking read/wait. A launch
+        # racing this request is killed immediately when its PID is published.
+        with state_lock:
+            stopped.set()
+            pid = state["pid"]
+        if pid is not None:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
 
     def _run_pty() -> tuple[bytes, int, bool]:
         # Fall back to subprocess.Popen (no PTY) because the
@@ -280,8 +152,13 @@ async def _exec_command_impl(
         # Shell commands are untrusted local input and receive neither
         # provider credentials nor the control-plane capability.
         child_env = untrusted_child_env()
+        child_env.pop("OLDPWD", None)
+        if oldpwd is not None:
+            child_env["OLDPWD"] = oldpwd
+        if stopped.is_set() or (cancel is not None and cancel.is_set()):
+            raise ExecCancelled()
         proc = subprocess.Popen(
-            ["sh", "-c", cmd],
+            ["sh", "-c", cmd, "sh", *(shell_args or ())],
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # merge stderr into stdout, same as PTY
@@ -289,7 +166,11 @@ async def _exec_command_impl(
             start_new_session=True,  # so we can killpg on cancel/timeout
             env=child_env,
         )
-        state["pid"] = proc.pid
+        with state_lock:
+            state["pid"] = proc.pid
+            must_stop = stopped.is_set() or (cancel is not None and cancel.is_set())
+        if must_stop:
+            stop_child()
         # Drain stdout in a read loop, applying the same
         # truncation policy as the PTY impl above. Note: no
         # master fd to close — we use proc.stdout.read instead
@@ -318,24 +199,24 @@ async def _exec_command_impl(
                 proc.stdout.close()
             except OSError:
                 pass
-            state["pid"] = None
         exit_code = proc.wait()
+        with state_lock:
+            state["pid"] = None
         return b"".join(chunks), exit_code, truncated
 
     exec_future = loop.run_in_executor(None, _run_pty)
 
-    # Watcher task: blocks forever if no user cancel event,
-    # otherwise waits for the event and kills the child. Runs
+    # Watcher task waits for the event. Runs
     # concurrently with the executor; the main coroutine races
     # them with `asyncio.wait` below.
     cancel_task: asyncio.Task[None] | None = None
     if cancel is not None:
-        cancel_task = asyncio.create_task(_cancel_consumer(cancel, state))
+        cancel_task = asyncio.create_task(_cancel_consumer(cancel))
 
     try:
         if cancel_task is None:
             output, exit_code, truncated = await asyncio.wait_for(
-                exec_future,
+                asyncio.shield(exec_future),
                 timeout=timeout,
             )
         else:
@@ -356,29 +237,19 @@ async def _exec_command_impl(
             # child; if the executor lost, the cancel_task's
             # SIGTERM-and-close is already in flight and we'll
             # let the rest of the cleanup happen here.
-            for t in pending:
-                t.cancel()
+            if cancel_task in pending:
+                cancel_task.cancel()
             if cancel_task in done:
-                # The cancel_task sent SIGTERM and closed the
-                # master fd before raising. Re-raise the
-                # exception for the caller, but first do
-                # best-effort cleanup: SIGTERM is advisory and
-                # some commands ignore it (e.g. `sleep 60`),
-                # so wait a brief grace period then SIGKILL the
-                # process group as a fallback.
-                pid = state.get("pid")
+                # Kill the process group and reap before returning the
+                # cancellation to the caller.
                 try:
                     await cancel_task
-                except BaseException:
-                    if pid is not None:
-                        try:
-                            await asyncio.sleep(1.0)
-                        except asyncio.CancelledError:
-                            pass
-                        try:
-                            os.killpg(os.getpgid(pid), signal.SIGKILL)
-                        except (ProcessLookupError, PermissionError, OSError):
-                            pass
+                except ExecCancelled:
+                    stop_child()
+                    try:
+                        await asyncio.shield(exec_future)
+                    except ExecCancelled:
+                        pass  # cancelled before Popen
                     raise
                 # Unreachable: cancel_task always raises
                 # ExecCancelled. Kept as a defensive raise in
@@ -388,30 +259,24 @@ async def _exec_command_impl(
             # future (it's already done at this point).
             output, exit_code, truncated = exec_future.result()
     except asyncio.TimeoutError:
-        # Best-effort cleanup: SIGKILL the whole process group
-        # (the child + any helpers it spawned, like the `sleep 5`
-        # child of `sh -c "sleep 5"`), close the master fd so the
-        # in-flight `os.read` in the executor thread unblocks,
-        # and cancel the cancel watcher if it's still parked on
-        # `cancel_evt.wait()`. We don't await the executor future
-        # here — it's still running in a background thread that
-        # will clean up after itself (and asyncio would warn
-        # about the result being discarded, which is the desired
-        # behaviour: we already have a TimeoutError to raise).
-        pid = state.get("pid")
-        if pid is not None:
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-        master_fd = state.get("master_fd")
-        if master_fd is not None:
-            try:
-                os.close(master_fd)
-            except OSError:
-                pass
-        if cancel_task is not None and not cancel_task.done():
+        # Stop any in-flight (or not-yet-published) child and wait for
+        # the executor to reap before releasing session state.
+        stop_child()
+        if cancel_task is not None:
             cancel_task.cancel()
+        try:
+            await asyncio.shield(exec_future)
+        except ExecCancelled:
+            pass
+        raise
+    except asyncio.CancelledError:
+        stop_child()
+        if cancel_task is not None:
+            cancel_task.cancel()
+        try:
+            await asyncio.shield(exec_future)
+        except ExecCancelled:
+            pass
         raise
 
     stdout = output.decode("utf-8", errors="replace")
@@ -434,7 +299,7 @@ async def exec_command(
     capture_ansi: bool = True,
     cancel: asyncio.Event | None = None,
 ) -> ExecResult:
-    """Stateless convenience wrapper around the PTY executor.
+    """Stateless convenience wrapper around the subprocess executor.
 
     Task 1.5: with `ShellSession` now the recommended way to
     run commands (it gives you persistent cwd), the module-level
@@ -452,52 +317,32 @@ async def exec_command(
     )
 
 
-# Matches a leading `cd <path>` (with optional whitespace) at the
-# start of a command. Group 1 is the target path; group 2 (optional)
-# is whatever follows on the same line. Used by `ShellSession` to
-# update its `cwd` heuristically — see that class for the full
-# rationale and limitations.
-_CD_LEAD_RE = re.compile(r"^\s*cd\s+(\S+)(?:\s+(.*))?$", re.DOTALL)
+# Open reporting descriptors before eval, then clear wrapper arguments so
+# the expression sees ordinary `sh -c` positional semantics. A command may
+# deliberately close/redirect fds 3/4 or overwrite shell variables; shell
+# code with descriptor control cannot be made an isolated reporting channel.
+# eval runs in this shell so pwd and OLDPWD reflect its final state.
+_SESSION_WRAPPER = (
+    '_seed_expression=$1; exec 3> "$2" 4> "$3"; set --; '
+    'eval "$_seed_expression"; status=$?; '
+    'command pwd -P >&3; printf %s "${OLDPWD-}" >&4; exit "$status"'
+)
 
 
 class ShellSession:
-    """Per-session shell executor with a persistent working directory.
+    """Shared per-process shell session; exec calls are serialized.
 
-    v0.1 heuristic (NOT a real persistent shell process):
-    every `exec` call still spawns a fresh `sh -c` subprocess via
-    the PTY executor; the cwd is threaded through as the
-    subprocess's working directory and remembered on the session
-    for the next call. To make commands like `cd /tmp` actually
-    take effect, we sniff the command for a leading `cd <path>`
-    (regex `_CD_LEAD_RE`), resolve the target against the
-    current cwd, verify it exists and is a directory, and
-    update `self.cwd` accordingly. Whatever's left after the
-    `cd` is what gets handed to `sh -c`.
-
-    Known limitations (acceptable for v0.1):
-      * Only a leading `cd <path>` is recognized. `cd /tmp &&
-        ls` updates cwd correctly but the `&&` syntax isn't
-        stripped — the executor will see `&& ls` and `sh -c`
-        will reject it. Use `cd /tmp; ls` (or two separate
-        `exec` calls) instead.
-      * `cd -` (previous dir), `cd ~` (tilde expansion), and
-        `pushd`/`popd` are NOT recognized. The path is resolved
-        verbatim by `Path.resolve()`.
-      * If the `cd` target doesn't exist or isn't a directory,
-        we fall back to running the original command unchanged
-        and let `sh -c` fail naturally; `self.cwd` is not
-        updated. This is a "do no harm" choice — the user
-        sees the underlying `sh` error, not a Python exception
-        from us.
-
-    Attributes:
-        cwd: Current working directory for the session. Updated
-             by the `cd` heuristic in `exec`; mutable so tests
-             and the route layer can inspect it.
+    Each expression uses a new sh process. Final cwd and OLDPWD are reported
+    via private side-channel files, not user-visible stdout. An expression
+    that exits its shell explicitly or is interrupted before reporting cannot
+    update cwd. Other shell variables/functions do not persist. Client-specific
+    sessions require a future authenticated session design.
     """
 
     def __init__(self, cwd: Path | None = None) -> None:
         self.cwd: Path = (cwd if cwd is not None else Path.cwd()).resolve()
+        self._oldpwd: str | None = None
+        self._lock = asyncio.Lock()
 
     async def exec(
         self,
@@ -507,57 +352,41 @@ class ShellSession:
         capture_ansi: bool = True,
         cancel: asyncio.Event | None = None,
     ) -> ExecResult:
-        """Run `cmd` in the session's cwd; honour a leading `cd`.
-
-        See the class docstring for the heuristic and its limits.
-        Returns an empty `ExecResult` (exit_code=0) when the
-        command is just `cd <path>` with no further work; the
-        cwd has already been updated in that case.
-        """
-        run_cmd, updated = self._apply_cd(cmd)
-        if updated and run_cmd == "":
-            # Pure `cd <path>` with no follow-on command. We've
-            # already validated and updated cwd; return a
-            # successful empty result so the caller doesn't
-            # have to special-case it.
-            return ExecResult(
-                stdout="",
-                stderr="",
-                exit_code=0,
-                captured_ansi=capture_ansi,
-                truncated=False,
-            )
-        return await _exec_command_impl(
-            run_cmd,
-            cwd=str(self.cwd),
-            timeout=timeout,
-            capture_ansi=capture_ansi,
-            cancel=cancel,
-        )
-
-    def _apply_cd(self, cmd: str) -> tuple[str, bool]:
-        """Return `(cmd_to_run, cwd_was_updated)`.
-
-        If `cmd` starts with `cd <path>`, attempt to resolve the
-        target against `self.cwd`. On success, update `self.cwd`
-        and return the remainder of the command (or `""` if
-        there was no remainder). On any failure (bad path,
-        non-directory, regex miss), return the original command
-        unchanged and `cwd_was_updated=False`.
-        """
-        m = _CD_LEAD_RE.match(cmd)
-        if m is None:
-            return cmd, False
-        target = m.group(1)
-        rest = (m.group(2) or "").strip()
+        """Run the original shell expression and persist its final directory."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout if timeout is not None else None
+        if deadline is None:
+            await self._lock.acquire()
+        else:
+            await asyncio.wait_for(self._lock.acquire(), max(0, deadline - loop.time()))
         try:
-            new = (self.cwd / target).resolve(strict=False)
-        except (OSError, ValueError):
-            # Malformed path, permission error, etc. — leave
-            # cwd alone and let `sh -c` produce the error.
-            return cmd, False
-        if not new.is_dir():
-            return cmd, False
-        self.cwd = new
-        return rest, True
+            if cancel is not None and cancel.is_set():
+                raise ExecCancelled()
+            remaining = max(0, deadline - loop.time()) if deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                raise asyncio.TimeoutError()
+            with tempfile.TemporaryDirectory(prefix="seed-shell-") as directory:
+                cwd_file = Path(directory) / "cwd"
+                oldpwd_file = Path(directory) / "oldpwd"
+                result = await _exec_command_impl(
+                    _SESSION_WRAPPER,
+                    shell_args=(cmd, str(cwd_file), str(oldpwd_file)),
+                    oldpwd=self._oldpwd,
+                    cwd=str(self.cwd),
+                    timeout=remaining,
+                    capture_ansi=capture_ansi,
+                    cancel=cancel,
+                )
+                # No report on timeout/cancellation/explicit shell exit. Never
+                # infer state from user output or from a partially written file.
+                if cwd_file.is_file() and oldpwd_file.is_file():
+                    reported = cwd_file.read_text()
+                    if reported.endswith("\n"):
+                        reported = reported[:-1]
+                    if reported and Path(reported).is_dir():
+                        self.cwd = Path(reported)
+                        self._oldpwd = oldpwd_file.read_text() or None
+                return result
+        finally:
+            self._lock.release()
 

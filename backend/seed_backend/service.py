@@ -469,11 +469,9 @@ class ShellExecResponse(BaseModel):
 async def shell_exec(payload: ShellExecRequest, request: Request) -> ShellExecResponse:
     """Run a shell command and return its captured output.
 
-    Task 1.5: the route now delegates to a per-app
-    `ShellSession` (created in the lifespan) instead of the
-    stateless module-level `exec_command`. That gives the
-    command sequence a persistent cwd across requests: a
-    `cd /tmp` in one call is visible to a `pwd` in the next.
+    The app-wide ShellSession persists the shell's final cwd and OLDPWD
+    across calls, serializing requests to keep their order deterministic.
+    It is shared by callers until authenticated client sessions exist.
     The response shape is unchanged.
     """
     _require_control_access(request, allow_development=True)
