@@ -450,6 +450,7 @@ class Orchestrator:
         handlers see the connection close.
         """
         self._ready = False
+        self._middleman_unavailable = True
         for task in (self._read_middleman_task, self._read_worker_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -471,8 +472,10 @@ class Orchestrator:
         if self._outcome_timer is not None:
             self._outcome_timer.cancel()
             self._outcome_timer = None
-        await self.middleman.stop()
-        await self.worker.stop()
+        try:
+            await self.middleman.stop()
+        finally:
+            await self.worker.stop()
 
     def subscribe(self, generation_id: str | None = None, event_id: int | None = None) -> asyncio.Queue[dict]:
         """Register a new chat client. Returns a private queue
