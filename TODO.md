@@ -515,7 +515,7 @@ Android tooling only; Python dependencies come from
   ~370.6 MB); one stale incremental build grew to ~793 MB. Release
   signing/minification are unfinished, the project license
   is TBD, and PRoot/Termux/dependency license and source obligations must be
-  resolved.
+  resolved (inventory and owner decisions: `docs/release-license-audit.md`).
 - **Pi uses `--no-session`.** Per-process pi session files are intentionally
   disabled, but orchestrator-level chat/task history and reconnect replay have
   not been implemented.
