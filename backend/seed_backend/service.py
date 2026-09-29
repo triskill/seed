@@ -429,10 +429,10 @@ async def safe_validation_error(request: Request, exc: RequestValidationError):
 
 
 @app.get("/health")
-def health(request: Request):
-    """Report readiness only when both chat agents and Flask are available."""
+async def health(request: Request):
+    """Report readiness only when both chat agents and Flask serve requests."""
     manager = getattr(request.app.state, "flask_manager", None)
-    flask_status = "up" if manager is not None and manager.is_up() else "down"
+    flask_status = "up" if manager is not None and await manager.is_ready() else "down"
     agents = getattr(request.app.state, 'orchestrator', None)
     ready = flask_status == 'up' and agents is not None and agents.ready
     return JSONResponse(

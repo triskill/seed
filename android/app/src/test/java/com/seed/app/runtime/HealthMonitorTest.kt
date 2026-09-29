@@ -155,6 +155,37 @@ class HealthMonitorTest {
     }
 
     @Test
+    fun probeCompletingAfterPollingIntervalButWithinBackendBudgetIsHealthy() = runTest {
+        val api = object : StubBackendApi() {
+            var calls = 0
+
+            override suspend fun health(): HealthResponse {
+                calls += 1
+                delay(1_600)
+                return HealthResponse(status = "ok", flask = "up")
+            }
+        }
+
+        val states = HealthMonitor(
+            api = api,
+            intervalMs = 500,
+            maxAttempts = 2,
+            nowMs = { testScheduler.currentTime },
+        ).states().toList()
+
+        assertEquals(
+            listOf(
+                HealthState.Unknown,
+                HealthState.Polling(attempt = 1),
+                HealthState.Healthy(flask = "up"),
+            ),
+            states,
+        )
+        assertEquals(1, api.calls)
+        assertEquals(1_600, testScheduler.currentTime)
+    }
+
+    @Test
     fun exhaustedAttemptsEmitLastFailureAsUnhealthy() = runTest {
         val api = FakeBackendApi(
             responses = ArrayDeque(
@@ -242,7 +273,7 @@ class HealthMonitorTest {
             ),
             states,
         )
-        assertEquals(500, testScheduler.currentTime)
+        assertEquals(2_000, testScheduler.currentTime)
     }
 }
 

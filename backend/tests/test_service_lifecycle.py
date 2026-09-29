@@ -226,7 +226,7 @@ def test_real_runner_exit_makes_health_unavailable_and_rejects_chat(monkeypatch)
         def __init__(self, **kwargs): pass
         async def start(self): return True
         async def stop(self): pass
-        def is_up(self): return True
+        async def is_ready(self): return True
 
     monkeypatch.setattr(service, 'FlaskManager', Manager)
     monkeypatch.setattr(service, 'pi_cmd_for_role', lambda role: _fake_pi_cmd())
@@ -256,7 +256,7 @@ def test_health_and_chat_reject_unready_agents(monkeypatch):
     isolated_app.add_api_websocket_route('/chat', service.chat_endpoint)
 
     class Manager:
-        def is_up(self):
+        async def is_ready(self):
             return True
 
     class Agents:

@@ -21,9 +21,11 @@ sealed class HealthState {
  *
  * The runtime is ready only when `/health` responds and its `flask` field is `"up"`.
  * A reachable backend can report `"down"` briefly while the embedded app is still
- * starting, so that response is retried just like a failed request. Each request is
- * bounded by [intervalMs], and unsuccessful probes retry on that fixed start-to-start
- * cadence. The returned flow is cold, so each collector starts a fresh probe run.
+ * starting, so that response is retried just like a failed request. Each request has a
+ * 2-second timeout, exceeding FlaskManager's 1.5-second `/api/ping` deadline to allow
+ * for FastAPI overhead. Unsuccessful probes retry no sooner than [intervalMs] (500 ms
+ * by default) after the previous probe started; slow requests do not overlap. The
+ * [maxAttempts] budget is unchanged. The flow is cold, so each collector starts fresh.
  */
 class HealthMonitor(
     private val api: BackendApi,
@@ -39,7 +41,7 @@ class HealthMonitor(
             val startedAt = nowMs()
 
             val response = try {
-                withTimeout(intervalMs) { api.health() }
+                withTimeout(HEALTH_REQUEST_TIMEOUT_MS) { api.health() }
             } catch (_: TimeoutCancellationException) {
                 if (attempt == maxAttempts) {
                     emit(HealthState.Unhealthy("Health check timed out"))
@@ -88,5 +90,6 @@ class HealthMonitor(
 
     private companion object {
         const val FLASK_READY_STATUS = "up"
+        const val HEALTH_REQUEST_TIMEOUT_MS = 2_000L
     }
 }

@@ -145,3 +145,17 @@ class FlaskManager:
     def is_up(self) -> bool:
         """Whether the separate Flask process is still running."""
         return self._process is not None and self._process.poll() is None
+
+    async def is_ready(self) -> bool:
+        """Check the live parent and freshly probe the Flask worker's ping route."""
+        if not self.is_up():
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=1.0) as client:
+                response = await asyncio.wait_for(
+                    client.get(f"http://{self.host}:{self.port}/api/ping"),
+                    timeout=1.5,
+                )
+            return response.status_code == 200
+        except (httpx.HTTPError, TimeoutError):
+            return False
