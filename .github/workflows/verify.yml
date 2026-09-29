@@ -1,0 +1,68 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python tests and incremental static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install editable dev packages
+        run: python -m pip install -e './backend[dev]' -e './webapp[dev]'
+      - name: Test both suites
+        run: python -m pytest backend/ webapp/
+      - name: Incremental static checks
+        run: |
+          python -m ruff check --target-version py311 --select E4,E7,E9,F821,F823 backend/seed_backend webapp/seed_app
+          python -m mypy --follow-imports=skip --ignore-missing-imports backend/seed_backend/config.py backend/seed_backend/flask_manager.py backend/seed_backend/process_env.py webapp/seed_app/app.py
+
+  android:
+    name: Android JVM tests and lint (no emulator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install API 34 SDK
+        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+      - name: JVM unit tests and debug lint
+        working-directory: android
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug
+
+  secrets:
+    name: Scan checked-out HEAD (not historical commits)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download and verify pinned gitleaks binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz
+          printf '%s  %s\n' '9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c' "$RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan tracked HEAD snapshot without printing findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/head-snapshot"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/head-snapshot"
+          if ! "$RUNNER_TEMP/gitleaks" dir "$RUNNER_TEMP/head-snapshot" --redact=100 --no-banner --log-level error > /dev/null 2>&1; then
+            echo 'Secret scan failed; investigate privately (no findings printed in CI).'
+            exit 1
+          fi
