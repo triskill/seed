@@ -6,7 +6,11 @@ an `ExecResult` with the expected fields. Also smoke-tests the
 `POST /shell/exec` route through the FastAPI TestClient.
 """
 import asyncio
+import errno
+import os
+import signal
 import subprocess
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +19,18 @@ from pathlib import Path
 
 from seed_backend.service import app
 from seed_backend.shell import ExecCancelled, ExecResult, ShellSession, exec_command
+
+
+def test_exec_does_not_require_waitid(monkeypatch):
+    import seed_backend.shell as shell
+
+    def unsupported_waitid(*args):
+        raise OSError(errno.ENOSYS, 'waitid unavailable under PRoot')
+
+    monkeypatch.setattr(shell.os, 'waitid', unsupported_waitid, raising=False)
+    result = asyncio.run(exec_command('echo portable'))
+    assert result.stdout == 'portable\n'
+    assert result.exit_code == 0
 
 
 def test_exec_runs_echo_hi():
@@ -168,6 +184,124 @@ def test_exec_can_be_cancelled():
 
     with pytest.raises(ExecCancelled):
         asyncio.run(scenario())
+
+
+def test_timeout_when_leader_closes_pipe_still_kills_and_reaps(tmp_path):
+    marker = tmp_path / 'survived'
+
+    async def scenario():
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                exec_command(f'exec 1>&- 2>&-; sleep 1; touch {marker}', timeout=0.1),
+                2,
+            )
+
+    asyncio.run(scenario())
+    assert not marker.exists()
+
+
+def test_event_cancellation_allows_shell_term_trap(tmp_path):
+    ready = tmp_path / 'ready'
+    handled = tmp_path / 'handled-term'
+
+    async def scenario():
+        cancel = asyncio.Event()
+        command = (
+            f"trap 'printf handled > {handled}; exit 0' TERM; "
+            f"touch {ready}; while :; do sleep 0.05; done"
+        )
+        task = asyncio.create_task(exec_command(command, cancel=cancel))
+        try:
+            while not ready.exists():
+                await asyncio.sleep(0.01)
+            cancel.set()
+            with pytest.raises(ExecCancelled):
+                await asyncio.wait_for(task, 2)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(scenario(), 3))
+    assert handled.read_text() == 'handled'
+
+
+def test_event_cancellation_escalates_after_grace(tmp_path):
+    ready = tmp_path / 'ready'
+
+    async def scenario():
+        cancel = asyncio.Event()
+        task = asyncio.create_task(exec_command(
+            f"trap '' TERM; touch {ready}; while :; do sleep 0.05; done",
+            cancel=cancel,
+        ))
+        try:
+            while not ready.exists():
+                await asyncio.sleep(0.01)
+            started = asyncio.get_running_loop().time()
+            cancel.set()
+            with pytest.raises(ExecCancelled):
+                await asyncio.wait_for(task, 2)
+            return asyncio.get_running_loop().time() - started
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    elapsed = asyncio.run(asyncio.wait_for(scenario(), 3))
+    assert 0.9 <= elapsed < 1.8
+
+
+def test_cancellation_kills_detached_pipe_background_group_member(tmp_path, monkeypatch):
+    """TERM may close the pipe before a TERM-ignoring group member exits."""
+    import seed_backend.shell as shell
+
+    def unsupported_waitid(*args):
+        raise OSError(errno.ENOSYS, 'waitid unavailable under PRoot')
+
+    monkeypatch.setattr(shell.os, 'waitid', unsupported_waitid, raising=False)
+    ready = tmp_path / 'child-ready'
+    child = (
+        "import os,signal,time; "
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+        "os.close(1); os.close(2); "
+        f"open({str(ready)!r},'w').write(str(os.getpid())); "
+        "time.sleep(60)"
+    )
+    import shlex
+    command = (
+        f"{shlex.quote(sys.executable)} -c {shlex.quote(child)} & "
+        "trap 'exit 0' TERM; while :; do sleep 0.05; done"
+    )
+    async def scenario():
+        cancel = asyncio.Event()
+        task = asyncio.create_task(exec_command(command, cancel=cancel))
+        try:
+            while not ready.exists():
+                await asyncio.sleep(0.01)
+            cancel.set()
+            with pytest.raises(ExecCancelled):
+                await asyncio.wait_for(task, 2.5)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    try:
+        asyncio.run(asyncio.wait_for(scenario(), 3))
+        pid = int(ready.read_text())
+        # Orphaned children can briefly be zombies until init reaps them.
+        status = Path(f'/proc/{pid}/stat')
+        assert not status.exists() or status.read_text().split(') ')[1][0] == 'Z'
+    finally:
+        if ready.exists():
+            pid = int(ready.read_text())
+            command_line = Path(f'/proc/{pid}/cmdline')
+            if command_line.exists() and str(ready).encode() in command_line.read_bytes():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def test_exec_truncates_huge_output():
@@ -324,6 +458,47 @@ def test_pre_cancelled_command_never_launches(tmp_path):
 
     assert asyncio.run(scenario()).stdout == f'{tmp_path}\n'
     assert not marker.exists()
+
+
+def test_cancellation_before_pid_publication_delivers_term(tmp_path, monkeypatch):
+    import threading
+    import seed_backend.shell as shell
+
+    real_popen = shell.subprocess.Popen
+    release_pid = threading.Event()
+    ready = tmp_path / 'ready'
+    handled = tmp_path / 'handled-term'
+
+    def delayed_popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        release_pid.wait(2)  # child starts, but PID is not yet published
+        return proc
+
+    monkeypatch.setattr(shell.subprocess, 'Popen', delayed_popen)
+
+    async def scenario():
+        cancel = asyncio.Event()
+        command = (
+            f"trap 'printf handled > {handled}; exit 0' TERM; "
+            f"touch {ready}; while :; do sleep 0.05; done"
+        )
+        task = asyncio.create_task(exec_command(command, cancel=cancel))
+        try:
+            while not ready.exists():
+                await asyncio.sleep(0.01)
+            cancel.set()
+            await asyncio.sleep(0)  # let the cancellation watcher run first
+            release_pid.set()
+            with pytest.raises(ExecCancelled):
+                await asyncio.wait_for(task, 2)
+        finally:
+            release_pid.set()
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(scenario(), 3))
+    assert handled.read_text() == 'handled'
 
 
 def test_cancellation_during_delayed_pid_publication_kills_child(tmp_path, monkeypatch):

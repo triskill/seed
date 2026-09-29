@@ -113,6 +113,53 @@ async def test_start_rejects_unready_pi_runner_and_rolls_back_both(unready_role)
 
 
 @async_test
+@pytest.mark.parametrize('unresponsive_role', ['middleman', 'worker'])
+async def test_live_child_without_get_state_response_rolls_back_both(monkeypatch, unresponsive_role):
+    monkeypatch.setattr(Orchestrator, '_STARTUP_RPC_TIMEOUT', 0.15, raising=False)
+    fixtures = Path(__file__).parent / 'fixtures'
+    responsive = [sys.executable, str(fixtures / 'fake_pi_rpc.py')]
+    unresponsive = [sys.executable, str(fixtures / 'fake_pi_unresponsive.py')]
+    middleman = PiRunner(unresponsive if unresponsive_role == 'middleman' else responsive, role='middleman')
+    worker = PiRunner(unresponsive if unresponsive_role == 'worker' else responsive, role='worker')
+    orch = Orchestrator(middleman, worker)
+    events = orch.subscribe()
+    with pytest.raises(RuntimeError, match='get_state startup probe timed out'):
+        await asyncio.wait_for(orch.start(), 3)
+    assert not orch.ready
+    assert middleman.pid is worker.pid is None
+    assert middleman._executor_shutdown and worker._executor_shutdown
+    assert orch._read_middleman_task is orch._read_worker_task is None
+    assert [events.get_nowait()['status'] for _ in range(events.qsize())][-2:] == ['unavailable', 'unavailable']
+
+
+@async_test
+async def test_responsive_real_runners_answer_get_state_before_ready():
+    cmd = [sys.executable, str(Path(__file__).parent / 'fixtures' / 'fake_pi_rpc.py')]
+    middleman, worker = PiRunner(cmd, role='middleman'), PiRunner(cmd, role='worker')
+    orch = Orchestrator(middleman, worker)
+    try:
+        await asyncio.wait_for(orch.start(), 3)
+        assert orch.ready
+    finally:
+        await orch.stop()
+
+
+@async_test
+@pytest.mark.parametrize('invalid_field', ['command', 'success', 'id'])
+async def test_invalid_get_state_response_is_not_ready(monkeypatch, invalid_field):
+    monkeypatch.setattr(Orchestrator, '_STARTUP_RPC_TIMEOUT', 0.15)
+    fixtures = Path(__file__).parent / 'fixtures'
+    invalid = [sys.executable, str(fixtures / 'fake_pi_invalid_state.py'), invalid_field]
+    responsive = [sys.executable, str(fixtures / 'fake_pi_rpc.py')]
+    middleman, worker = PiRunner(invalid, role='middleman'), PiRunner(responsive, role='worker')
+    orch = Orchestrator(middleman, worker)
+    with pytest.raises(RuntimeError, match='get_state'):
+        await asyncio.wait_for(orch.start(), 3)
+    assert not orch.ready
+    assert middleman.pid is worker.pid is None
+
+
+@async_test
 async def test_failed_real_worker_start_requires_fresh_pi_runners():
     cmd = [sys.executable, str(Path(__file__).parent / 'fixtures' / 'fake_pi.py')]
     middleman = PiRunner(cmd, role='middleman')

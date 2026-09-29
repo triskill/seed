@@ -326,6 +326,8 @@ class Orchestrator:
     # would rather see a gap than freeze. 256 is a comfortable
     # headroom for the 3-5 events a typical turn emits.
     _SUBSCRIBER_QUEUE_MAXSIZE: int = 256
+    # Includes request write and response wait; allow slow Android startup.
+    _STARTUP_RPC_TIMEOUT: float = 15.0
 
     def __init__(self, middleman: PiRunner, worker: PiRunner, task_store: TaskStore | None = None) -> None:
         self.generation_id = uuid.uuid4().hex
@@ -397,6 +399,21 @@ class Orchestrator:
             await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'starting'})
             await self.middleman.start()
             await self.worker.start()
+            for runner in (self.middleman, self.worker):
+                if isinstance(runner, PiRunner):
+                    if not runner.ready:
+                        raise RuntimeError('agent runner not ready after startup')
+                    try:
+                        response = await asyncio.wait_for(
+                            runner.rpc_request({'type': 'get_state'}, timeout=self._STARTUP_RPC_TIMEOUT),
+                            timeout=self._STARTUP_RPC_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError as exc:
+                        raise RuntimeError(f'{runner.role} get_state startup probe timed out') from exc
+                    if (response.get('type') != 'response'
+                            or response.get('command') != 'get_state'
+                            or response.get('success') is not True):
+                        raise RuntimeError(f'{runner.role} get_state startup probe failed')
             if not all(
                 runner.ready if isinstance(runner, PiRunner) else getattr(runner, 'pid', True) is not None
                 for runner in (self.middleman, self.worker)

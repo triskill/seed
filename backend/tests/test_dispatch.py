@@ -97,8 +97,9 @@ def test_dispatch_json_triggers_worker(dispatch_client):
         ws.send_text(
             json.dumps({"type": "user_message", "text": "i want a habit tracker"})
         )
-
-    assert _wait_for_file(w_log), f"worker log not written: {w_log}"
+        # Keep the socket alive while the asynchronous dispatch reaches the
+        # worker. Closing immediately can cancel the forwarding path first.
+        assert _wait_for_file(w_log), f"worker log not written: {w_log}"
     raw = w_log.read_text().strip()
     # The fake_pi_log fixture writes the literal line it read
     # from stdin, which is the JSON the orchestrator sent. So

@@ -24,13 +24,15 @@ sealed class HealthState {
  * starting, so that response is retried just like a failed request. Each request has a
  * 2-second timeout, exceeding FlaskManager's 1.5-second `/api/ping` deadline to allow
  * for FastAPI overhead. Unsuccessful probes retry no sooner than [intervalMs] (500 ms
- * by default) after the previous probe started; slow requests do not overlap. The
- * [maxAttempts] budget is unchanged. The flow is cold, so each collector starts fresh.
+ * by default) after the previous probe started; slow requests do not overlap.
+ * The default [maxAttempts] budget is 240 probes (about 120 seconds at the
+ * default cadence for fast failures), leaving room for Flask startup and
+ * sequential Pi readiness probes. The flow is cold, so each collector starts fresh.
  */
 class HealthMonitor(
     private val api: BackendApi,
     private val intervalMs: Long = 500,
-    private val maxAttempts: Int = 60,
+    private val maxAttempts: Int = 240,
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
     fun states(): Flow<HealthState> = flow {

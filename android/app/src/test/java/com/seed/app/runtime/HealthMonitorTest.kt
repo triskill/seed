@@ -34,7 +34,7 @@ class HealthMonitorTest {
             ),
         )
 
-        val states = HealthMonitor(api, intervalMs = 500, maxAttempts = 60)
+        val states = HealthMonitor(api, intervalMs = 500)
             .states()
             .toList()
 
@@ -47,6 +47,30 @@ class HealthMonitorTest {
             states,
         )
         assertEquals(1, api.healthCalls)
+    }
+
+    @Test
+    fun defaultBudgetAllowsLateReadinessAfterSixtyAttempts() = runTest {
+        val api = object : StubBackendApi() {
+            var calls = 0
+
+            override suspend fun health(): HealthResponse {
+                calls += 1
+                return HealthResponse(
+                    status = "ok",
+                    flask = if (calls == 151) "up" else "down",
+                )
+            }
+        }
+
+        val states = HealthMonitor(api, nowMs = { testScheduler.currentTime })
+            .states()
+            .toList()
+
+        assertEquals(151, api.calls)
+        assertEquals(HealthState.Polling(attempt = 151), states[151])
+        assertEquals(HealthState.Healthy(flask = "up"), states.last())
+        assertEquals(75_000, testScheduler.currentTime)
     }
 
     @Test

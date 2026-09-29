@@ -121,21 +121,25 @@ async def _exec_command_impl(
     # Shared with the executor thread for process-group cleanup.
     if cancel is not None and cancel.is_set():
         raise ExecCancelled()
-    state: dict = {"pid": None}
+    state: dict = {"pid": None, "stop_signal": None}
     state_lock = threading.Lock()
+    state_changed = threading.Condition(state_lock)
     stopped = threading.Event()
 
-    def stop_child() -> None:
-        # Never hold the lock during Popen or a blocking read/wait. A launch
-        # racing this request is killed immediately when its PID is published.
-        with state_lock:
+    def stop_child(sig: signal.Signals = signal.SIGKILL) -> None:
+        # Serialize signaling with reaping: the unreaped leader pins its
+        # PGID, and a stale numeric PID must never target an unrelated group.
+        # A launch racing cancellation receives the recorded signal on publish.
+        with state_changed:
             stopped.set()
-            pid = state["pid"]
-        if pid is not None:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+            if state["stop_signal"] != signal.SIGKILL:
+                state["stop_signal"] = sig
+            if state["pid"] is not None:
+                try:
+                    os.killpg(state["pid"], state["stop_signal"])
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            state_changed.notify_all()
 
     def _run_pty() -> tuple[bytes, int, bool]:
         # Fall back to subprocess.Popen (no PTY) because the
@@ -168,9 +172,10 @@ async def _exec_command_impl(
         )
         with state_lock:
             state["pid"] = proc.pid
+            stop_signal = state["stop_signal"]
             must_stop = stopped.is_set() or (cancel is not None and cancel.is_set())
         if must_stop:
-            stop_child()
+            stop_child(stop_signal or signal.SIGTERM)
         # Drain stdout in a read loop, applying the same
         # truncation policy as the PTY impl above. Note: no
         # master fd to close — we use proc.stdout.read instead
@@ -199,9 +204,22 @@ async def _exec_command_impl(
                 proc.stdout.close()
             except OSError:
                 pass
-        exit_code = proc.wait()
-        with state_lock:
-            state["pid"] = None
+        # EOF need not imply leader exit (the shell may close its pipe).
+        # Never block in wait() while holding the signaling lock. Poll with
+        # WNOHANG under the lock so reaping and killpg cannot race; after
+        # TERM, retain the unreaped leader/PGID until KILL reaches survivors.
+        with state_changed:
+            while True:
+                if state["stop_signal"] == signal.SIGTERM:
+                    state_changed.wait()
+                    continue
+                try:
+                    exit_code = proc.wait(timeout=0)
+                except subprocess.TimeoutExpired:
+                    state_changed.wait(timeout=0.05)
+                else:
+                    state["pid"] = None
+                    break
         return b"".join(chunks), exit_code, truncated
 
     exec_future = loop.run_in_executor(None, _run_pty)
@@ -234,9 +252,7 @@ async def _exec_command_impl(
             )
             # Cancel the loser of the race. If the cancel_task
             # lost, the executor's waitpid has already reaped the
-            # child; if the executor lost, the cancel_task's
-            # SIGTERM-and-close is already in flight and we'll
-            # let the rest of the cleanup happen here.
+            # child; otherwise the cancellation branch handles cleanup.
             if cancel_task in pending:
                 cancel_task.cancel()
             if cancel_task in done:
@@ -245,7 +261,11 @@ async def _exec_command_impl(
                 try:
                     await cancel_task
                 except ExecCancelled:
-                    stop_child()
+                    stop_child(signal.SIGTERM)
+                    # The pipe/leader can exit before the grace ends even
+                    # though TERM-ignoring group members are still alive.
+                    await asyncio.sleep(1.0)
+                    stop_child(signal.SIGKILL)
                     try:
                         await asyncio.shield(exec_future)
                     except ExecCancelled:
