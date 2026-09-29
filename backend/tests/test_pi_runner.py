@@ -18,7 +18,9 @@ without an LLM or a real pi install.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -48,6 +50,182 @@ async def _drive_to_done(runner: PiRunner) -> list[str]:
             if line == "done":
                 break
     return lines
+
+
+def test_cancelled_start_during_popen_reaps_spawned_child(monkeypatch):
+    """Cancellation before the executor returns must not lose ownership of its child."""
+    import seed_backend.pi_runner as pi_runner_module
+
+    spawned = threading.Event()
+    release = threading.Event()
+    children = []
+    real_popen = subprocess.Popen
+
+    def delayed_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        children.append(process)
+        spawned.set()
+        if not release.wait(5):
+            raise AssertionError('test did not release Popen')
+        return process
+
+    monkeypatch.setattr(pi_runner_module.subprocess, 'Popen', delayed_popen)
+
+    async def scenario():
+        runner = PiRunner(cmd=fake_pi_cmd(), role='worker')
+        startup = asyncio.create_task(runner.start())
+        try:
+            assert await asyncio.to_thread(spawned.wait, 5)
+            startup.cancel()
+            await asyncio.sleep(0)
+            assert not startup.done()  # cancellation waits for ownership of Popen
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(startup, 5)
+            await asyncio.wait_for(runner.stop(), 5)
+            assert runner.pid is None
+            assert children[0].returncode is not None  # Popen.wait() reaped it
+        finally:
+            release.set()
+            if not startup.done():
+                startup.cancel()
+            for process in children:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+
+    asyncio.run(scenario())
+
+
+def test_stop_during_pending_spawn_reaps_child(monkeypatch):
+    """Stop must retain ownership of a Popen still running in the executor."""
+    import seed_backend.pi_runner as pi_runner_module
+
+    entered = threading.Event()
+    release = threading.Event()
+    children = []
+    real_popen = subprocess.Popen
+
+    def delayed_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        children.append(process)
+        entered.set()
+        assert release.wait(5), "test did not release Popen"
+        return process
+
+    monkeypatch.setattr(pi_runner_module.subprocess, "Popen", delayed_popen)
+
+    async def scenario():
+        runner = PiRunner(cmd=fake_pi_cmd(), role="worker")
+        startup = asyncio.create_task(runner.start())
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            shutdown = asyncio.create_task(runner.stop())
+            # The marker is queued after stop's initial task step.
+            marker = asyncio.Event()
+            asyncio.get_running_loop().call_soon(marker.set)
+            await asyncio.wait_for(marker.wait(), 5)
+            assert not shutdown.done()  # cleanup must wait for the pending spawn
+            release.set()
+            await asyncio.wait_for(shutdown, 5)
+            with pytest.raises(PiRunnerNotRunning):
+                await asyncio.wait_for(startup, 5)
+            assert runner.pid is None
+            assert children[0].returncode is not None
+        finally:
+            release.set()
+            if not startup.done():
+                startup.cancel()
+            for process in children:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+
+    asyncio.run(scenario())
+
+
+def test_repeated_cancellation_during_pending_spawn_reaps_child(monkeypatch):
+    """A second cancellation cannot interrupt the one owner awaiting Popen."""
+    import seed_backend.pi_runner as pi_runner_module
+
+    entered = threading.Event()
+    release = threading.Event()
+    children = []
+    real_popen = subprocess.Popen
+
+    def delayed_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        children.append(process)
+        entered.set()
+        assert release.wait(5), "test did not release Popen"
+        return process
+
+    monkeypatch.setattr(pi_runner_module.subprocess, "Popen", delayed_popen)
+
+    async def scenario():
+        runner = PiRunner(cmd=fake_pi_cmd(), role="worker")
+        startup = asyncio.create_task(runner.start())
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            startup.cancel()
+            # The marker is queued after cancellation's task wakeup.
+            marker = asyncio.Event()
+            asyncio.get_running_loop().call_soon(marker.set)
+            await asyncio.wait_for(marker.wait(), 5)
+            startup.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(startup, 5)
+            await asyncio.wait_for(runner.stop(), 5)
+            assert children[0].returncode is not None
+            assert runner.pid is None
+        finally:
+            release.set()
+            if not startup.done():
+                startup.cancel()
+            for process in children:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_stop_mid_reap_still_finishes_cleanup():
+    """A cancelled stop must not discard the process before it is reaped."""
+    async def scenario():
+        runner = PiRunner(cmd=fake_pi_cmd(), role="worker")
+        await runner.start()
+        process = runner._process
+        assert process is not None
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_wait = runner._wait
+
+        async def gated_wait(child, timeout=None):
+            entered.set()
+            await release.wait()
+            return await original_wait(child, timeout)
+
+        runner._wait = gated_wait
+        first = asyncio.create_task(runner.stop())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            second = asyncio.create_task(runner.stop())
+            release.set()
+            await asyncio.wait_for(second, 5)
+            assert process.returncode is not None
+            assert runner._executor_shutdown
+        finally:
+            release.set()
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+
+    asyncio.run(scenario())
 
 
 def test_runner_spawns_process_and_reads_stdout():

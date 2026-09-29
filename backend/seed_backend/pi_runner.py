@@ -139,12 +139,28 @@ class PiRunner:
             thread_name_prefix=f"pi-runner-{role}",
         )
         self._executor_shutdown = False
+        self._spawn_future: asyncio.Future[subprocess.Popen[bytes]] | None = None
+        self._stop_task: asyncio.Task[None] | None = None
+
+    @property
+    def ready(self) -> bool:
+        """Whether the current live generation has completed its preload."""
+        process = self._process
+        return (
+            not self._stopping
+            and process is not None
+            and self.pid is not None
+            and process.poll() is None
+            and self._ready_event.is_set()
+            and self._ready_process is process
+            and self._ready_error is None
+        )
 
     async def start(self) -> None:
         """Start the child with pipes. Calling twice while active is a no-op."""
-        if self.pid is not None:
+        if self.pid is not None and not self._stopping:
             return
-        if self._executor_shutdown:
+        if self._stopping or self._executor_shutdown:
             raise RuntimeError("PiRunner cannot be restarted after stop()")
         self._stopping = False
         await self._spawn()
@@ -175,7 +191,18 @@ class PiRunner:
                 close_fds=True,
             )
 
-        process = await self._executor_submit(_popen)
+        # The spawn future belongs to the runner, not the caller awaiting it.
+        # stop() must be able to collect a child even if start() is cancelled.
+        loop = asyncio.get_running_loop()
+        spawn = loop.run_in_executor(self._executor, _popen)
+        self._spawn_future = spawn
+        try:
+            process = await asyncio.shield(spawn)
+        except asyncio.CancelledError:
+            await self.stop()
+            raise
+        if self._stopping:
+            raise PiRunnerNotRunning("PiRunner stopped during spawn")
         if process.stdin is None or process.stdout is None:
             process.kill()
             process.wait()
@@ -481,21 +508,26 @@ class PiRunner:
         return await self._executor_submit(process.wait, timeout)
 
     async def stop(self) -> None:
-        """Terminate the process group, reap the leader, and close all pipes."""
-        if self._executor_shutdown:
-            return
-        if self._process is None and self._reader_task is None:
-            # This also covers a Popen failure: executor work may have started
-            # even though no process object was installed, so always close the
-            # runner-owned pool when stop() is explicitly requested.
+        """Join one cancellation-safe cleanup of the child and executor."""
+        if self._stop_task is None:
             self._stopping = True
-            self._executor.shutdown(wait=True)
-            self._executor_shutdown = True
-            return
+            self._stop_task = asyncio.create_task(self._stop_impl())
+        await asyncio.shield(self._stop_task)
 
-        self._stopping = True
+    async def _stop_impl(self) -> None:
+        """Own cleanup even when the caller of stop() is cancelled."""
         self._fail_rpc_pending(PiRunnerNotRunning("PiRunner stopped"))
+        spawn = self._spawn_future
         process = self._process
+        if spawn is not None:
+            try:
+                spawned = await asyncio.shield(spawn)
+                if process is None:
+                    process = spawned
+            except Exception:
+                # start() reports the launch error; no child was returned.
+                pass
+            self._spawn_future = None
         self._process = None
         self.pid = None
 
@@ -534,7 +566,8 @@ class PiRunner:
                 pass
             self._close_stream(process.stdout)
 
-        self._executor.shutdown(wait=True)
+        # Do not block the event loop on a worker still inside a pipe syscall.
+        self._executor.shutdown(wait=False, cancel_futures=True)
         self._executor_shutdown = True
 
     def _signal_process_group(

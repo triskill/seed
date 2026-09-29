@@ -379,62 +379,63 @@ class Orchestrator:
 
     @property
     def ready(self) -> bool:
-        """Both started runners must still have live processes."""
+        """Both runners must be available for requests, including after restarts."""
         return self._ready and all(
-            runner.pid is not None and (
-                not isinstance(runner, PiRunner)
-                or (runner._process is not None and runner._process.poll() is None)
-            ) for runner in (self.middleman, self.worker)
+            runner.ready if isinstance(runner, PiRunner) else getattr(runner, 'pid', True) is not None
+            for runner in (self.middleman, self.worker)
         )
 
     async def start(self) -> None:
-        """Spawn both `pi` processes. No-op if already started.
+        """Start and preload both agents, broadcast health, and start read loops.
 
-        Each `PiRunner.start()` launches a pipe-backed `Popen` child, so
-        this call returns once both executables have started. Exec failures
-        are raised synchronously and the service lifespan records them while
-        leaving the non-agent routes available.
-
-        Also starts the background read loops (Task 3.3 +
-        3.5). The loops shovel middle-man and worker output
-        into the subscriber queues. Idempotent: a second
-        call to start() is a no-op (the PiRunners are
-        themselves idempotent, and the read tasks are only
-        created if `self._read_*_task` is None).
+        On failure, stop both runners and cancel any read loops already created.
+        Stopped PiRunners cannot be restarted; retries require a new orchestrator
+        with fresh runners.
         """
-        await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'starting'})
-        await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'starting'})
         try:
+            await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'starting'})
+            await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'starting'})
             await self.middleman.start()
             await self.worker.start()
-        except Exception:
+            if not all(
+                runner.ready if isinstance(runner, PiRunner) else getattr(runner, 'pid', True) is not None
+                for runner in (self.middleman, self.worker)
+            ):
+                raise RuntimeError('agent runner not ready after startup')
+            await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'ready'})
+            await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'ready'})
+            if self._read_middleman_task is None:
+                self._read_middleman_task = asyncio.create_task(
+                    self._read_middleman_loop(), name="orchestrator-read-middleman",
+                )
+            if self._read_worker_task is None:
+                self._read_worker_task = asyncio.create_task(
+                    self._read_worker_loop(), name="orchestrator-read-worker",
+                )
+            self._middleman_unavailable = False
+            self._ready = True
+        except (asyncio.CancelledError, Exception):
             self._ready = False
             self._middleman_unavailable = True
+            for task in (self._read_middleman_task, self._read_worker_task):
+                if task is not None and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            self._read_middleman_task = self._read_worker_task = None
             for runner in (self.middleman, self.worker):
                 try:
                     await runner.stop()
-                except Exception:
+                except (asyncio.CancelledError, Exception):
                     log.exception('agent startup rollback failed')
-            await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'unavailable'})
-            await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'unavailable'})
+            for role in ('middleman', 'worker'):
+                try:
+                    await self._broadcast({'type': 'role_health', 'role': role, 'status': 'unavailable'})
+                except (asyncio.CancelledError, Exception):
+                    log.exception('agent startup health broadcast failed')
             raise
-        self._middleman_unavailable = False
-        self._ready = True
-        await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'ready'})
-        await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'ready'})
-        if self._read_middleman_task is None:
-            self._read_middleman_task = asyncio.create_task(
-                self._read_middleman_loop(),
-                name="orchestrator-read-middleman",
-            )
-        if self._read_worker_task is None:
-            # Task 3.5 will replace this no-op with the real
-            # worker read loop. For 3.3 we only need the
-            # middle-man stream.
-            self._read_worker_task = asyncio.create_task(
-                self._read_worker_loop(),
-                name="orchestrator-read-worker",
-            )
 
     async def stop(self) -> None:
         """Stop both runners. Idempotent; safe to call on a
