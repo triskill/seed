@@ -333,9 +333,9 @@ roughly by release risk rather than by the historical phase numbering.
    The Termux artifacts used by Seed are publicly downloadable from JitPack.
    Anonymous HTTP downloads and a Gradle dependency refresh both succeeded, so
    the token and all JitPack credential-loading code were removed rather than
-   replaced with local/CI secret handling. The exposed token must still be
-   revoked, and repository-history cleanup and automated secret scanning remain
-   follow-up security work.
+   replaced with local/CI secret handling. The credential owner reports the exposed token was revoked and is no longer
+   valid (2026-09-29). Repository-history cleanup and automated secret scanning
+   remain follow-up security work.
 2. **Restore a trustworthy verification baseline.** Fix
    `NativeProotSmokeTest` to use `ProotEnvironment.createBackend` (or the correct
    test-specific environment) so `assembleDebugAndroidTest` compiles, then run
@@ -521,8 +521,9 @@ Android tooling only; Python dependencies come from
   not been implemented.
 - **A dependency-repository credential was historically committed.** JitPack
   authentication is unnecessary and has been removed from the current tree,
-  but the exposed token remains in Git history and must be revoked. Decide
-  whether to rewrite repository history and add automated secret scanning.
+  and the credential owner reports the exposed token was revoked (2026-09-29).
+  Its historical appearance remains; decide whether to rewrite repository
+  history and add automated secret scanning.
 - **Repository state:** `main` is synchronized with `origin/main` at `e2abf98`.
   The staged Qwen suggestion file is the only pre-existing working-tree change;
   it is input to this audit, not implemented work.
