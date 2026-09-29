@@ -341,10 +341,10 @@ roughly by release risk rather than by the historical phase numbering.
    test-specific environment) so `assembleDebugAndroidTest` compiles, then run
    all 6 connected methods on matching targets. Investigate the intermittent
    process-group-cleanup and Flask-readiness failures seen on the first combined
-   Python run; remove `test_service.py`'s machine-specific checkout path,
-   global-default monkeypatch, and fixed-port coupling. Add a top-level `verify`
-   target, CI, and Python lint/type/static checks (`make test` currently means
-   only the Python suites).
+   Python run. `test_service.py`'s machine-specific checkout path, global-default
+   monkeypatch and fixed-port coupling have been removed; `make verify`, CI and
+   incremental Python lint/type checks were added (see `docs/verification.md`).
+   Expand static coverage and run the still-unaccepted connected suite.
 3. **Android-compatible `PiRunner` — completed 2026-08-14.** The direct-argv
    `subprocess.Popen`/pipe implementation is accepted on x86_64, including two
    live pi RPC processes and an error round-trip. A successful provider-backed
@@ -487,15 +487,19 @@ Android tooling only; Python dependencies come from
   is not a fully persistent shell. It has no focused tests or recorded device
   run. The legacy HTTP endpoint remains available; its library can cancel, but
   the protocol cannot, and merged process pipes leave `stderr` empty.
-- **`ShellSession` cwd tracking is heuristic and process-global.** Only a
-  leading `cd <path>` is recognized, concurrent callers share the same cwd,
-  and every command still runs in a fresh shell.
+- **Legacy HTTP `ShellSession` is process-global.** Complete shell expressions
+  now run through `sh -c`, preserving final cwd/OLDPWD through private reporting
+  files; calls are serialized. Every call still uses a fresh shell, so other
+  shell state is not persistent, and callers still share one session.
 - **Chat and agent sessions are process-global.** Clients share the two agent
   conversations and receive one another's events; queues may drop old events,
   offline sends can be lost, and there is no replay/history persistence.
-- **Verification automation is incomplete and currently blocked on QEMU Pi.**
-  There is no CI or Python lint/type-check configuration. JVM tests pass 190/190,
-  and the 2-class / 6-method instrumentation APK compiles. On the ARM64 Moto G32,
+- **Verification is still incomplete at the connected-device boundary.**
+  GitHub Actions now runs Python suites, scoped static checks, Android JVM tests,
+  debug lint and a tracked-HEAD secret scan; `make verify` runs the same code
+  checks locally. On 2026-09-29, `make verify` passed (264 Python tests plus
+  Android JVM/lint); the static checks passed. This is not device acceptance.
+  The 2-class / 6-method instrumentation APK compiles. On the ARM64 Moto G32,
   the QEMU smoke test confirms extraction and guest Python, then Pi's real RPC
   path does not emit its expected JSONL response before the 20-second smoke
   timeout; subsequent Compose methods can report `No compose hierarchies found`.
