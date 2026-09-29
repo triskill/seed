@@ -363,6 +363,7 @@ class Orchestrator:
         self._worker_retry_pending = False
         self._worker_blocked = False
         self._middleman_unavailable = False
+        self._ready = False
         # Each chat WS client subscribes by calling subscribe();
         # the orchestrator hands them a private queue and tracks
         # it in this set for broadcast. The set itself is mutated
@@ -375,6 +376,16 @@ class Orchestrator:
         # in stop().
         self._read_middleman_task: asyncio.Task | None = None
         self._read_worker_task: asyncio.Task | None = None
+
+    @property
+    def ready(self) -> bool:
+        """Both started runners must still have live processes."""
+        return self._ready and all(
+            runner.pid is not None and (
+                not isinstance(runner, PiRunner)
+                or (runner._process is not None and runner._process.poll() is None)
+            ) for runner in (self.middleman, self.worker)
+        )
 
     async def start(self) -> None:
         """Spawn both `pi` processes. No-op if already started.
@@ -397,10 +408,18 @@ class Orchestrator:
             await self.middleman.start()
             await self.worker.start()
         except Exception:
+            self._ready = False
+            self._middleman_unavailable = True
+            for runner in (self.middleman, self.worker):
+                try:
+                    await runner.stop()
+                except Exception:
+                    log.exception('agent startup rollback failed')
             await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'unavailable'})
             await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'unavailable'})
             raise
         self._middleman_unavailable = False
+        self._ready = True
         await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'ready'})
         await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'ready'})
         if self._read_middleman_task is None:
@@ -429,6 +448,7 @@ class Orchestrator:
         so the queues drain to subscribers before the WS
         handlers see the connection close.
         """
+        self._ready = False
         for task in (self._read_middleman_task, self._read_worker_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -855,6 +875,7 @@ class Orchestrator:
         except Exception as exc:
             log.exception("middleman read loop crashed: %r", exc)
         self._middleman_unavailable = True
+        self._ready = False
         await self._emit_outcome('backend')
         await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'unavailable'})
         await self._broadcast({'type': 'error', 'message': 'Middleman unavailable'})
@@ -986,6 +1007,7 @@ class Orchestrator:
             raise
         except Exception as exc:
             log.exception("worker read loop crashed: %r", exc)
+        self._ready = False
         await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'unavailable'})
         if self._active:
             await self._status("cancelled" if self._cancel_requested else "failed", None if self._cancel_requested else "Worker exited")
