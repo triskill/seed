@@ -10,7 +10,7 @@
 
 **Validated findings (2026-09-29):** `backend/seed_backend/service.py` stores orchestrator before startup, swallows failures, `/health` checks only process liveness, and `/chat` checks only non-null. `backend/seed_backend/orchestrator.py` starts middleman then worker without rollback. `backend/seed_backend/shell.py` parses leading `cd` with a regex and shares mutable cwd through one app-wide session. `backend/seed_backend/flask_manager.py` probes ping only during startup. TODO.md documents the historic token exposure and verification gaps; the credential owner reported revocation on 2026-09-29. Contrary to the report, tracked `.pi/agent/.gitignore` already ignores `auth.json`; confirm via `git check-ignore -v .pi/agent/auth.json` and do not treat this as a missing protection. `backend/pyproject.toml` duplicates uvicorn and uses a TBD license; Android release disables minification. Existing `backend/tests/test_service_lifecycle.py::test_lifespan_survives_missing_pi_command` deliberately asserts the old behavior and must be rewritten.
 
-**Decisions:** Agent failure is fatal to startup; `/health` remains readiness for the existing Android `HealthMonitor` (which requires an HTTP response with `flask == "up"`). Do not introduce a separate liveness URL unless an actual consumer needs it. Do not rewrite Git history or assign a license without owner approval. No worktree: implement on branch `fix/runtime-readiness-and-verification`.
+**Decisions:** Agent failure is fatal to startup; `/health` remains readiness for the existing Android `HealthMonitor` (which requires an HTTP response with `flask == "up"`). Do not introduce a separate liveness URL unless an actual consumer needs it. Owner decided on 2026-09-29 to leave the revoked token in Git history; do not rewrite history. Do not assign a license without owner approval. No worktree: implement on branch `fix/runtime-readiness-and-verification`.
 
 ---
 
@@ -19,7 +19,7 @@
 **Status:** Credential owner reports the historically committed token revoked and no longer valid (2026-09-29). This is owner-reported, not independently tested here.
 
 1. Never print the token or add it to tests/logs; confirm any dependent integrations use no revoked credential.
-2. Decide with repository owners whether history rewrite is worth disrupting clones/forks; revocation is the primary protection. Automated secret scanning remains in Task 6.
+2. Owner decision (2026-09-29): leave the revoked token in Git history; do not force-push or rewrite commits. Automated secret scanning remains in Task 6.
 
 ### Task 2: Transactional Pi startup and teardown
 
