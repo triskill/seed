@@ -71,6 +71,17 @@ class BackendApiTest {
         server.shutdown()
     }
 
+    @Test
+    fun `updateModels posts protected operation without body and parses success`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"updated":true}"""))
+        assertTrue(api.updateModels("Bearer test-capability").updated)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/control/v1/models/update", request.path)
+        assertEquals("Bearer test-capability", request.getHeader("Authorization"))
+        assertEquals(0L, request.bodySize)
+    }
+
     // ---- /health ------------------------------------------------
 
     @Test

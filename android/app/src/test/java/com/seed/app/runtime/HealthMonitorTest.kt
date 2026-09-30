@@ -318,6 +318,7 @@ private abstract class StubBackendApi : BackendApi {
 
     override suspend fun shellExec(request: ShellExecRequest, authorization: String): ShellExecResponse =
         error("Not used by HealthMonitor")
+    override suspend fun updateModels(authorization: String): com.seed.app.data.ModelsUpdateResponse = error("Not used")
     override suspend fun models(provider: String, authorization: String): ModelsResponse = error("Not used")
     override suspend fun config(authorization: String): com.seed.app.data.PiConfigResponse = error("Not used")
     override suspend fun addProvider(request: ProviderModelsRequest, authorization: String): com.seed.app.data.PiConfigResponse = error("Not used")

@@ -11,6 +11,21 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 assert_contains() { grep -Fq -- "$2" "$1" || fail "$3: missing '$2'"; }
 
+# Inspect and execute the image's full Node-version gate without building it.
+python3 - "$REPO_ROOT/scripts/build-runtime.sh" <<'PY'
+from pathlib import Path
+import re
+import subprocess
+import sys
+script = Path(sys.argv[1]).read_text()
+assert 'npm install -g @earendil-works/pi-coding-agent@0.84.2' in script, 'Pi pin must be 0.84.2'
+assert 'pi update --help' in script and '--models' in script, 'model-update help gate missing'
+gate = re.search(r"RUN node -e '([^']+)'", script).group(1)
+for version, accepted in [('22.18.9', False), ('22.19.0', True), ('22.19.1', True), ('22.20.0', True), ('23.0.0', True), ('21.99.99', False)]:
+    code = gate.replace('process.versions.node', repr(version))
+    assert (subprocess.run(['node', '-e', code]).returncode == 0) == accepted, version
+PY
+
 # Sourcing only declares the function.
 unset RUNTIME_ARCH PROOT_PACKAGE_URL || true
 source "$HELPER"

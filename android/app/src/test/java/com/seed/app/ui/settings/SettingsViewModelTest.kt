@@ -1,5 +1,6 @@
 package com.seed.app.ui.settings
 
+import androidx.lifecycle.viewModelScope
 import com.seed.app.data.AgentApplyRequest
 import com.seed.app.data.AgentApplyResponse
 import com.seed.app.data.BackendApi
@@ -16,6 +17,10 @@ import com.seed.app.data.ThinkingLevelsResponse
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -39,6 +44,239 @@ class SettingsViewModelTest {
         Dispatchers.resetMain()
     }
 
+
+    @Test
+    fun updatePostsThenReloadsWithoutChangingUnsavedSelectionOrApplying() {
+        val api = CatalogBackendApi()
+        val repo = RecordingSettingsRepo()
+        val vm = SettingsViewModel(repo = repo, api = api)
+        vm.onModelChange("claude-test")
+        vm.onThinkingLevelChange("high")
+        val selected = vm.form.value
+        api.events.clear()
+        api.modelId = "new-model"
+        api.defaultModel = "saved-model-from-pi"
+
+        vm.updateModels()
+
+        assertEquals(listOf("update", "config", "models:anthropic"), api.events)
+        assertEquals("new-model", vm.catalog.value.single().id)
+        assertEquals(selected, vm.form.value)
+        assertEquals(0, api.applyCalls)
+        assertEquals(0, api.loginCalls)
+        assertEquals(0, repo.saveCalls)
+        assertNull(vm.lastSaved.value)
+        assertNull(vm.modelsUpdateError.value)
+        assertEquals(false, vm.modelsUpdating.value)
+    }
+
+    @Test
+    fun failedUpdateRetainsCatalogAndSelectionAndSanitizesError() {
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(api = api)
+        vm.onModelChange("claude-test")
+        val selected = vm.form.value
+        val catalog = vm.catalog.value
+        api.beforeUpdate = { error("secret credential and command output") }
+        api.events.clear()
+
+        vm.updateModels()
+
+        assertEquals(listOf("update"), api.events)
+        assertEquals(catalog, vm.catalog.value)
+        assertEquals(selected, vm.form.value)
+        assertEquals("Could not update models. Retry.", vm.modelsUpdateError.value)
+        assertEquals(false, vm.modelsUpdating.value)
+    }
+
+    @Test
+    fun updatePreventsDuplicateTapsAndConflictingLoginOrSave() {
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(api = api)
+        val pending = CompletableDeferred<Unit>()
+        api.beforeUpdate = { pending.await() }
+        vm.updateModels()
+        assertEquals(true, vm.modelsUpdating.value)
+        vm.updateModels()
+        vm.login()
+        vm.save()
+        vm.refreshConfiguration()
+        vm.loadCatalog()
+        assertEquals(1, api.updateCalls)
+        assertEquals(0, api.loginCalls)
+        assertEquals(0, api.applyCalls)
+        pending.complete(Unit)
+        assertEquals(false, vm.modelsUpdating.value)
+    }
+
+    @Test
+    fun cancellationPropagatesWithoutBecomingAnUpdateErrorOrReload() {
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(api = api)
+        val pending = CompletableDeferred<Unit>()
+        api.beforeUpdate = { pending.await() }
+        api.events.clear()
+        vm.updateModels()
+        val operation = vm.viewModelScope.coroutineContext[Job]!!.children.single()
+        pending.cancel()
+        assertEquals(true, operation.isCancelled)
+        assertEquals(listOf("update"), api.events)
+        assertNull(vm.modelsUpdateError.value)
+        assertEquals(false, vm.modelsUpdating.value)
+    }
+
+    @Test
+    fun queuedTapsAreGuardedBeforeCoroutineDispatch() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(api = api)
+        runCurrent()
+        vm.updateModels()
+        vm.updateModels()
+        vm.login()
+        vm.save()
+        runCurrent()
+        assertEquals(1, api.updateCalls)
+        assertEquals(0, api.loginCalls)
+        assertEquals(0, api.applyCalls)
+    }
+
+    @Test
+    fun updateStaysBusyUntilCatalogReloadFinishesAndFollowsProviderChanges() {
+        val api = CatalogBackendApi()
+        api.extraProvider = "openai"
+        val vm = SettingsViewModel(api = api)
+        val pending = CompletableDeferred<Unit>()
+        api.beforeModelsReturn = { provider -> if (provider == "anthropic") pending.await() }
+        vm.updateModels()
+        assertEquals(true, vm.modelsUpdating.value)
+        assertEquals(true, vm.catalogLoading.value)
+        vm.onProviderChange("openai")
+        vm.onModelChange("draft")
+        vm.save()
+        vm.login()
+        pending.complete(Unit)
+        assertEquals("openai", vm.catalog.value.single().provider)
+        assertEquals("draft", vm.form.value.model)
+        assertEquals(false, vm.modelsUpdating.value)
+        assertEquals(false, vm.catalogLoading.value)
+        assertEquals(0, api.applyCalls)
+        assertEquals(0, api.loginCalls)
+    }
+
+    @Test
+    fun providerChangedDuringUpdateReloadsCurrentProviderAndKeepsItsEdits() {
+        val api = CatalogBackendApi()
+        api.extraProvider = "openai"
+        val vm = SettingsViewModel(api = api)
+        val pending = CompletableDeferred<Unit>()
+        api.beforeUpdate = { pending.await() }
+        vm.updateModels()
+        vm.onProviderChange("openai")
+        vm.onModelChange("unsaved-model")
+        val selected = vm.form.value
+        api.events.clear()
+        pending.complete(Unit)
+        assertEquals(listOf("config", "models:openai"), api.events)
+        assertEquals("openai", vm.catalog.value.single().provider)
+        assertEquals(selected, vm.form.value)
+    }
+
+    @Test
+    fun failedUpdateReloadsProviderChangedWhileUpdateWasPendingOnce() {
+        val api = CatalogBackendApi()
+        api.extraProvider = "openai"
+        val vm = SettingsViewModel(api = api)
+        val pending = CompletableDeferred<Unit>()
+        api.beforeUpdate = { pending.await(); error("private credential") }
+        vm.updateModels()
+        vm.onProviderChange("openai")
+        vm.onModelChange("draft")
+        val selected = vm.form.value
+        api.events.clear()
+        pending.complete(Unit)
+        assertEquals(listOf("models:openai"), api.events)
+        assertEquals("openai", vm.catalog.value.single().provider)
+        assertEquals(selected, vm.form.value)
+        assertEquals("Could not update models. Retry.", vm.modelsUpdateError.value)
+        assertEquals(false, vm.modelsUpdating.value)
+        assertEquals(false, vm.catalogLoading.value)
+    }
+
+    @Test
+    fun cancelledUpdateWithProviderChangeDoesNotReloadOrReportFailure() {
+        val api = CatalogBackendApi()
+        api.extraProvider = "openai"
+        val vm = SettingsViewModel(api = api)
+        val pending = CompletableDeferred<Unit>()
+        api.beforeUpdate = { pending.await() }
+        vm.updateModels()
+        val operation = vm.viewModelScope.coroutineContext[Job]!!.children.single()
+        vm.onProviderChange("openai")
+        api.events.clear()
+        pending.cancel()
+        assertEquals(true, operation.isCancelled)
+        assertEquals(emptyList<String>(), api.events)
+        assertNull(vm.modelsUpdateError.value)
+        assertEquals(false, vm.modelsUpdating.value)
+    }
+
+    @Test
+    fun removedModelRetainsDraftAndReportsSpecificLocalValidation() {
+        val api = CatalogBackendApi()
+        val repo = RecordingSettingsRepo()
+        val vm = SettingsViewModel(repo = repo, api = api)
+        vm.onModelChange("claude-test")
+        val selected = vm.form.value
+        api.modelId = "replacement"
+        vm.updateModels()
+        vm.save()
+        assertEquals(selected, vm.form.value)
+        assertEquals("Selected model is no longer available. Choose a model from the current catalog.", vm.saveError.value)
+        assertEquals(0, api.validationCalls)
+        assertEquals(0, api.applyCalls)
+        assertEquals(0, repo.saveCalls)
+        assertEquals(false, vm.applying.value)
+    }
+
+    @Test
+    fun removedThinkingLevelRetainsDraftAndReportsSpecificLocalValidation() {
+        val api = CatalogBackendApi()
+        val repo = RecordingSettingsRepo()
+        val vm = SettingsViewModel(repo = repo, api = api)
+        vm.onModelChange("claude-test")
+        vm.onThinkingLevelChange("high")
+        val selected = vm.form.value
+        api.levels = listOf("off")
+        vm.updateModels()
+        vm.save()
+        assertEquals(selected, vm.form.value)
+        assertEquals("Selected thinking level is no longer available. Choose a supported thinking level.", vm.saveError.value)
+        assertEquals(0, api.validationCalls)
+        assertEquals(0, api.applyCalls)
+        assertEquals(0, repo.saveCalls)
+        assertEquals(false, vm.applying.value)
+    }
+
+    @Test
+    fun loginAndSaveBlockUpdateUntilTheyComplete() {
+        val api = CatalogBackendApi()
+        val vm = SettingsViewModel(api = api)
+        val loginPending = CompletableDeferred<Unit>()
+        api.beforeLogin = { loginPending.await() }
+        vm.onApiKeyChange("key")
+        vm.login()
+        vm.updateModels()
+        assertEquals(0, api.updateCalls)
+        loginPending.complete(Unit)
+        vm.onModelChange("claude-test")
+        val applyPending = CompletableDeferred<Unit>()
+        api.beforeApply = { applyPending.await() }
+        vm.save()
+        vm.updateModels()
+        assertEquals(0, api.updateCalls)
+        applyPending.complete(Unit)
+    }
 
     // --- Phase 5.6 (still relevant) -------------------------------
 
@@ -340,6 +578,22 @@ class SettingsViewModelTest {
 
 private class CatalogBackendApi : BackendApi {
     var extraProvider: String? = null
+    var defaultModel: String? = null
+    val events = mutableListOf<String>()
+    var updateCalls = 0
+    var loginCalls = 0
+    var modelId = "claude-test"
+    var levels = listOf("off", "high")
+    var validationCalls = 0
+    var beforeUpdate: suspend () -> Unit = {}
+    var beforeLogin: suspend () -> Unit = {}
+    var beforeApply: suspend () -> Unit = {}
+    override suspend fun updateModels(authorization: String): com.seed.app.data.ModelsUpdateResponse {
+        updateCalls++
+        events.add("update")
+        beforeUpdate()
+        return com.seed.app.data.ModelsUpdateResponse(updated = true)
+    }
     var modelCalls = 0
     var applyCalls = 0
     var rejectApply = false
@@ -350,12 +604,25 @@ private class CatalogBackendApi : BackendApi {
     override suspend fun shellExec(request: ShellExecRequest, authorization: String) =
         ShellExecResponse("", "", 0)
 
-    override suspend fun config(authorization: String) = com.seed.app.data.PiConfigResponse(providers = listOf("anthropic") + listOfNotNull(extraProvider))
-    override suspend fun addProvider(request: ProviderModelsRequest, authorization: String) = com.seed.app.data.PiConfigResponse(providers = listOf(request.provider))
+    override suspend fun config(authorization: String): com.seed.app.data.PiConfigResponse {
+        events.add("config")
+        return com.seed.app.data.PiConfigResponse(
+            providers = listOf("anthropic") + listOfNotNull(extraProvider),
+            defaultProvider = if (defaultModel != null) "anthropic" else null,
+            defaultModel = defaultModel,
+            defaultThinkingLevel = if (defaultModel != null) "off" else null,
+        )
+    }
+    override suspend fun addProvider(request: ProviderModelsRequest, authorization: String): com.seed.app.data.PiConfigResponse {
+        loginCalls++
+        beforeLogin()
+        return com.seed.app.data.PiConfigResponse(providers = listOf(request.provider))
+    }
     override suspend fun models(
         provider: String,
         authorization: String,
     ): ModelsResponse {
+        events.add("models:$provider")
         modelCalls += 1
         lastModelsRequest = ProviderModelsRequest(provider, "")
         beforeModelsReturn(provider)
@@ -363,8 +630,9 @@ private class CatalogBackendApi : BackendApi {
             listOf(
                 PiModelDto(
                     provider = provider,
-                    id = "claude-test",
+                    id = modelId,
                     name = "Claude Test",
+                    thinkingLevels = levels,
                 ),
             ),
         )
@@ -379,13 +647,17 @@ private class CatalogBackendApi : BackendApi {
     override suspend fun validateSelection(
         request: SelectionRequest,
         authorization: String,
-    ) = SelectionResponse(valid = true)
+    ): SelectionResponse {
+        validationCalls++
+        return SelectionResponse(valid = true)
+    }
 
     override suspend fun applyAgents(
         request: AgentApplyRequest,
         authorization: String,
     ): AgentApplyResponse {
         applyCalls++
+        beforeApply()
         return AgentApplyResponse(applied = !rejectApply)
     }
 }

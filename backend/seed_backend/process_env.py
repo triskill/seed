@@ -5,7 +5,7 @@ import ctypes
 import os
 import sys
 
-# Explicitly enumerated names from Pi 0.80.3's provider registry. Never form a
+# Explicitly enumerated names from Pi 0.84.2's provider registry. Never form a
 # variable name from user input and never pass these to shell/Flask children.
 PI_CREDENTIAL_ENV_VARS = frozenset({
     "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANT_LING_API_KEY",
@@ -23,6 +23,7 @@ PI_CREDENTIAL_ENV_VARS = frozenset({
     "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "GOOGLE_APPLICATION_CREDENTIALS",
     "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GCLOUD_PROJECT",
     "COPILOT_GITHUB_TOKEN", "CLOUDFLARE_API_TOKEN",
+    "RADIUS_API_KEY", "BASETEN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY",
 })
 
 SEED_CAPABILITY_ENV = "SEED_RUNTIME_CAPABILITY"

@@ -39,6 +39,7 @@ from seed_backend.orchestrator import (
 from seed_backend.provider_allowlist import credential_env_for
 from seed_backend import pi_settings
 from seed_backend.pi_control import PiControlError, PiControlService
+from seed_backend.model_catalog import update_models
 from seed_backend.pi_runner import PiRunner
 from seed_backend.task_store import TaskStore
 from seed_backend.process_env import harden_process_visibility
@@ -206,7 +207,7 @@ def _new_control_service(
             read_only_tools=set(),
         )
 
-    return PiControlService(runner_factory=runner)
+    return PiControlService(runner_factory=runner, updater=update_models)
 
 
 def _new_orchestrator(
@@ -517,6 +518,13 @@ async def control_models(request: Request, provider: str | None = None, refresh:
     if provider is not None:
         result = {'models': [model for model in result['models'] if model['provider'] == provider]}
     return ModelsResponse.model_validate(result)
+
+
+@app.post('/control/v1/models/update')
+async def control_update_models(request: Request):
+    """Refresh authenticated Pi catalogs without changing settings or agents."""
+    _require_control_access(request)
+    return await _control_call(request.app.state.control_service.update_models)
 
 
 @app.get("/control/v1/thinking-levels", response_model=ThinkingLevelsResponse)

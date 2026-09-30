@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from seed_backend.pi_runner import PiRunner
 
 
-THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh")
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 class PiControlError(RuntimeError):
@@ -34,7 +34,9 @@ class PiControlService:
         *,
         runner_factory: Callable[[], PiRunner] | None = None,
         timeout: float = 30.0,
+        updater: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        self.updater = updater
         self.runner = runner
         self.runner_factory = runner_factory
         self.timeout = timeout
@@ -79,37 +81,61 @@ class PiControlService:
         async with self._call_lock:
             await self._reset_runner()
 
-    async def _call(self, command: str, **params: Any) -> dict[str, Any]:
-        if command not in self._ALLOWED:
-            raise PiControlError("unsupported Pi control command")
-        # Selection is intentionally serialized with catalog retrieval. It
-        # also makes failure reset atomic with respect to the next request.
+    async def update_models(self) -> dict[str, bool]:
         async with self._call_lock:
-            await self.start()
-            assert self.runner is not None
-            runner = self.runner
-            payload = {"type": command, **params}
+            if self.updater is None:
+                raise PiControlError('model catalog updater is not configured')
             try:
-                response = await runner.rpc_request(payload, timeout=self.timeout)
+                await self.updater()
             except asyncio.CancelledError:
                 raise
-            except asyncio.TimeoutError as exc:
-                await self._reset_runner()
-                raise PiControlError("Pi control request timed out") from exc
-            except Exception as exc:
-                # Pi/provider diagnostics can echo request details. Keep them
-                # in neither HTTP responses nor logs; Android only needs retry.
-                await self._reset_runner()
-                raise PiControlError("Pi control request failed") from exc
-            if not isinstance(response, dict):
-                await self._reset_runner()
-                raise PiControlError("invalid Pi control response")
-            if response.get("success") is not True:
-                # The process may remain alive on a normal Pi error, but reset
-                # anyway: this avoids retaining a poisoned control session.
-                await self._reset_runner()
-                raise PiControlError("Pi control request failed")
-            return response
+            except Exception:
+                raise PiControlError('model catalog update failed') from None
+            finally:
+                # Partial failures may still write catalogs/OAuth credentials.
+                # Finish invalidation before releasing the operation lock, even
+                # if the HTTP client cancels repeatedly during runner teardown.
+                reset = asyncio.create_task(self._reset_runner())
+                cancelled = False
+                while not reset.done():
+                    try:
+                        await asyncio.shield(reset)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                reset.result()
+                if cancelled:
+                    raise asyncio.CancelledError
+            return {'updated': True}
+
+    async def _call(self, command: str, **params: Any) -> dict[str, Any]:
+        async with self._call_lock:
+            return await self._call_locked(command, **params)
+
+    async def _call_locked(self, command: str, **params: Any) -> dict[str, Any]:
+        """RPC with _call_lock already held; never recursively acquire it."""
+        if command not in self._ALLOWED:
+            raise PiControlError("unsupported Pi control command")
+        await self.start()
+        assert self.runner is not None
+        runner = self.runner
+        payload = {"type": command, **params}
+        try:
+            response = await runner.rpc_request(payload, timeout=self.timeout)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError as exc:
+            await self._reset_runner()
+            raise PiControlError("Pi control request timed out") from exc
+        except Exception as exc:
+            await self._reset_runner()
+            raise PiControlError("Pi control request failed") from exc
+        if not isinstance(response, dict):
+            await self._reset_runner()
+            raise PiControlError("invalid Pi control response")
+        if response.get("success") is not True:
+            await self._reset_runner()
+            raise PiControlError("Pi control request failed")
+        return response
 
     @staticmethod
     def _thinking_levels(model: dict[str, Any]) -> list[str]:
@@ -118,13 +144,13 @@ class PiControlService:
         level_map = model.get("thinkingLevelMap")
         if not isinstance(level_map, dict):
             level_map = {}
-        # Pi 0.80.3's RPC exposes set_thinking_level but not a query command.
-        # Mirror its getSupportedThinkingLevels implementation from the model
-        # metadata returned by get_available_models.
+        # Mirror Pi 0.84.2 pi-ai/dist/models.js getSupportedThinkingLevels:
+        # ordinary levels default on, xhigh/max require explicit non-null maps.
         return [
             level for level in THINKING_LEVELS
-            if level != "xhigh" and level_map.get(level, "__default__") is not None
-        ] + (["xhigh"] if level_map.get("xhigh") is not None else [])
+            if level_map.get(level, "__default__") is not None
+            and (level not in {"xhigh", "max"} or level in level_map)
+        ]
 
     @staticmethod
     def _public_model(model: Any) -> dict[str, Any]:
@@ -150,9 +176,13 @@ class PiControlService:
         }
 
     async def get_available_models(self, *, refresh: bool = False) -> dict[str, Any]:
+        async with self._call_lock:
+            return await self._catalog_locked(refresh=refresh)
+
+    async def _catalog_locked(self, *, refresh: bool = False) -> dict[str, Any]:
         if refresh:
-            await self.stop()
-        response = await self._call("get_available_models")
+            await self._reset_runner()
+        response = await self._call_locked("get_available_models")
         data = response.get("data")
         models = data.get("models") if isinstance(data, dict) else None
         if not isinstance(models, list):
@@ -173,9 +203,14 @@ class PiControlService:
         model_id: str,
         thinking_level: str | None = None,
     ) -> dict[str, Any]:
-        # Check the exact tuple against Pi's current authenticated catalog before
-        # mutating the control session. This keeps invalid UI input side-effect free.
-        catalog = await self.get_available_models()
+        async with self._call_lock:
+            return await self._validate_selection_locked(provider, model_id, thinking_level)
+
+    async def _validate_selection_locked(
+        self, provider: str, model_id: str, thinking_level: str | None,
+    ) -> dict[str, Any]:
+        # Keep validation and mutation atomic with catalog updates.
+        catalog = await self._catalog_locked()
         public = next(
             (item for item in catalog["models"]
              if item["provider"] == provider and item["id"] == model_id),
@@ -185,12 +220,12 @@ class PiControlService:
             raise PiControlError("model selection is not in the Pi catalog")
         if thinking_level is not None and thinking_level not in public["thinkingLevels"]:
             raise PiControlError("thinking level is not supported by this model")
-        response = await self._call("set_model", provider=provider, modelId=model_id)
+        response = await self._call_locked("set_model", provider=provider, modelId=model_id)
         selected = response.get("data")
         # Pi returns the selected model as data; sanitize it before crossing the API.
         public = self._public_model(selected)
         if thinking_level is not None:
-            await self._call("set_thinking_level", level=thinking_level)
+            await self._call_locked("set_thinking_level", level=thinking_level)
         return {
             "valid": True,
             "model": public,

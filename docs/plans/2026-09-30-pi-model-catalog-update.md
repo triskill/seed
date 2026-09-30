@@ -39,6 +39,10 @@ Files: `android/app/src/main/java/com/seed/app/data/BackendApi.kt`, `ui/settings
 3. Ensure HTTP timeout exceeds backend bound and UI update does not race login/apply actions. Do not change model-apply crash behavior.
 4. Run Settings JVM tests and Android lint.
 
+## Implementation status
+
+Backend/runtime/Settings code and regression tests implemented. Local `make verify` passed: 297 Python tests, scoped Ruff/mypy, Android JVM tests and lint. Runtime-tool shell tests and `bash -n scripts/build-runtime.sh` passed. Pi 0.84.2 thinking metadata supports `max` when explicitly mapped; the credential environment boundary includes newly verified provider variables. Runtime image/APK was not rebuilt or installed, and authenticated openai-codex/device acceptance remains pending. Crashes remain explicitly out of scope.
+
 ## Task 4: Upgrade compatibility and final verification
 
 Check thinking levels/0.84.2 RPC metadata compatibility for catalog, especially new `max`; update catalog mapping only with supported tests/source evidence. Run `make verify`, runtime-tool shell tests, `git diff --check`. Document need to rebuild/install runtime to deliver Pi upgrade; existing phone rootfs is not changed by source-only edits. Run pinned HEAD secret scan after commit. No provider login or credential printing in tests. A device with openai-codex subscription must verify new catalog population separately; do not claim that acceptance locally.

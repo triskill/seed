@@ -40,6 +40,34 @@ That target validates/builds the ARM64 runtime and then installs the matching
 APK. To return to emulator development afterward, rebuild x86_64 before
 running `make run`.
 
+## Pi model catalog updates
+
+The image pins **Pi 0.84.2** and checks **Node >=22.19.0** before npm
+installation. Its offline `pi update --help` smoke check requires `--models`;
+the image build never runs an authenticated model update.
+
+The protected `POST /control/v1/models/update` runs only `pi update --models`,
+using the same app-private `PI_CODING_AGENT_DIR` as terminal, control, and chat.
+Pi may refresh catalog caches (`models-store.json`) and OAuth credentials.
+Known Pi credential environment variables are available only to this trusted
+subprocess; the runtime capability is excluded and stdin/output are discarded.
+The subprocess has a 24-second outer deadline, followed by forced process-group
+termination/reap on timeout or cancellation. Android's HTTP read timeout must
+remain longer (30 seconds). Update and catalog/selection operations serialize;
+the dedicated catalog runner is invalidated even after partial failures.
+
+GET catalog refresh stays read-only. Updating never restarts chat agents or
+changes the saved selection. Exit zero may be a no-op and does not certify
+working provider authentication; errors are generic and never expose output.
+Pi 0.84.2's bundled `pi-ai/dist/models.js:getSupportedThinkingLevels` explicitly
+permits `max`, like `xhigh`, only with a non-null `thinkingLevelMap` entry. The
+backend follows that metadata instead of enabling these levels for all models.
+
+**Source changes do not upgrade an existing phone rootfs.** Explicitly rebuild
+the matching runtime, assemble/install its APK, and confirm extraction of the
+new build marker. An authenticated openai-codex subscription device must still
+verify catalog population separately; offline tests do not establish that.
+
 ## Build details
 
 Runtime generation requires Docker with buildx, `curl`, `ar`, `file`,

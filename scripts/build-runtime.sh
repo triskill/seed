@@ -316,16 +316,17 @@ cat > "$BUILD_DIR/ctx/Dockerfile" <<'DOCKERFILE'
 # Pinned for reproducible builds. Update both pins together when bumping:
 #   - base image: selected by ALPINE_BASE_IMAGE (must match ALPINE_URL)
 #   - pi: @earendil-works/pi-coding-agent <exact version> (run `npm view` to check)
-# Last bumped: 2026-08-14, pi 0.80.3, alpine 3.22.5 (Node 22).
+# Last bumped: 2026-09-30, pi 0.84.2, alpine 3.22.5 (Node >=22.19.0).
 # Full digest pinning is a v0.2 follow-up.
 ARG ALPINE_BASE_IMAGE=alpine:3.22.5
 FROM ${ALPINE_BASE_IMAGE}
 RUN apk add --no-cache --update python3 py3-pip nodejs npm git tmux vim
-RUN npm install -g @earendil-works/pi-coding-agent@0.80.3
-# pi 0.80.3's undici dependency requires Node 22 APIs. Run the CLI during
-# image construction so an incompatible distro Node cannot ship silently.
-RUN node -e 'const major=Number(process.versions.node.split(".")[0]); if (major < 22) process.exit(1)' \
-    && pi --version
+# Pi 0.84.2 requires the full Node minimum, not just major 22.
+RUN node -e 'const v=process.versions.node.split(".").map(Number); const min=[22,19,0]; const i=v.findIndex((n,i)=>n!==min[i]); if (i!==-1 && v[i]<min[i]) process.exit(1)'
+RUN npm install -g @earendil-works/pi-coding-agent@0.84.2
+# Help is offline: never refresh authenticated catalogs during image build.
+RUN pi --version && pi update --help > /tmp/pi-update-help \
+    && grep -Fq -- '--models' /tmp/pi-update-help && rm /tmp/pi-update-help
 COPY backend /home/seed/backend
 COPY webapp /home/seed/app
 RUN cd /home/seed/app && git init -q

@@ -50,6 +50,16 @@ def test_catalog_sanitizes_pi_metadata_and_derives_thinking_levels():
     assert PiControlService._thinking_levels({"reasoning": True, "thinkingLevelMap": {"off": None}}) == ["minimal", "low", "medium", "high"]
 
 
+@pytest.mark.parametrize('mapping,expected', [
+    ({'max': 'max'}, ['off', 'minimal', 'low', 'medium', 'high', 'max']),
+    ({'xhigh': 'xhigh', 'max': 'max'}, ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
+    ({'max': None, 'high': None}, ['off', 'minimal', 'low', 'medium']),
+])
+def test_pi_0842_extended_thinking_metadata(mapping, expected):
+    assert PiControlService._thinking_levels({'reasoning': True, 'thinkingLevelMap': mapping}) == expected
+    assert PiControlService._thinking_levels({'reasoning': False, 'thinkingLevelMap': mapping}) == ['off']
+
+
 def test_selection_validates_tuple_before_mutation():
     svc = service()
     with pytest.raises(Exception):
@@ -145,6 +155,146 @@ def test_control_runner_is_recreated_after_rpc_failure():
     result = asyncio.run(run())
     assert state["created"] == 2
     assert result["models"][0]["id"] == "gpt-test"
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'cancel'])
+def test_update_serializes_catalog_and_invalidates_runner_on_all_outcomes(outcome):
+    from seed_backend.pi_control import PiControlError
+    events = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class Runner(FakeRunner):
+        async def start(self):
+            events.append('start')
+
+        async def stop(self):
+            events.append('stop')
+
+        async def rpc_request(self, payload, *, timeout):
+            events.append(payload['type'])
+            return await super().rpc_request(payload, timeout=timeout)
+
+    async def update():
+        events.append('update')
+        entered.set()
+        await release.wait()
+        if outcome == 'failure':
+            raise RuntimeError('private provider output')
+
+    async def check():
+        control = PiControlService(runner_factory=Runner, updater=update)
+        await control.get_available_models()
+        events.clear()
+        task = asyncio.create_task(control.update_models())
+        await entered.wait()
+        catalog = asyncio.create_task(control.get_available_models(refresh=True))
+        second = asyncio.create_task(control.update_models())
+        await asyncio.sleep(0)
+        assert events == ['update']
+        second.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await second
+        if outcome == 'cancel':
+            task.cancel()
+        release.set()
+        if outcome == 'success':
+            assert await task == {'updated': True}
+        else:
+            with pytest.raises(asyncio.CancelledError if outcome == 'cancel' else PiControlError):
+                await task
+        await catalog
+        assert events == ['update', 'stop', 'start', 'get_available_models']
+        await control.stop()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize('authorized,failed,status', [(False, False, 401), (True, False, 200), (True, True, 502)])
+def test_model_update_endpoint_auth_sanitization_and_no_agent_mutation(monkeypatch, tmp_path, authorized, failed, status):
+    from seed_backend.pi_control import PiControlError
+    monkeypatch.setenv('PI_CODING_AGENT_DIR', str(tmp_path))
+    settings = tmp_path / 'settings.json'
+    settings.write_text('{"defaultProvider":"unchanged","defaultModel":"unchanged"}')
+    before = settings.read_bytes()
+    calls = []
+
+    async def update():
+        calls.append('update')
+        if failed:
+            raise PiControlError('Authorization: fake-secret')
+
+    control_app = FastAPI()
+    control_app.router.routes.extend(route for route in app.routes if getattr(route, 'path', '').startswith('/control/v1/'))
+    control_app.state.control_service = PiControlService(updater=update)
+    agents = object()
+    control_app.state.orchestrator = agents
+    monkeypatch.setenv('SEED_RUNTIME_CAPABILITY', 'test-capability')
+    with TestClient(control_app, client=('127.0.0.1', 1234)) as client:
+        response = client.post('/control/v1/models/update', headers={'Authorization': 'Bearer test-capability'} if authorized else {})
+    assert response.status_code == status
+    assert calls == (['update'] if authorized else [])
+    assert 'fake-secret' not in response.text
+    if status == 200:
+        assert response.json() == {'updated': True}
+    assert settings.read_bytes() == before
+    assert control_app.state.orchestrator is agents
+
+
+def test_two_updates_are_serial_and_get_is_read_only():
+    events = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def update():
+        events.append('update-start')
+        entered.set()
+        await release.wait()
+        events.append('update-end')
+
+    async def check():
+        control = PiControlService(runner_factory=FakeRunner, updater=update)
+        await control.get_available_models(refresh=True)
+        assert events == []
+        first = asyncio.create_task(control.update_models())
+        await entered.wait()
+        second = asyncio.create_task(control.update_models())
+        await asyncio.sleep(0)
+        assert events == ['update-start']
+        release.set()
+        await asyncio.gather(first, second)
+        assert events == ['update-start', 'update-end', 'update-start', 'update-end']
+        await control.stop()
+
+    asyncio.run(check())
+
+
+def test_update_endpoint_rejects_remote_peer_even_with_capability(monkeypatch):
+    calls = []
+
+    async def update():
+        calls.append('unexpected')
+
+    control_app = FastAPI()
+    control_app.router.routes.extend(route for route in app.routes if getattr(route, 'path', '').startswith('/control/v1/'))
+    control_app.state.control_service = PiControlService(updater=update)
+    monkeypatch.setenv('SEED_RUNTIME_CAPABILITY', 'test-capability')
+    with TestClient(control_app, client=('192.0.2.1', 1234)) as client:
+        response = client.post('/control/v1/models/update', headers={'Authorization': 'Bearer test-capability'})
+    assert response.status_code == 403
+    assert calls == []
+
+
+def test_control_factory_injects_model_updater(monkeypatch):
+    calls = []
+
+    async def update():
+        calls.append('update')
+
+    monkeypatch.setattr(service_module, 'update_models', update)
+    control = service_module._new_control_service('http://127.0.0.1:7778')
+    asyncio.run(control.update_models())
+    assert calls == ['update']
 
 
 class ErrorControl:
