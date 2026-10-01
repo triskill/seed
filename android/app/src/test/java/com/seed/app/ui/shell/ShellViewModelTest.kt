@@ -413,6 +413,7 @@ class FakeBackendApi : BackendApi {
         shellExecCalls.add(request)
         return shellExecHandler?.invoke(request) ?: nextResponse
     }
+    override suspend fun updateModels(authorization: String): com.seed.app.data.ModelsUpdateResponse = error("Not used")
     override suspend fun models(provider: String, authorization: String): ModelsResponse = error("Not used")
     override suspend fun config(authorization: String): com.seed.app.data.PiConfigResponse = error("Not used")
     override suspend fun addProvider(request: ProviderModelsRequest, authorization: String): com.seed.app.data.PiConfigResponse = error("Not used")

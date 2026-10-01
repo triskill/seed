@@ -6,7 +6,11 @@ an `ExecResult` with the expected fields. Also smoke-tests the
 `POST /shell/exec` route through the FastAPI TestClient.
 """
 import asyncio
+import errno
+import os
+import signal
 import subprocess
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +19,18 @@ from pathlib import Path
 
 from seed_backend.service import app
 from seed_backend.shell import ExecCancelled, ExecResult, ShellSession, exec_command
+
+
+def test_exec_does_not_require_waitid(monkeypatch):
+    import seed_backend.shell as shell
+
+    def unsupported_waitid(*args):
+        raise OSError(errno.ENOSYS, 'waitid unavailable under PRoot')
+
+    monkeypatch.setattr(shell.os, 'waitid', unsupported_waitid, raising=False)
+    result = asyncio.run(exec_command('echo portable'))
+    assert result.stdout == 'portable\n'
+    assert result.exit_code == 0
 
 
 def test_exec_runs_echo_hi():
@@ -61,6 +77,14 @@ def test_shell_exec_route_returns_command_output():
         "exit_code": 0,
         "truncated": False,
     }
+
+
+def test_shell_route_persists_cwd_after_compound_command():
+    with TestClient(app) as client:
+        first = client.post('/shell/exec', json={'command': 'cd /tmp && pwd'})
+        second = client.post('/shell/exec', json={'command': 'pwd'})
+    assert first.status_code == second.status_code == 200
+    assert first.json()['stdout'] == second.json()['stdout'] == '/tmp\n'
 
 
 def test_exec_in_pty_handles_color_codes():
@@ -162,6 +186,124 @@ def test_exec_can_be_cancelled():
         asyncio.run(scenario())
 
 
+def test_timeout_when_leader_closes_pipe_still_kills_and_reaps(tmp_path):
+    marker = tmp_path / 'survived'
+
+    async def scenario():
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                exec_command(f'exec 1>&- 2>&-; sleep 1; touch {marker}', timeout=0.1),
+                2,
+            )
+
+    asyncio.run(scenario())
+    assert not marker.exists()
+
+
+def test_event_cancellation_allows_shell_term_trap(tmp_path):
+    ready = tmp_path / 'ready'
+    handled = tmp_path / 'handled-term'
+
+    async def scenario():
+        cancel = asyncio.Event()
+        command = (
+            f"trap 'printf handled > {handled}; exit 0' TERM; "
+            f"touch {ready}; while :; do sleep 0.05; done"
+        )
+        task = asyncio.create_task(exec_command(command, cancel=cancel))
+        try:
+            while not ready.exists():
+                await asyncio.sleep(0.01)
+            cancel.set()
+            with pytest.raises(ExecCancelled):
+                await asyncio.wait_for(task, 2)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(scenario(), 3))
+    assert handled.read_text() == 'handled'
+
+
+def test_event_cancellation_escalates_after_grace(tmp_path):
+    ready = tmp_path / 'ready'
+
+    async def scenario():
+        cancel = asyncio.Event()
+        task = asyncio.create_task(exec_command(
+            f"trap '' TERM; touch {ready}; while :; do sleep 0.05; done",
+            cancel=cancel,
+        ))
+        try:
+            while not ready.exists():
+                await asyncio.sleep(0.01)
+            started = asyncio.get_running_loop().time()
+            cancel.set()
+            with pytest.raises(ExecCancelled):
+                await asyncio.wait_for(task, 2)
+            return asyncio.get_running_loop().time() - started
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    elapsed = asyncio.run(asyncio.wait_for(scenario(), 3))
+    assert 0.9 <= elapsed < 1.8
+
+
+def test_cancellation_kills_detached_pipe_background_group_member(tmp_path, monkeypatch):
+    """TERM may close the pipe before a TERM-ignoring group member exits."""
+    import seed_backend.shell as shell
+
+    def unsupported_waitid(*args):
+        raise OSError(errno.ENOSYS, 'waitid unavailable under PRoot')
+
+    monkeypatch.setattr(shell.os, 'waitid', unsupported_waitid, raising=False)
+    ready = tmp_path / 'child-ready'
+    child = (
+        "import os,signal,time; "
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+        "os.close(1); os.close(2); "
+        f"open({str(ready)!r},'w').write(str(os.getpid())); "
+        "time.sleep(60)"
+    )
+    import shlex
+    command = (
+        f"{shlex.quote(sys.executable)} -c {shlex.quote(child)} & "
+        "trap 'exit 0' TERM; while :; do sleep 0.05; done"
+    )
+    async def scenario():
+        cancel = asyncio.Event()
+        task = asyncio.create_task(exec_command(command, cancel=cancel))
+        try:
+            while not ready.exists():
+                await asyncio.sleep(0.01)
+            cancel.set()
+            with pytest.raises(ExecCancelled):
+                await asyncio.wait_for(task, 2.5)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    try:
+        asyncio.run(asyncio.wait_for(scenario(), 3))
+        pid = int(ready.read_text())
+        # Orphaned children can briefly be zombies until init reaps them.
+        status = Path(f'/proc/{pid}/stat')
+        assert not status.exists() or status.read_text().split(') ')[1][0] == 'Z'
+    finally:
+        if ready.exists():
+            pid = int(ready.read_text())
+            command_line = Path(f'/proc/{pid}/cmdline')
+            if command_line.exists() and str(ready).encode() in command_line.read_bytes():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+
 def test_exec_truncates_huge_output():
     """Commands producing more than MAX_LINES lines are truncated.
 
@@ -202,6 +344,252 @@ def test_cwd_persists_across_calls():
     # /private/tmp. Both forms end with "tmp", which is the
     # portable check — the command literally is `cd /tmp`.
     assert result.stdout.strip().endswith("tmp")
+
+
+def test_session_persists_final_cwd_of_compound_expression(tmp_path):
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        first = await session.exec('cd /tmp && pwd')
+        second = await session.exec('pwd')
+        return session, first, second
+
+    session, first, second = asyncio.run(scenario())
+    assert first.exit_code == 0
+    assert first.stdout == second.stdout == '/tmp\n'
+    assert session.cwd == Path('/tmp')
+
+
+def test_session_cd_tilde_and_previous_directory(tmp_path, monkeypatch):
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HOME', str(home))
+
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        home_result = await session.exec('cd ~; pwd')
+        previous = await session.exec('cd -')
+        return session, home_result, previous
+
+    session, home_result, previous = asyncio.run(scenario())
+    assert home_result.stdout == f'{home}\n'
+    assert previous.stdout == f'{tmp_path}\n'
+    assert session.cwd == tmp_path
+
+
+def test_session_quoted_directory_and_failed_cd(tmp_path):
+    target = tmp_path / 'with spaces'
+    target.mkdir()
+
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        quoted = await session.exec('cd "with spaces" && pwd')
+        failed = await session.exec('cd missing && echo should-not-run')
+        current = await session.exec('pwd')
+        return quoted, failed, current
+
+    quoted, failed, current = asyncio.run(scenario())
+    assert quoted.stdout == f'{target}\n'
+    assert failed.exit_code != 0
+    assert 'should-not-run' not in failed.stdout
+    assert current.stdout == f'{target}\n'
+
+
+def test_session_serializes_concurrent_calls(tmp_path):
+    target = tmp_path / 'later'
+    target.mkdir()
+
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        first = asyncio.create_task(session.exec('sleep 0.1; cd later'))
+        await asyncio.sleep(0.02)
+        second = asyncio.create_task(session.exec('pwd'))
+        return await first, await second, session.cwd
+
+    first, second, cwd = asyncio.run(scenario())
+    assert first.exit_code == 0
+    assert second.stdout == f'{target}\n'
+    assert cwd == target
+
+
+def test_session_preserves_output_status_and_ansi(tmp_path):
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        raw = await session.exec("printf '\\033[31mout\\033[0m\\n'; echo err >&2; cd /tmp; false")
+        stripped = await session.exec("printf '\\033[31mplain\\033[0m\\n'", capture_ansi=False)
+        return raw, stripped, session.cwd
+
+    raw, stripped, cwd = asyncio.run(scenario())
+    assert raw.stdout == '\x1b[31mout\x1b[0m\nerr\n'
+    assert raw.stderr == ''
+    assert raw.exit_code == 1
+    assert raw.captured_ansi is True
+    assert stripped.stdout == 'plain\n'
+    assert stripped.captured_ansi is False
+    assert cwd == Path('/tmp')
+
+
+def test_session_timeout_and_cancel_do_not_commit_partial_cwd(tmp_path):
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        with pytest.raises(asyncio.TimeoutError):
+            await session.exec('cd /tmp; sleep 5', timeout=0.05)
+        assert (await session.exec('pwd')).stdout == f'{tmp_path}\n'
+        cancel = asyncio.Event()
+        task = asyncio.create_task(session.exec('cd /tmp; sleep 5', cancel=cancel))
+        await asyncio.sleep(0.05)
+        cancel.set()
+        with pytest.raises(ExecCancelled):
+            await task
+        assert (await session.exec('pwd')).stdout == f'{tmp_path}\n'
+
+    asyncio.run(scenario())
+
+
+def test_pre_cancelled_command_never_launches(tmp_path):
+    marker = tmp_path / 'launched'
+
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        cancelled = asyncio.Event()
+        cancelled.set()
+        with pytest.raises(ExecCancelled):
+            await asyncio.wait_for(session.exec(f'touch {marker}', cancel=cancelled), 1)
+        return await session.exec('pwd')
+
+    assert asyncio.run(scenario()).stdout == f'{tmp_path}\n'
+    assert not marker.exists()
+
+
+def test_cancellation_before_pid_publication_delivers_term(tmp_path, monkeypatch):
+    import threading
+    import seed_backend.shell as shell
+
+    real_popen = shell.subprocess.Popen
+    release_pid = threading.Event()
+    ready = tmp_path / 'ready'
+    handled = tmp_path / 'handled-term'
+
+    def delayed_popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        release_pid.wait(2)  # child starts, but PID is not yet published
+        return proc
+
+    monkeypatch.setattr(shell.subprocess, 'Popen', delayed_popen)
+
+    async def scenario():
+        cancel = asyncio.Event()
+        command = (
+            f"trap 'printf handled > {handled}; exit 0' TERM; "
+            f"touch {ready}; while :; do sleep 0.05; done"
+        )
+        task = asyncio.create_task(exec_command(command, cancel=cancel))
+        try:
+            while not ready.exists():
+                await asyncio.sleep(0.01)
+            cancel.set()
+            await asyncio.sleep(0)  # let the cancellation watcher run first
+            release_pid.set()
+            with pytest.raises(ExecCancelled):
+                await asyncio.wait_for(task, 2)
+        finally:
+            release_pid.set()
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(scenario(), 3))
+    assert handled.read_text() == 'handled'
+
+
+def test_cancellation_during_delayed_pid_publication_kills_child(tmp_path, monkeypatch):
+    import seed_backend.shell as shell
+
+    real_popen = shell.subprocess.Popen
+    spawned = asyncio.Event()
+    loop = None
+
+    def delayed_popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        loop.call_soon_threadsafe(spawned.set)
+        import time
+        time.sleep(0.15)  # cancellation happens after launch, before PID publication
+        return proc
+
+    monkeypatch.setattr(shell.subprocess, 'Popen', delayed_popen)
+    marker = tmp_path / 'finished'
+
+    async def scenario():
+        nonlocal loop
+        loop = asyncio.get_running_loop()
+        session = ShellSession(cwd=tmp_path)
+        cancel = asyncio.Event()
+        task = asyncio.create_task(session.exec(f'sleep 0.5; touch {marker}', cancel=cancel))
+        await spawned.wait()
+        cancel.set()
+        with pytest.raises(ExecCancelled):
+            await asyncio.wait_for(task, 1.5)
+        return await asyncio.wait_for(session.exec('pwd'), 1)
+
+    assert asyncio.run(scenario()).stdout == f'{tmp_path}\n'
+    assert not marker.exists()
+
+
+def test_pwd_function_cannot_poison_session_cwd(tmp_path):
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        await session.exec('pwd() { printf "/does-not-exist\\n"; }; cd /tmp')
+        return session.cwd, await session.exec('pwd')
+
+    cwd, result = asyncio.run(scenario())
+    assert cwd == Path('/tmp')
+    assert result.stdout == '/tmp\n'
+
+
+def test_set_positional_parameters_cannot_redirect_cwd_report(tmp_path):
+    target = tmp_path / 'destination'
+    target.mkdir()
+
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        result = await session.exec('printf "%s|%s\\n" "$#" "$0"; set -- bogus path; cd destination')
+        return result, session.cwd, await session.exec('pwd')
+
+    result, cwd, next_result = asyncio.run(scenario())
+    assert result.stdout == '0|sh\n'
+    assert cwd == target
+    assert next_result.stdout == f'{target}\n'
+    assert not (tmp_path / 'path').exists()
+
+
+def test_session_timeout_includes_wait_for_lock(tmp_path):
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        first = asyncio.create_task(session.exec('sleep 0.35; cd /tmp'))
+        await asyncio.sleep(0.05)
+        start = asyncio.get_running_loop().time()
+        with pytest.raises(asyncio.TimeoutError):
+            await session.exec('touch should-not-run', timeout=0.05)
+        elapsed = asyncio.get_running_loop().time() - start
+        await first
+        return elapsed, session.cwd
+
+    elapsed, cwd = asyncio.run(scenario())
+    assert elapsed < 0.25
+    assert cwd == Path('/tmp')
+    assert not (tmp_path / 'should-not-run').exists()
+
+
+def test_session_task_cancellation_releases_lock_and_keeps_cwd(tmp_path):
+    async def scenario():
+        session = ShellSession(cwd=tmp_path)
+        task = asyncio.create_task(session.exec('cd /tmp; sleep 5'))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return await session.exec('pwd')
+
+    assert asyncio.run(scenario()).stdout == f'{tmp_path}\n'
 
 
 def test_shell_requires_runtime_capability_when_runtime_sets_one(monkeypatch):

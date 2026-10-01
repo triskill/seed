@@ -77,6 +77,7 @@ async def handle_chat(
     await websocket.accept()
     log.info("chat: client connected")
     subscriber_queue = None
+    subscription_owner = None
     forwarder_task = None
     try:
         try:
@@ -93,21 +94,30 @@ async def handle_chat(
                     log.warning("chat: dropping non-object frame")
                     continue
                 msg_type = msg.get("type")
-                if msg_type in ("user_message", "resume") and subscriber_queue is None:
-                    orchestrator = current_orchestrator() if current_orchestrator else orchestrator
-                    if msg_type == "resume":
-                        subscriber_queue = orchestrator.subscribe(msg.get('generationId'), msg.get('eventId'))
+                active = current_orchestrator() if current_orchestrator else orchestrator
+                if (current_orchestrator is not None and msg_type in ("user_message", "resume", "stop_task")
+                        and (active is None or not active.ready)):
+                    if msg_type == 'user_message' and isinstance(msg.get('requestId'), str):
+                        await websocket.send_text(json.dumps({'type': 'user_ack', 'requestId': msg['requestId'],
+                                                              'accepted': False, 'reason': 'Middleman unavailable'}))
                     else:
-                        subscriber_queue = orchestrator.subscribe()
+                        await websocket.send_text(json.dumps({'type': 'error', 'message': 'Middleman unavailable'}))
+                    continue
+                if msg_type in ("user_message", "resume") and subscriber_queue is None:
+                    subscription_owner = active
+                    if msg_type == "resume":
+                        subscriber_queue = active.subscribe(msg.get('generationId'), msg.get('eventId'))
+                    else:
+                        subscriber_queue = active.subscribe()
                     forwarder_task = asyncio.create_task(
                         _forward_events(websocket, subscriber_queue), name="chat-forwarder"
                     )
                 if msg_type == "user_message":
-                    await _handle_user_message(websocket, current_orchestrator() if current_orchestrator else orchestrator, msg)
+                    await _handle_user_message(websocket, active, msg)
                 elif msg_type == "resume":
                     pass
                 elif msg_type == "stop_task":
-                    await (current_orchestrator() if current_orchestrator else orchestrator).stop_task()
+                    await active.stop_task()
                 else:
                     log.warning("chat: unknown message type")
         except WebSocketDisconnect:
@@ -125,7 +135,7 @@ async def handle_chat(
             except (asyncio.CancelledError, Exception):
                 pass
         if subscriber_queue is not None:
-            orchestrator.unsubscribe(subscriber_queue)
+            subscription_owner.unsubscribe(subscriber_queue)
         log.info("chat: client torn down")
 
 

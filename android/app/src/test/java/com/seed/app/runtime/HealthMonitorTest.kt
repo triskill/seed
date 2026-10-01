@@ -34,7 +34,7 @@ class HealthMonitorTest {
             ),
         )
 
-        val states = HealthMonitor(api, intervalMs = 500, maxAttempts = 60)
+        val states = HealthMonitor(api, intervalMs = 500)
             .states()
             .toList()
 
@@ -47,6 +47,30 @@ class HealthMonitorTest {
             states,
         )
         assertEquals(1, api.healthCalls)
+    }
+
+    @Test
+    fun defaultBudgetAllowsLateReadinessAfterSixtyAttempts() = runTest {
+        val api = object : StubBackendApi() {
+            var calls = 0
+
+            override suspend fun health(): HealthResponse {
+                calls += 1
+                return HealthResponse(
+                    status = "ok",
+                    flask = if (calls == 151) "up" else "down",
+                )
+            }
+        }
+
+        val states = HealthMonitor(api, nowMs = { testScheduler.currentTime })
+            .states()
+            .toList()
+
+        assertEquals(151, api.calls)
+        assertEquals(HealthState.Polling(attempt = 151), states[151])
+        assertEquals(HealthState.Healthy(flask = "up"), states.last())
+        assertEquals(75_000, testScheduler.currentTime)
     }
 
     @Test
@@ -155,6 +179,37 @@ class HealthMonitorTest {
     }
 
     @Test
+    fun probeCompletingAfterPollingIntervalButWithinBackendBudgetIsHealthy() = runTest {
+        val api = object : StubBackendApi() {
+            var calls = 0
+
+            override suspend fun health(): HealthResponse {
+                calls += 1
+                delay(1_600)
+                return HealthResponse(status = "ok", flask = "up")
+            }
+        }
+
+        val states = HealthMonitor(
+            api = api,
+            intervalMs = 500,
+            maxAttempts = 2,
+            nowMs = { testScheduler.currentTime },
+        ).states().toList()
+
+        assertEquals(
+            listOf(
+                HealthState.Unknown,
+                HealthState.Polling(attempt = 1),
+                HealthState.Healthy(flask = "up"),
+            ),
+            states,
+        )
+        assertEquals(1, api.calls)
+        assertEquals(1_600, testScheduler.currentTime)
+    }
+
+    @Test
     fun exhaustedAttemptsEmitLastFailureAsUnhealthy() = runTest {
         val api = FakeBackendApi(
             responses = ArrayDeque(
@@ -242,7 +297,7 @@ class HealthMonitorTest {
             ),
             states,
         )
-        assertEquals(500, testScheduler.currentTime)
+        assertEquals(2_000, testScheduler.currentTime)
     }
 }
 
@@ -263,6 +318,7 @@ private abstract class StubBackendApi : BackendApi {
 
     override suspend fun shellExec(request: ShellExecRequest, authorization: String): ShellExecResponse =
         error("Not used by HealthMonitor")
+    override suspend fun updateModels(authorization: String): com.seed.app.data.ModelsUpdateResponse = error("Not used")
     override suspend fun models(provider: String, authorization: String): ModelsResponse = error("Not used")
     override suspend fun config(authorization: String): com.seed.app.data.PiConfigResponse = error("Not used")
     override suspend fun addProvider(request: ProviderModelsRequest, authorization: String): com.seed.app.data.PiConfigResponse = error("Not used")

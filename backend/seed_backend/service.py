@@ -39,6 +39,7 @@ from seed_backend.orchestrator import (
 from seed_backend.provider_allowlist import credential_env_for
 from seed_backend import pi_settings
 from seed_backend.pi_control import PiControlError, PiControlService
+from seed_backend.model_catalog import update_models
 from seed_backend.pi_runner import PiRunner
 from seed_backend.task_store import TaskStore
 from seed_backend.process_env import harden_process_visibility
@@ -206,7 +207,7 @@ def _new_control_service(
             read_only_tools=set(),
         )
 
-    return PiControlService(runner_factory=runner)
+    return PiControlService(runner_factory=runner, updater=update_models)
 
 
 def _new_orchestrator(
@@ -249,40 +250,114 @@ def _new_orchestrator(
 async def _replace_agents(app: FastAPI, selection: AgentApplyRequest) -> None:
     """Stop the old chat agents and start configured replacements in-place."""
     async with app.state.agent_lock:
+        if getattr(app.state, 'agent_shutdown', False):
+            raise RuntimeError('agent runtime is shutting down')
         previous = getattr(app.state, "orchestrator", None)
         # Persist first: a failed write must never leave new agents running with
         # the old default settings. Keep the snapshot for startup rollback.
         before = pi_settings.read_json('settings.json')
         pi_settings.save_selection(selection.provider, selection.model_id, selection.thinking_level)
-        replacement = _new_orchestrator(_app_url(), selection)
-        active_task = dict(previous.task_status) if previous is not None and previous._active else None
-        if previous is not None:
-            await previous.stop()
         try:
-            await replacement.start()
+            replacement = _new_orchestrator(_app_url(), selection)
         except BaseException:
-            await replacement.stop()
+            try:
+                pi_settings.restore_settings(before, selection)
+            except (OSError, pi_settings.ConfigConflictError):
+                log.exception('could not restore Pi settings after agent construction failure')
+                app.state.orchestrator = None
+                if previous is not None:
+                    try:
+                        await previous.stop()
+                    except BaseException:
+                        log.exception('could not stop previous agents after settings restore failure')
+            raise
+        active_task = dict(previous.task_status) if previous is not None and previous._active else None
+        # Do not expose the stopped generation while the replacement (or
+        # rollback) is starting. In particular, a failed restart must not
+        # leave a stale reference that looks usable to chat clients.
+        app.state.orchestrator = None
+        previous_stopped = False
+        try:
             if previous is not None:
+                # Drain any accepted RPC and its receipt before stopping the runner.
+                # A waiter that acquired the old generation before apply will see
+                # it unready after this lock is released, not send to a dead runner.
+                async with previous._acceptance_lock:
+                    await previous.stop()
+                    previous_stopped = True
+            await replacement.start()
+            if not replacement.ready:
+                raise RuntimeError('replacement agents are not ready')
+            if previous is not None:
+                replacement._subscribers = previous._subscribers
+                replacement._acceptances = previous._acceptances
+                replacement._acceptance_lock = previous._acceptance_lock
+                if active_task is not None:
+                    replacement.task_status = active_task
+                    # A failed durable write must roll back before publication.
+                    await replacement._status('interrupted', 'Task interrupted by model change')
+        except BaseException:
+            # Neither a stopped PiRunner nor a partially started generation can
+            # be restarted. Preserve the triggering error across cleanup failures.
+            try:
+                await replacement.stop()
+            except BaseException:
+                log.exception('could not stop failed replacement agents')
+            if previous is not None and not previous_stopped:
                 try:
-                    await previous.start()
-                    app.state.orchestrator = previous
-                except Exception:
-                    app.state.orchestrator = None
+                    await previous.stop()  # retry incomplete teardown after a stop error
+                except BaseException:
+                    log.exception('could not finish stopping previous agents')
             try:
                 pi_settings.restore_settings(before, selection)
             except (OSError, pi_settings.ConfigConflictError):
                 log.exception('could not restore Pi settings after agent start failure')
+            else:
+                if previous is not None:
+                    try:
+                        provider = before.get('defaultProvider')
+                        model = before.get('defaultModel')
+                        prior = (AgentApplyRequest(provider=provider, modelId=model,
+                                                  thinkingLevel=before.get('defaultThinkingLevel'))
+                                 if isinstance(provider, str) and isinstance(model, str) and provider and model
+                                 else None)
+                        restored = _new_orchestrator(_app_url(), prior)
+                        try:
+                            await restored.start()
+                            if not restored.ready:
+                                raise RuntimeError('restored agents are not ready')
+                        except BaseException:
+                            try:
+                                await restored.stop()
+                            except BaseException:
+                                log.exception('could not stop failed restored agents')
+                            raise
+                        restored._subscribers = previous._subscribers
+                        restored._acceptances = previous._acceptances
+                        restored._acceptance_lock = previous._acceptance_lock
+                        if active_task is not None:
+                            already_interrupted = (restored.task_status is not None
+                                and restored.task_status.get('taskId') == active_task['taskId']
+                                and restored.task_status.get('status') == 'interrupted')
+                            if not already_interrupted:
+                                restored.task_status = active_task
+                                await restored._status('interrupted', 'Task interrupted by model change')
+                            else:
+                                # The task store already interrupted the task during
+                                # restored construction. Notify inherited subscribers
+                                # without writing that status a second time.
+                                restored._terminal_tasks.add(active_task['taskId'])
+                                await restored._broadcast(dict(restored.task_status))
+                                await restored._broadcast({
+                                    'type': 'task_outcome', 'taskId': active_task['taskId'],
+                                    'status': 'interrupted', 'summary': 'Task interrupted',
+                                    'source': 'backend',
+                                })
+                        app.state.orchestrator = restored
+                    except BaseException:
+                        log.exception('could not create previous agent generation after apply failure')
             raise
-        if previous is not None:
-            # Existing chat forwarders retain their subscriber queues. Share the
-            # registry so new agent events still reach already-open sockets.
-            replacement._subscribers = previous._subscribers
-            replacement._acceptances = previous._acceptances
-            replacement._acceptance_lock = previous._acceptance_lock
-            app.state.orchestrator = replacement
-            if active_task is not None:
-                replacement.task_status = active_task
-                await replacement._status('interrupted', 'Task interrupted by model change')
+        # Publish only after task metadata is durable and subscribers notified.
         app.state.orchestrator = replacement
 
 
@@ -300,37 +375,47 @@ async def lifespan(app: FastAPI):
     manager = FlaskManager(port=7778)
     app.state.flask_manager = manager
     app.state.shell_session = ShellSession()
-    try:
-        flask_started = await manager.start()
-    except Exception as exc:
-        log.exception("Flask failed to start")
-        raise RuntimeError("Flask failed to start") from exc
-    if not flask_started:
-        # Do not advertise a usable API while the generated app and worker
-        # verification endpoint are unavailable. RuntimeSupervisor will see
-        # the process exit and retry the whole runtime generation.
-        raise RuntimeError("Flask failed to start; see /tmp/seed-flask-stderr.log")
-
-    app_url = _app_url()
-    # Keep catalog/selection RPC isolated from chat's long-lived agents. The
-    # service starts lazily when the protected control endpoint is requested.
-    control_service = _new_control_service(app_url)
-    app.state.control_service = control_service
+    app.state.orchestrator = None
     app.state.agent_lock = asyncio.Lock()
-    orchestrator = _new_orchestrator(app_url)
-    app.state.orchestrator = orchestrator
+    app.state.agent_shutdown = False
+    control_service = None
+    orchestrator = None
     try:
+        try:
+            flask_started = await manager.start()
+        except Exception as exc:
+            log.exception("Flask failed to start")
+            raise RuntimeError("Flask failed to start") from exc
+        if not flask_started:
+            # RuntimeSupervisor retries the whole generation.
+            raise RuntimeError("Flask failed to start; see /tmp/seed-flask-stderr.log")
+
+        app_url = _app_url()
+        # Catalog RPC starts lazily and remains isolated from chat agents.
+        control_service = _new_control_service(app_url)
+        app.state.control_service = control_service
+        orchestrator = _new_orchestrator(app_url)
         await orchestrator.start()
-    except Exception:
-        log.exception("pi orchestrator failed to start")
-
-    yield
-
-    current_orchestrator = getattr(app.state, "orchestrator", None)
-    if current_orchestrator is not None:
-        await current_orchestrator.stop()
-    await control_service.stop()
-    await manager.stop()
+        if not orchestrator.ready:
+            raise RuntimeError('pi orchestrator is not ready after startup')
+        app.state.orchestrator = orchestrator
+        yield
+    finally:
+        async with app.state.agent_lock:
+            app.state.agent_shutdown = True
+            current = getattr(app.state, 'orchestrator', None)
+            app.state.orchestrator = None
+            try:
+                if current is not None:
+                    await current.stop()
+                if orchestrator is not None and orchestrator is not current:
+                    await orchestrator.stop()
+            finally:
+                try:
+                    if control_service is not None:
+                        await control_service.stop()
+                finally:
+                    await manager.stop()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -345,11 +430,16 @@ async def safe_validation_error(request: Request, exc: RequestValidationError):
 
 
 @app.get("/health")
-def health(request: Request):
-    """Liveness + Flask readiness. Always 200 if the orchestrator is up."""
+async def health(request: Request):
+    """Report readiness only when both chat agents and Flask serve requests."""
     manager = getattr(request.app.state, "flask_manager", None)
-    flask_status = "up" if manager is not None and manager.is_up() else "down"
-    return {"status": "ok", "flask": flask_status}
+    flask_status = "up" if manager is not None and await manager.is_ready() else "down"
+    agents = getattr(request.app.state, 'orchestrator', None)
+    ready = flask_status == 'up' and agents is not None and agents.ready
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"status": "ok" if ready else "unavailable", "flask": flask_status},
+    )
 
 
 class ShellExecRequest(BaseModel):
@@ -380,11 +470,9 @@ class ShellExecResponse(BaseModel):
 async def shell_exec(payload: ShellExecRequest, request: Request) -> ShellExecResponse:
     """Run a shell command and return its captured output.
 
-    Task 1.5: the route now delegates to a per-app
-    `ShellSession` (created in the lifespan) instead of the
-    stateless module-level `exec_command`. That gives the
-    command sequence a persistent cwd across requests: a
-    `cd /tmp` in one call is visible to a `pwd` in the next.
+    The app-wide ShellSession persists the shell's final cwd and OLDPWD
+    across calls, serializing requests to keep their order deterministic.
+    It is shared by callers until authenticated client sessions exist.
     The response shape is unchanged.
     """
     _require_control_access(request, allow_development=True)
@@ -430,6 +518,13 @@ async def control_models(request: Request, provider: str | None = None, refresh:
     if provider is not None:
         result = {'models': [model for model in result['models'] if model['provider'] == provider]}
     return ModelsResponse.model_validate(result)
+
+
+@app.post('/control/v1/models/update')
+async def control_update_models(request: Request):
+    """Refresh authenticated Pi catalogs without changing settings or agents."""
+    _require_control_access(request)
+    return await _control_call(request.app.state.control_service.update_models)
 
 
 @app.get("/control/v1/thinking-levels", response_model=ThinkingLevelsResponse)
@@ -495,12 +590,7 @@ async def chat_endpoint(websocket: WebSocket) -> None:
     user messages to the middle-man. Streaming of agent output
     is added in Tasks 3.3-3.6.
 
-    Defensive: if the orchestrator never came up (the lifespan
-    could not spawn the `pi` processes), the connection is
-    closed with a 1011 (internal error) and a reason. This
-    should be rare in production — the lifespan swallows spawn
-    errors and leaves the orchestrator in app.state — but
-    belt-and-braces here.
+    If either agent becomes unavailable, reject the socket with 1011.
     """
     try:
         _require_websocket_access(websocket)
@@ -508,7 +598,7 @@ async def chat_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=1008, reason="invalid runtime capability")
         return
     orchestrator = getattr(websocket.app.state, "orchestrator", None)
-    if orchestrator is None:
-        await websocket.close(code=1011, reason="orchestrator not initialized")
+    if orchestrator is None or not orchestrator.ready:
+        await websocket.close(code=1011, reason="orchestrator unavailable")
         return
     await handle_chat(websocket, orchestrator, lambda: websocket.app.state.orchestrator)

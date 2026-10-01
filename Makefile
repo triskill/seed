@@ -7,6 +7,7 @@
 #   make backend    # start dev backend in the background
 #   make stop       # stop the emulator and the backend
 #   make test       # run backend tests
+#   make verify     # Python tests/static checks + Android JVM tests/lint
 #   make clean      # clean android build outputs and python caches
 #
 # Override the SDK location with ANDROID_HOME=/path/to/sdk on the
@@ -338,6 +339,23 @@ stop:  ## stop the emulator and the backend
 .PHONY: test
 test:  ## run backend + webapp tests (from repo root so both suites are picked up)
 	@.venv/bin/python -m pytest backend/ webapp/
+
+# Verification uses the editable dev installs in .venv. No emulator, device,
+# runtime assets, or generated rootfs are needed for these checks.
+.PHONY: verify verify-python verify-python-static verify-android
+verify: verify-python verify-python-static verify-android  ## run Python and Android CI checks locally
+
+verify-python:  ## run both Python suites
+	@.venv/bin/python -m pytest backend/ webapp/
+
+# Deliberately scoped to baseline-clean rules/modules. Expand only after fixing
+# existing diagnostics; do not suppress failures or claim full-project coverage.
+verify-python-static:  ## run incremental Python lint and type checks
+	@.venv/bin/ruff check --target-version py311 --select E4,E7,E9,F821,F823 backend/seed_backend webapp/seed_app
+	@.venv/bin/mypy --follow-imports=skip --ignore-missing-imports backend/seed_backend/config.py backend/seed_backend/flask_manager.py backend/seed_backend/process_env.py webapp/seed_app/app.py
+
+verify-android:  ## run Android JVM unit tests and debug lint (no device)
+	@cd android && ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug
 
 .PHONY: clean
 clean:  ## clean android build outputs, python caches, logs

@@ -75,6 +75,53 @@ class SettingsViewModel(
     private val _applying = MutableStateFlow(false)
     val applying: StateFlow<Boolean> = _applying.asStateFlow()
 
+    private val _modelsUpdating = MutableStateFlow(false)
+    val modelsUpdating: StateFlow<Boolean> = _modelsUpdating.asStateFlow()
+    private val _modelsUpdateError = MutableStateFlow<String?>(null)
+    val modelsUpdateError: StateFlow<String?> = _modelsUpdateError.asStateFlow()
+
+    /** Refresh cached catalogs only; never log in, apply agents, or replace form edits. */
+    fun updateModels() {
+        val service = api ?: return
+        if (_modelsUpdating.value || _applying.value || _catalogLoading.value) return
+        // Set guards before dispatch so taps queued in the same frame cannot race.
+        _modelsUpdating.value = true
+        _modelsUpdateError.value = null
+        val providerBeforeUpdate = _form.value.provider
+        viewModelScope.launch {
+            try {
+                check(service.updateModels("Bearer ${RuntimeService.controlCapability}").updated)
+                val config = service.config("Bearer ${RuntimeService.controlCapability}")
+                _configuredProviders.value = config.providers
+                _catalogLoading.value = true
+                _catalogError.value = null
+                try {
+                    fetchCatalog(service)
+                } finally {
+                    _catalogLoading.value = false
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (_: Exception) {
+                _modelsUpdateError.value = "Could not update models. Retry."
+                // Provider changes clear the old catalog, but loadCatalog is
+                // guarded during updates. Honor that deferred load even when
+                // the update failed; leave an unchanged provider's cache alone.
+                if (_form.value.provider != providerBeforeUpdate) {
+                    _catalogLoading.value = true
+                    _catalogError.value = null
+                    try {
+                        fetchCatalog(service)
+                    } finally {
+                        _catalogLoading.value = false
+                    }
+                }
+            } finally {
+                _modelsUpdating.value = false
+            }
+        }
+    }
+
     init {
         viewModelScope.launch {
             val loaded = repo.load()
@@ -103,11 +150,14 @@ class SettingsViewModel(
     /** Re-query Pi when Settings is entered; shell edits may have changed providers. */
     fun refreshConfiguration() {
         val service = api ?: return
+        if (_modelsUpdating.value || _applying.value) return
         viewModelScope.launch {
             try {
                 val config = service.config("Bearer ${RuntimeService.controlCapability}")
                 _configuredProviders.value = config.providers
                 if (_form.value.provider in config.providers) loadCatalog()
+            } catch (failure: CancellationException) {
+                throw failure
             } catch (_: Exception) {
                 _catalogError.value = "Could not load Pi configuration. Retry."
             }
@@ -159,52 +209,54 @@ class SettingsViewModel(
 
     fun loadCatalog() {
         val service = api ?: return
-        if (_catalogLoading.value) return
-        val provider = _form.value.provider
-        if (provider !in _configuredProviders.value) {
-            _catalog.value = emptyList()
-            _catalogError.value = null
-            return
-        }
+        if (_catalogLoading.value || _modelsUpdating.value) return
+        _catalogLoading.value = true
+        _catalogError.value = null
         viewModelScope.launch {
-            _catalogLoading.value = true
-            _catalogError.value = null
             try {
-                // Flask can report healthy just before the separate Pi control
-                // process has completed its RPC handshake. Retry that bounded
-                // startup window instead of leaving Settings permanently empty.
-                repeat(CATALOG_ATTEMPTS) { attempt ->
-                    try {
-                        val response = service.models(provider, "Bearer ${RuntimeService.controlCapability}")
-                        // Discard a response for a provider the user changed
-                        // while this request was in flight.
-                        if (_form.value.provider != provider) return@launch
-                        _catalog.value = response.models.map { it.toDomain() }
-                            .filter { it.provider == provider }
-                        return@launch
-                    } catch (failure: CancellationException) {
-                        throw failure
-                    } catch (_: Exception) {
-                        if (attempt < CATALOG_ATTEMPTS - 1) delay(CATALOG_RETRY_DELAY_MS)
-                    }
-                }
-                if (_form.value.provider == provider) {
-                    _catalogError.value = "Could not load models. Check login and retry."
-                }
+                fetchCatalog(service)
             } finally {
                 _catalogLoading.value = false
-                // A provider change during this request could not start its own
-                // load while the loading guard was set. Fetch it now instead.
-                if (_form.value.provider != provider) loadCatalog()
+            }
+        }
+    }
+
+    private suspend fun fetchCatalog(service: BackendApi) {
+        while (true) {
+            val provider = _form.value.provider
+            if (provider !in _configuredProviders.value) {
+                _catalog.value = emptyList()
+                _catalogError.value = null
+                return
+            }
+            // Retry the bounded Pi control startup window. If the user switches
+            // providers, discard this response and fetch the current catalog.
+            for (attempt in 0 until CATALOG_ATTEMPTS) {
+                try {
+                    val response = service.models(provider, "Bearer ${RuntimeService.controlCapability}")
+                    if (_form.value.provider != provider) break
+                    _catalog.value = response.models.map { it.toDomain() }
+                        .filter { it.provider == provider }
+                    return
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (_: Exception) {
+                    if (_form.value.provider != provider) break
+                    if (attempt < CATALOG_ATTEMPTS - 1) delay(CATALOG_RETRY_DELAY_MS)
+                }
+            }
+            if (_form.value.provider == provider) {
+                _catalogError.value = "Could not load models. Check login and retry."
+                return
             }
         }
     }
 
     /** Save a provider credential without disrupting the currently running app. */
     fun login(provider: String = _form.value.provider) {
-        if (_applying.value) return
+        if (_applying.value || _modelsUpdating.value || _catalogLoading.value) return
+        _applying.value = true
         viewModelScope.launch {
-            _applying.value = true
             _saveError.value = null
             try {
                 val credentials = _form.value.copy(provider = provider, model = "", thinkingLevel = "off")
@@ -233,17 +285,29 @@ class SettingsViewModel(
 
     /** Validate and apply Pi agents before persisting local non-secret preferences. */
     fun save() {
-        if (_applying.value) return
+        if (_applying.value || _modelsUpdating.value || _catalogLoading.value) return
+        _applying.value = true
         viewModelScope.launch {
             val current = _form.value
-            _applying.value = true
             _saveError.value = null
             try {
                 val option = _catalog.value.firstOrNull {
                     it.provider == current.provider && it.id == current.model
                 }
                 if (api != null) {
-                    check(current.provider in _configuredProviders.value && option != null) { "Choose a configured provider and catalog model" }
+                    val validationError = when {
+                        current.provider !in _configuredProviders.value ->
+                            "Choose a configured provider before saving model settings."
+                        option == null ->
+                            "Selected model is no longer available. Choose a model from the current catalog."
+                        current.thinkingLevel !in option.thinkingLevels ->
+                            "Selected thinking level is no longer available. Choose a supported thinking level."
+                        else -> null
+                    }
+                    if (validationError != null) {
+                        _saveError.value = validationError
+                        return@launch
+                    }
                     val response = api.validateSelection(
                         com.seed.app.data.SelectionRequest(
                             current.provider,

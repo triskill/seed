@@ -257,7 +257,7 @@ sealed class HealthState {
 class HealthMonitor(
     private val api: BackendApi,
     private val intervalMs: Long = 500,
-    private val maxAttempts: Int = 60,   // 30 seconds total
+    private val maxAttempts: Int = 240,  // ~120 seconds at 500 ms for fast failures
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
     fun state(): Flow<HealthState>

@@ -100,6 +100,10 @@ interface BackendApi {
         @Header("Authorization") authorization: String,
     ): ModelsResponse
 
+    /** Explicitly refresh Pi's cached model catalogs without applying settings. */
+    @POST("control/v1/models/update")
+    suspend fun updateModels(@Header("Authorization") authorization: String): ModelsUpdateResponse
+
     /** Thinking capabilities are derived from the exact Pi model metadata. */
     @GET("control/v1/thinking-levels")
     suspend fun thinkingLevels(
@@ -202,6 +206,8 @@ data class PiConfigResponse(
 )
 
 data class ModelsResponse(val models: List<PiModelDto> = emptyList())
+
+data class ModelsUpdateResponse(val updated: Boolean)
 
 data class ThinkingLevelsResponse(
     val provider: String,

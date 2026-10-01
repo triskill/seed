@@ -42,6 +42,16 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun settingsScreenDeclaresUpdateActionAndProgress() {
+        val source = settingsScreenSource()
+        assertTrue(source.contains("\"settings-update-models\""))
+        assertTrue(source.contains("viewModel::updateModels"))
+        assertTrue(source.contains("R.string.settings_action_update_models"))
+        assertTrue(source.contains("R.string.settings_models_updating"))
+        assertTrue(source.contains("!applying && !modelsUpdating"))
+    }
+
+    @Test
     fun settingsScreenSourceDeclaresLoginAndSaveTestTags() {
         val source = settingsScreenSource()
         assertTrue(

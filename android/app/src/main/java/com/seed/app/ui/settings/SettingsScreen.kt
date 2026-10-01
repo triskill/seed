@@ -94,6 +94,8 @@ fun SettingsScreen(
     val saveError by viewModel.saveError.collectAsState()
     val loginStatus by viewModel.loginStatus.collectAsState()
     val applying by viewModel.applying.collectAsState()
+    val modelsUpdating by viewModel.modelsUpdating.collectAsState()
+    val modelsUpdateError by viewModel.modelsUpdateError.collectAsState()
 
     Column(
         modifier = modifier
@@ -127,7 +129,7 @@ fun SettingsScreen(
         )
         Button(
             onClick = { viewModel.login(newProvider) },
-            enabled = !applying,
+            enabled = !applying && !modelsUpdating && !catalogLoading,
             modifier = Modifier.fillMaxWidth().semantics { testTag = "settings-login" },
         ) {
             Text(stringResource(R.string.settings_action_login))
@@ -139,13 +141,21 @@ fun SettingsScreen(
         HorizontalDivider()
         Text("Select provider", style = MaterialTheme.typography.titleMedium)
         ProviderDropdown(value = form.provider, providers = configuredProviders, onValueChange = viewModel::onProviderChange)
-        TextButton(onClick = viewModel::refreshConfiguration) { Text("Refresh providers from Pi") }
+        TextButton(onClick = viewModel::refreshConfiguration, enabled = !applying && !modelsUpdating) { Text("Refresh providers from Pi") }
 
         HorizontalDivider()
         Text(
             text = stringResource(R.string.settings_section_model),
             style = MaterialTheme.typography.titleMedium,
         )
+        Button(
+            onClick = viewModel::updateModels,
+            enabled = !applying && !modelsUpdating && !catalogLoading,
+            modifier = Modifier.fillMaxWidth().semantics { testTag = "settings-update-models" },
+        ) {
+            Text(stringResource(if (modelsUpdating) R.string.settings_models_updating else R.string.settings_action_update_models))
+        }
+        modelsUpdateError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         ModelDropdown(
             value = form.model,
             models = catalog,
@@ -155,7 +165,7 @@ fun SettingsScreen(
         catalogError?.let {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
-                TextButton(onClick = viewModel::loadCatalog) { Text(stringResource(R.string.settings_action_retry)) }
+                TextButton(onClick = viewModel::loadCatalog, enabled = !modelsUpdating && !catalogLoading) { Text(stringResource(R.string.settings_action_retry)) }
             }
         }
         saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -200,7 +210,7 @@ fun SettingsScreen(
 
         Button(
             onClick = viewModel::save,
-            enabled = !applying,
+            enabled = !applying && !modelsUpdating && !catalogLoading,
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { testTag = "settings-save" },

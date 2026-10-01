@@ -18,6 +18,7 @@ the test relies on.
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -99,38 +100,198 @@ def test_lifespan_stops_runners_on_shutdown(monkeypatch):
     assert orch_ref[0].worker.pid is None
 
 
-def test_lifespan_survives_missing_pi_command(monkeypatch):
-    """Lifespan doesn't crash when the configured pi cmd is unrunnable.
+@pytest.mark.parametrize('failed_role', ['middleman', 'worker'])
+def test_lifespan_agent_failure_aborts_and_cleans_up(monkeypatch, failed_role):
+    """Even a worker-only failure must abort startup and release Flask and Pi."""
+    from seed_backend.orchestrator import Orchestrator
+    from seed_backend.pi_runner import PiRunner
 
-    Production may run this in an environment where `pi` is not yet
-    installed (e.g. before Phase 4). The orchestrator should still
-    come up — `/health` and `/shell/exec` work, only `/chat` will
-    fail when someone tries to send a message. The lifespan swallows
-    the spawn failure and leaves the orchestrator in app.state.
-    """
-    # Popen reports this missing executable synchronously; the lifespan logs
-    # the failure and keeps the non-agent application surface available.
-    monkeypatch.setattr(service, "pi_cmd_for_role", lambda role: [
-        "/nonexistent/pi/binary/that/does/not/exist"
-    ])
-    with TestClient(app) as client:
-        # The orchestrator exists (even if its runners are dead).
-        assert client.app.state.orchestrator is not None
-        # Flask + /health still work — orchestrator failure didn't
-        # take down the app.
-        response = client.get("/health")
-        assert response.status_code == 200
+    managers = []
+    agents = []
+    controls = []
 
-def test_lifespan_fails_when_generated_flask_cannot_start(monkeypatch):
-    """A missing Flask endpoint fails the runtime instead of serving degraded API."""
+    class Control:
+        async def stop(self):
+            self.stopped = True
+
+    def make_control(url):
+        control = Control()
+        control.stopped = False
+        controls.append(control)
+        return control
+
+    class Manager:
+        def __init__(self, **kwargs):
+            self.stopped = False
+            managers.append(self)
+
+        async def start(self):
+            return True
+
+        async def stop(self):
+            self.stopped = True
+
+    def make_agents(url):
+        good = _fake_pi_cmd()
+        bad = ['/nonexistent/seed-pi-executable']
+        orch = Orchestrator(
+            PiRunner(bad if failed_role == 'middleman' else good, role='middleman'),
+            PiRunner(bad if failed_role == 'worker' else good, role='worker'),
+        )
+        agents.append(orch)
+        return orch
+
+    monkeypatch.setattr(service, 'FlaskManager', Manager)
+    monkeypatch.setattr(service, '_new_control_service', make_control)
+    monkeypatch.setattr(service, '_new_orchestrator', make_agents)
+    isolated_app = service.FastAPI(lifespan=service.lifespan)
+    with pytest.raises(FileNotFoundError):
+        with TestClient(isolated_app):
+            pass
+    assert managers[0].stopped
+    assert controls[0].stopped
+    assert isolated_app.state.orchestrator is None
+    assert not agents[0].ready
+    assert agents[0].middleman.pid is agents[0].worker.pid is None
+
+
+def test_lifespan_shutdown_waits_for_inflight_apply_and_stops_replacement(monkeypatch, tmp_path):
+    monkeypatch.setenv('PI_CODING_AGENT_DIR', str(tmp_path))
+    starting = asyncio.Event()
+    release = asyncio.Event()
+    agents = []
+
+    class Manager:
+        def __init__(self, **kwargs): pass
+        async def start(self): return True
+        async def stop(self): pass
+
+    class Agents:
+        def __init__(self, gated=False):
+            self.gated = gated
+            self.ready = False
+            self.task_status = None
+            self._active = False
+            self._subscribers = set()
+            self._acceptances = {}
+            self._acceptance_lock = asyncio.Lock()
+            self.stops = 0
+            agents.append(self)
+
+        async def start(self):
+            if self.gated:
+                starting.set()
+                await release.wait()
+            self.ready = True
+
+        async def stop(self):
+            self.ready = False
+            self.stops += 1
+
+    monkeypatch.setattr(service, 'FlaskManager', Manager)
+    monkeypatch.setattr(service, '_new_control_service', lambda url: type('Control', (), {'stop': lambda self: asyncio.sleep(0)})())
+    monkeypatch.setattr(service, '_new_orchestrator', lambda url, selection=None: Agents(selection is not None))
+
+    async def scenario():
+        isolated = service.FastAPI(lifespan=service.lifespan)
+        context = service.lifespan(isolated)
+        await context.__aenter__()
+        applying = asyncio.create_task(service._replace_agents(
+            isolated, service.AgentApplyRequest(provider='openai', modelId='new')))
+        await asyncio.wait_for(starting.wait(), 2)
+        shutting_down = asyncio.create_task(context.__aexit__(None, None, None))
+        await asyncio.sleep(0)
+        assert not shutting_down.done()
+        release.set()
+        await applying
+        await shutting_down
+        assert isolated.state.orchestrator is None
+        assert len(agents) == 2
+        assert all(not agent.ready and agent.stops >= 1 for agent in agents)
+        with pytest.raises(RuntimeError, match='shutting down'):
+            await service._replace_agents(isolated, service.AgentApplyRequest(provider='openai', modelId='another'))
+        assert len(agents) == 2
+        assert service.pi_settings.read_json('settings.json')['defaultModel'] == 'new'
+
+    asyncio.run(scenario())
+
+
+def test_real_runner_exit_makes_health_unavailable_and_rejects_chat(monkeypatch):
+    import os
+    import signal
+    import time
+    from starlette.websockets import WebSocketDisconnect
+
+    class Manager:
+        def __init__(self, **kwargs): pass
+        async def start(self): return True
+        async def stop(self): pass
+        async def is_ready(self): return True
+
+    monkeypatch.setattr(service, 'FlaskManager', Manager)
+    monkeypatch.setattr(service, 'pi_cmd_for_role', lambda role: _fake_pi_cmd())
+    isolated_app = service.FastAPI(lifespan=service.lifespan)
+    isolated_app.add_api_route('/health', service.health, methods=['GET'])
+    isolated_app.add_api_websocket_route('/chat', service.chat_endpoint)
+    with TestClient(isolated_app) as client:
+        agents = isolated_app.state.orchestrator
+        assert client.get('/health').status_code == 200
+        os.kill(agents.middleman.pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while agents.middleman.ready and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert not agents.middleman.ready
+        assert client.get('/health').status_code == 503
+        with pytest.raises(WebSocketDisconnect) as caught:
+            with client.websocket_connect('/chat') as ws:
+                ws.receive_text()
+        assert caught.value.code == 1011
+
+
+def test_health_and_chat_reject_unready_agents(monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+
+    isolated_app = service.FastAPI()
+    isolated_app.add_api_route('/health', service.health, methods=['GET'])
+    isolated_app.add_api_websocket_route('/chat', service.chat_endpoint)
+
+    class Manager:
+        async def is_ready(self):
+            return True
+
+    class Agents:
+        ready = False
+
+    isolated_app.state.flask_manager = Manager()
+    isolated_app.state.orchestrator = Agents()
+    with TestClient(isolated_app) as client:
+        response = client.get('/health')
+        assert response.status_code == 503
+        assert response.json()['flask'] == 'up'
+        with pytest.raises(WebSocketDisconnect) as caught:
+            with client.websocket_connect('/chat') as ws:
+                ws.receive_text()
+        assert caught.value.code == 1011
+
+@pytest.mark.parametrize('raises', [False, True])
+def test_lifespan_fails_when_generated_flask_cannot_start(monkeypatch, raises):
+    """Failed Flask startup releases a partially spawned process too."""
+    stopped = []
+
     async def failed_start(self):
-        self.mode = "failed"
+        if raises:
+            raise OSError('partial launch')
         return False
 
+    async def stop(self):
+        stopped.append(True)
+
     monkeypatch.setattr(service.FlaskManager, "start", failed_start)
-    monkeypatch.setattr(service, "pi_cmd_for_role", lambda role: _fake_pi_cmd())
+    monkeypatch.setattr(service.FlaskManager, "stop", stop)
     isolated_app = service.FastAPI(lifespan=service.lifespan)
 
     with pytest.raises(RuntimeError, match="Flask failed to start"):
         with TestClient(isolated_app):
             pass
+    assert stopped == [True]
+    assert isolated_app.state.orchestrator is None

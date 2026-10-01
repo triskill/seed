@@ -299,7 +299,7 @@ activity is backgrounded.
 |---|---|---|---|
 | 8.0 | Native proot + asset rootfs installation (Phase 7 carryover) | `android/app/src/main/jniLibs/{arm64-v8a,x86_64}/` (selected ABI's four native libraries), `android/app/src/main/assets/linux/{rootfs.tar.gz,seed_version.json}`, `runtime/{NativeProot,RuntimeExtractor}.kt`, related tests | ✅ Runtime generation publishes PRoot, its loader, and required shared libraries through the selected native-library ABI and keeps rootfs/version as assets. AGP expands source `rootfs.tar.gz` to merged `rootfs.tar`, stored with `noCompress`; extraction streams it into `filesDir/linux/rootfs/` with Commons Compress. It preserves supported files, symlinks, and executable modes, materializes hard links as independent copies because Android SELinux denies filesystem hard links in private app data, rejects traversal, observes cancellation, and removes partial rootfs trees on failure. JVM and shell suites cover these boundaries. |
 | 8.1 | `ProotRunner` | `app/src/main/java/com/seed/app/runtime/ProotRunner.kt`, `app/src/test/java/com/seed/app/runtime/ProotRunnerTest.kt` | ✅ Spawns `proot -r filesDir/linux/rootfs -b /dev -b /proc --kill-on-exit /bin/sh -c "cd /home/seed/backend && exec uvicorn seed_backend.service:app --host 127.0.0.1 --port 7777"` via an injected `ProcessFactory`; exposes `isAlive`, `destroy()`, and separate stdout/stderr flows. Their 64-capacity channels buffer early output and apply backpressure once full. `destroy()` is idempotent and non-blocking: SIGTERM is followed by a daemon-thread five-second wait and `destroyForcibly()` escalation. **11 JVM tests currently** (9 at the initial Phase 8 task). |
-| 8.2 | `HealthMonitor` | `app/src/main/java/com/seed/app/runtime/HealthMonitor.kt`, `app/src/test/java/com/seed/app/runtime/HealthMonitorTest.kt` | ✅ Cold `Flow<HealthState>` emits `Unknown`, then polls `BackendApi.health()` every 500 ms for up to 60 attempts. Each request has a 500 ms timeout; failed probes retry, exhaustion emits the final error as `Unhealthy`, and cancellation propagates. Any successful backend response is `Healthy(flask)`, including `flask="down"`. **8 JVM tests** cover immediate success, Flask-down readiness, fixed retry cadence, exhausted attempts, request timeout, and cancellation during both a probe and retry delay. |
+| 8.2 | `HealthMonitor` | `app/src/main/java/com/seed/app/runtime/HealthMonitor.kt`, `app/src/test/java/com/seed/app/runtime/HealthMonitorTest.kt` | ✅ Cold `Flow<HealthState>` emits `Unknown`, then polls `BackendApi.health()` at a 500 ms minimum cadence for up to 240 attempts (about 120 seconds for fast failures, allowing Flask startup and sequential Pi probes). Each request has a 2-second timeout; failed probes and `flask="down"` responses retry, exhaustion emits `Unhealthy`, and cancellation propagates. Only `flask="up"` is `Healthy`. JVM tests cover late readiness beyond 60 attempts, immediate success, Flask-down retries, retry cadence, exhausted attempts, request timeout, and cancellation during both a probe and retry delay. |
 | 8.3 | `RuntimeService` (foreground) | `app/src/main/java/com/seed/app/runtime/{RuntimeService,RuntimeBinder}.kt` (new), `data/ApiModule.kt` (modified) | ✅ `RuntimeService` promotes itself immediately, resolves a `NativeProotInstallation` (executable, loader, libtalloc, and libandroid-shmem) from `applicationInfo.nativeLibraryDir`, starts it with `HOME`, `LANG`, `PATH`, `TERM`, `PROOT_TMP_DIR`, `PROOT_LOADER`, and `LD_LIBRARY_PATH`, logs both output streams, and polls the loopback backend through `ApiModule.embedded`. `RuntimeBinder` exposes health, process liveness, and stop. `onDestroy` terminates proot and cancels the service scope. The x86_64 service wiring, embedded uvicorn, and health polling were accepted on the emulator on 2026-08-12. |
 | 8.4 | Manifest + permissions + notification channel | `app/src/main/AndroidManifest.xml`, `app/src/main/java/com/seed/app/SeedApp.kt`, `app/src/main/res/drawable/ic_stat_seed.xml`, `res/values/strings.xml` | ✅ Declares `FOREGROUND_SERVICE`, Android 14's `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, and the non-exported `dataSync` service. `SeedApp` creates the low-importance `seed_runtime` channel on API 26+, and the ongoing service notification uses a monochrome vector icon plus a `MainActivity` content intent. The API 33 notification prompt remains Phase 9 activity wiring. |
 
@@ -333,18 +333,18 @@ roughly by release risk rather than by the historical phase numbering.
    The Termux artifacts used by Seed are publicly downloadable from JitPack.
    Anonymous HTTP downloads and a Gradle dependency refresh both succeeded, so
    the token and all JitPack credential-loading code were removed rather than
-   replaced with local/CI secret handling. The exposed token must still be
-   revoked, and repository-history cleanup and automated secret scanning remain
-   follow-up security work.
+   replaced with local/CI secret handling. The credential owner reports the exposed token was revoked and is no longer
+   valid (2026-09-29). Owner decided to leave the revoked token in Git history;
+   automated secret scanning remains follow-up security work.
 2. **Restore a trustworthy verification baseline.** Fix
    `NativeProotSmokeTest` to use `ProotEnvironment.createBackend` (or the correct
    test-specific environment) so `assembleDebugAndroidTest` compiles, then run
    all 6 connected methods on matching targets. Investigate the intermittent
    process-group-cleanup and Flask-readiness failures seen on the first combined
-   Python run; remove `test_service.py`'s machine-specific checkout path,
-   global-default monkeypatch, and fixed-port coupling. Add a top-level `verify`
-   target, CI, and Python lint/type/static checks (`make test` currently means
-   only the Python suites).
+   Python run. `test_service.py`'s machine-specific checkout path, global-default
+   monkeypatch and fixed-port coupling have been removed; `make verify`, CI and
+   incremental Python lint/type checks were added (see `docs/verification.md`).
+   Expand static coverage and run the still-unaccepted connected suite.
 3. **Android-compatible `PiRunner` — completed 2026-08-14.** The direct-argv
    `subprocess.Popen`/pipe implementation is accepted on x86_64, including two
    live pi RPC processes and an error round-trip. A successful provider-backed
@@ -487,15 +487,20 @@ Android tooling only; Python dependencies come from
   is not a fully persistent shell. It has no focused tests or recorded device
   run. The legacy HTTP endpoint remains available; its library can cancel, but
   the protocol cannot, and merged process pipes leave `stderr` empty.
-- **`ShellSession` cwd tracking is heuristic and process-global.** Only a
-  leading `cd <path>` is recognized, concurrent callers share the same cwd,
-  and every command still runs in a fresh shell.
+- **Legacy HTTP `ShellSession` is process-global.** Complete shell expressions
+  now run through `sh -c`, preserving final cwd/OLDPWD through private reporting
+  files; calls are serialized. Every call still uses a fresh shell, so other
+  shell state is not persistent, and callers still share one session.
 - **Chat and agent sessions are process-global.** Clients share the two agent
   conversations and receive one another's events; queues may drop old events,
   offline sends can be lost, and there is no replay/history persistence.
-- **Verification automation is incomplete and currently blocked on QEMU Pi.**
-  There is no CI or Python lint/type-check configuration. JVM tests pass 190/190,
-  and the 2-class / 6-method instrumentation APK compiles. On the ARM64 Moto G32,
+- **Verification is still incomplete at the connected-device boundary.**
+  GitHub Actions now runs Python suites, scoped static checks, Android JVM tests,
+  debug lint and a tracked-HEAD secret scan; `make verify` runs the same code
+  checks locally. On 2026-09-29, `make verify` passed (276 Python tests plus
+  Android JVM/lint); the static checks and pinned HEAD secret scan passed.
+  This is not device acceptance.
+  The 2-class / 6-method instrumentation APK compiles. On the ARM64 Moto G32,
   the QEMU smoke test confirms extraction and guest Python, then Pi's real RPC
   path does not emit its expected JSONL response before the 20-second smoke
   timeout; subsequent Compose methods can report `No compose hierarchies found`.
@@ -515,14 +520,15 @@ Android tooling only; Python dependencies come from
   ~370.6 MB); one stale incremental build grew to ~793 MB. Release
   signing/minification are unfinished, the project license
   is TBD, and PRoot/Termux/dependency license and source obligations must be
-  resolved.
+  resolved (inventory and owner decisions: `docs/release-license-audit.md`).
 - **Pi uses `--no-session`.** Per-process pi session files are intentionally
   disabled, but orchestrator-level chat/task history and reconnect replay have
   not been implemented.
 - **A dependency-repository credential was historically committed.** JitPack
   authentication is unnecessary and has been removed from the current tree,
-  but the exposed token remains in Git history and must be revoked. Decide
-  whether to rewrite repository history and add automated secret scanning.
+  and the credential owner reports the exposed token was revoked (2026-09-29).
+  Its historical appearance remains; owner decided not to rewrite repository
+  history. Add automated secret scanning.
 - **Repository state:** `main` is synchronized with `origin/main` at `e2abf98`.
   The staged Qwen suggestion file is the only pre-existing working-tree change;
   it is input to this audit, not implemented work.

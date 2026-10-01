@@ -15,7 +15,6 @@ license = { text = "TBD" }
 dependencies = [
     # Task 0.2: FastAPI orchestrator service.
     "fastapi>=0.110",
-    "uvicorn>=0.27",
     # Task 3.7: uvicorn needs an ASGI WS lib to handle the
     # /chat upgrade. `uvicorn[standard]` pulls in `websockets`
     # + `httptools` for production; tests can run without it
@@ -31,6 +30,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "ruff==0.13.3",
+    "mypy==1.18.2",
 ]
 
 [tool.hatch.build.targets.wheel]

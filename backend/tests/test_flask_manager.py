@@ -10,9 +10,84 @@ import socket
 import time
 from pathlib import Path
 
+import pytest
+
 import httpx
 
 from seed_backend.flask_manager import FLASK_STARTUP_TIMEOUT_SECONDS, FlaskManager
+
+
+@pytest.mark.parametrize(
+    ('outcome', 'expected'),
+    [('healthy', True), ('non200', False), ('timeout', False), ('connection', False)],
+)
+def test_is_ready_probes_live_parent_and_requires_http_200(monkeypatch, outcome, expected):
+    """A surviving reloader parent is not evidence its Flask worker serves ping."""
+    manager = FlaskManager(port=18123)
+
+    class LiveProcess:
+        def poll(self):
+            return None
+
+    manager._process = LiveProcess()
+    real_client = httpx.AsyncClient
+    requests = []
+
+    def client_factory(*args, **kwargs):
+        async def respond(request):
+            requests.append(request.url)
+            if outcome == 'timeout':
+                raise httpx.ReadTimeout('ping timed out', request=request)
+            if outcome == 'connection':
+                raise httpx.ConnectError('worker disconnected', request=request)
+            return httpx.Response(200 if outcome == 'healthy' else 503)
+
+        assert kwargs.get('timeout') is not None
+        return real_client(transport=httpx.MockTransport(respond), *args, **kwargs)
+
+    monkeypatch.setattr('seed_backend.flask_manager.httpx.AsyncClient', client_factory)
+    assert asyncio.run(manager.is_ready()) is expected
+    assert [str(url) for url in requests] == ['http://127.0.0.1:18123/api/ping']
+
+
+def test_is_ready_bounds_a_stalled_ping_without_blocking_event_loop(monkeypatch):
+    manager = FlaskManager(port=18123)
+
+    class LiveProcess:
+        def poll(self):
+            return None
+
+    manager._process = LiveProcess()
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        async def stalled(request):
+            await asyncio.sleep(10)
+            return httpx.Response(200)
+
+        return real_client(transport=httpx.MockTransport(stalled), *args, **kwargs)
+
+    monkeypatch.setattr('seed_backend.flask_manager.httpx.AsyncClient', client_factory)
+
+    async def scenario():
+        ticks = []
+
+        async def other_work():
+            await asyncio.sleep(0.01)
+            ticks.append(True)
+
+        result, _ = await asyncio.gather(manager.is_ready(), other_work())
+        assert result is False
+        assert ticks == [True]
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=3))
+
+
+def test_is_ready_skips_ping_when_parent_exits(monkeypatch):
+    manager = FlaskManager(port=18123)
+    monkeypatch.setattr('seed_backend.flask_manager.httpx.AsyncClient',
+                        lambda *args, **kwargs: pytest.fail('dead parent must not be probed'))
+    assert asyncio.run(manager.is_ready()) is False
 
 
 def test_flask_manager_starts_and_stops():

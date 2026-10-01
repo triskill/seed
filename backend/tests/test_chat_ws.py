@@ -77,6 +77,50 @@ def _wait_for_file(path: Path, timeout_s: float = 5.0) -> bool:
     return False
 
 
+def test_chat_during_apply_rejects_messages_without_losing_subscription():
+    import asyncio
+    from fastapi import WebSocketDisconnect
+    from seed_backend.chat import handle_chat
+
+    class Agents:
+        ready = True
+        def __init__(self):
+            self.queues = set()
+        def subscribe(self, *args):
+            queue = asyncio.Queue()
+            self.queues.add(queue)
+            return queue
+        def unsubscribe(self, queue):
+            self.queues.remove(queue)
+        async def accept_user_message(self, *args):
+            raise AssertionError('must not send during apply')
+
+    class Socket:
+        def __init__(self):
+            self.sent = []
+            self.frames = iter([
+                {'type': 'user_message', 'text': 'hello', 'requestId': 'one'},
+                {'type': 'resume'},
+            ])
+        async def accept(self): pass
+        async def receive_text(self):
+            try:
+                return json.dumps(next(self.frames))
+            except StopIteration:
+                raise WebSocketDisconnect()
+        async def send_text(self, text): self.sent.append(json.loads(text))
+
+    async def scenario():
+        agents = Agents()
+        current = [None]
+        socket = Socket()
+        await handle_chat(socket, agents, lambda: current[0])
+        assert socket.sent[0] == {'type': 'user_ack', 'requestId': 'one', 'accepted': False,
+                                  'reason': 'Middleman unavailable'}
+        assert agents.queues == set()
+    asyncio.run(scenario())
+
+
 def test_chat_ws_forwards_user_message_to_middle_man(chat_client):
     """A user_message over /chat reaches the middle-man pi subprocess.
 

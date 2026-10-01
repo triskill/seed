@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Fake pi that logs the received prompt to a file (Task 3.2).
 
-Unlike the other fake pi fixtures, this one doesn't speak the
-JSONL event protocol. It reads one line of stdin, writes the
-prompt to a log file (path given as `--log`), and exits. The
+This fixture answers startup get_state RPC, then reads a prompt,
+logs it to a file (path given as `--log`), and exits. The
 test that drives the WebSocket /chat endpoint checks the log
 file to verify the user message reached the middle-man — a
 simpler, file-based check than reaching into the runner's
@@ -35,7 +34,18 @@ def main() -> int:
     # (older tests, manual usage). The log file is what the
     # tests assert on, so we write the *message* — the user
     # text or dispatch JSON, not the RPC wrapper.
-    line = sys.stdin.readline()
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            break
+        if isinstance(request, dict) and request.get('type') == 'get_state':
+            print(json.dumps({'type': 'response', 'command': 'get_state',
+                              'id': request.get('id'), 'success': True}), flush=True)
+            continue
+        break
+    else:
+        line = ''
     prompt = ""
     if line:
         try:
