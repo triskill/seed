@@ -64,6 +64,10 @@ class RuntimeService : Service() {
                 Log.w(TAG, "Could not observe DNS changes", failure)
             }
         }
+        val processFactory = androidOwnedRuntimeProcessFactory(
+            receiptRoot = File(cacheDir, "runtime-ownership"),
+            onFailure = { failure -> Log.e(TAG, "Runtime ownership/cleanup failed", failure) },
+        )
         supervisor = RuntimeSupervisor(
             scope = serviceScope,
             startProcess = {
@@ -83,6 +87,7 @@ class RuntimeService : Service() {
                     prootExecutable = nativeProot.executable,
                     rootfsDir = File(runtimeDir, ROOTFS_DIRECTORY),
                     env = baseEnvironment,
+                    factory = processFactory,
                 )
                 runner.start(serviceScope).also(::collectRuntimeLogs)
             },

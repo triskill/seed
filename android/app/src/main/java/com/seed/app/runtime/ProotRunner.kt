@@ -13,6 +13,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -40,9 +41,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * command is the v0.1 launch — matches `backend/scripts/dev.sh`
  * (minus `--reload`, which spawns an extra watcher process we
  * don't want inside proot). The `exec` is important: it makes
- * uvicorn the foreground process inside proot, so SIGTERM from
- * `handle.destroy()` reaches uvicorn directly (not a bash
- * wrapper) and the proot child exits as soon as uvicorn exits.
+ * uvicorn the initial guest process rather than a shell wrapper. Production
+ * shutdown uses an owned tracer identity and PRoot's QUIT/CONT cleanup handler;
+ * TERM is ignored by the pinned PRoot, and Java force-destroy is not a portable
+ * Android SIGKILL guarantee.
  *
  * **Networking.** Proot shares the network namespace with the
  * parent by default, so `127.0.0.1:7777` inside proot is
@@ -104,21 +106,16 @@ class ProotRunner(
         override val stdout: Flow<String> = stdoutFlow
         override val stderr: Flow<String> = stderrFlow
         override fun destroy() {
-            if (!stopping.compareAndSet(false, true)) return
-            // Force-close stdin/stdout/stderr immediately. This unblocks any
-            // pending readLine() on the drain coroutine and lets the channel
-            // close in finally, signalling "process closed" to the supervisor
-            // without waiting for the JVM `Process.isAlive()` (which on
-            // Android is unreliable for Termux PRoot).
-            runCatching {
-                process.outputStream?.close()
-                process.inputStream?.close()
-                process.errorStream?.close()
+            if (!stopping.compareAndSet(false, true)) {
+                // Failed admission/inspection may be retried, without duplicate in-flight workers.
+                if (process is OwnedRuntimeProcess) process.destroy()
+                return
             }
+            // Owned Android processes schedule verified QUIT/CONT here without
+            // touching pipes. Signal delivery must never wait for a blocked read.
             process.destroy()
-            // Best-effort daemon escalation. The JVM's group kill is unreliable
-            // for Termux PRoot, but a follow-up SIGKILL is harmless if the
-            // process has already exited from the stream close.
+            // Legacy JVM factories retain their platform policy. Owned processes
+            // deliberately do not turn force-destroy into tracer-only SIGKILL.
             Thread({
                 try {
                     if (!process.waitFor(terminationGracePeriodMs, TimeUnit.MILLISECONDS)) {
@@ -127,6 +124,8 @@ class ProotRunner(
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     if (process.isAlive) process.destroyForcibly()
+                } finally {
+                    if (!process.isAlive) closeExitedProcessPipes(process)
                 }
             }, "seed-proot-stop").apply {
                 isDaemon = true
@@ -136,12 +135,13 @@ class ProotRunner(
 
         private suspend fun drain(stream: InputStream, sink: Channel<String>) {
             try {
-                BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
-                    var line = reader.readLine()
-                    while (line != null) {
-                        sink.send(line)
-                        line = reader.readLine()
-                    }
+                // The process owner handles pipe closing on bounded cleanup workers.
+                // Closing here during cancellation could block before sink.close().
+                val reader = BufferedReader(InputStreamReader(stream, Charsets.UTF_8))
+                var line = reader.readLine()
+                while (line != null) {
+                    sink.send(line)
+                    line = reader.readLine()
                 }
             } catch (closed: IOException) {
                 // destroy() on the parent handle closes the process pipes from
@@ -152,8 +152,8 @@ class ProotRunner(
                 // into the dispatcher and would otherwise reach the JVM's
                 // default uncaught handler and crash the process. Treat
                 // stream closure as the natural end of this drain: the
-                // channel's collectors see an EOF and the supervisor spawns
-                // the next generation. The IOException is intentionally not
+                // channel's collectors see an EOF. EOF alone does not authorize
+                // replacement; the supervisor separately confirms handle exit. The IOException is intentionally not
                 // logged because every generation replacement triggers one.
             } finally {
                 sink.close()
@@ -162,6 +162,24 @@ class ProotRunner(
     }
 
     private companion object {
+        // A blocking close cannot stall signal delivery or allocate unbounded workers.
+        private val pipeCleanupPermits = Semaphore(4)
+        fun closeExitedProcessPipes(process: Process) {
+            if (!pipeCleanupPermits.tryAcquire()) return
+            try {
+                Thread({
+                    try {
+                        runCatching { process.outputStream.close() }
+                        runCatching { process.inputStream.close() }
+                        runCatching { process.errorStream.close() }
+                    } finally { pipeCleanupPermits.release() }
+                }, "seed-runtime-pipe-cleanup").apply { isDaemon = true }.start()
+            } catch (failure: Exception) {
+                pipeCleanupPermits.release()
+                throw failure
+            }
+        }
+
         const val EARLY_OUTPUT_BUFFER_LINES = 64
 
         // The shell command run inside proot. Hard-coded for v0.1
@@ -182,20 +200,16 @@ class ProotRunner(
  * **No `pid` field** — Android's [java.lang.Process] does not
  * expose `pid()` (it was added in JDK 9 but not to the Android
  * API), and the standard `Process.toHandle()` is also missing.
- * The PID isn't actionable for our use case (we never need to
- * `kill -9` by PID — `handle.destroy()` goes through
- * [Process.destroy] which uses the handle), so we drop it
- * rather than resort to a `sh -c 'echo $$; ...'` trick to
- * recover the PID from stdout. A v0.2 task can add it back
- * with that trick if logcat ever needs to correlate lines
- * with a PID.
+ * Production captures a verified PID/start-time receipt in a separate owned
+ * factory, not application stdout. That identity is internal to shutdown and
+ * is deliberately not exposed through the UI-facing handle.
  */
 interface ProotHandle {
     val isAlive: Boolean
     val stdout: Flow<String>
     val stderr: Flow<String>
 
-    /** Sends SIGTERM and asynchronously escalates after a five-second grace period. */
+    /** Request shutdown; owned Android runtimes use QUIT/CONT, not Java TERM/KILL. */
     fun destroy()
 
     /** Await the handle's exit observation; Android ownership still needs device validation. */

@@ -22,15 +22,33 @@ then all 25 supervisor tests passed. Full verification passed 272 JVM tests,
 debug lint and both APK builds. Review found no blocking defects in this scoped
 increment. The ten-second deadline bounds `awaitExit`, not synchronous pipe
 closure inside `destroy()`; Android liveness remains unproven. No device run:
-the phone is disconnected. Changes remain uncommitted.
+the phone is disconnected. This gate was committed as `1906bc8`.
 
-## Task 2: Reliable Android ownership and termination (not implemented here)
+## Task 2: Android ownership and PRoot-specific termination (implemented; device pending)
 
 1. Investigate a bounded host-shell launch receipt/acknowledgment for PID ownership, with injected identity inspection and positive-PID signal delivery. Never infer PID from a process name or assume an isolated process group.
 2. Validate PID/start-time/UID identity before signals; test missing receipt, inspection denial, PID reuse, ineffective TERM/KILL and bounded wait. Avoid closing potentially blocked pipes on the UI thread.
-3. Await TERM grace then KILL completion; report uncertainty as failure and preserve ownership. Do not assert that killing the tracer also kills guests without evidence.
+3. Source validation supersedes generic TERM/KILL: pinned PRoot ignores TERM;
+   send verified tracer QUIT then CONT and await cleanup. Tracer-only KILL is
+   not full guest cleanup (no EXITKILL). Keep Java exit observation initially;
+   reliable liveness failure has not been established. See
+   `docs/reports/2026-10-02-runtime-shutdown-design-validation.md`.
 4. Apply ownership cleanup to superseded starts and service shutdown, not just explicit restart.
+
+Task 2 status: factory/receipt handshake, verified positive-PID QUIT/CONT,
+expected-executable/caught-handler readiness gate, retained launch ownership and
+bounded independent signal/pipe cleanup implemented. All **293 JVM tests**, lint
+and both APK builds passed; review findings corrected. After the phone returned,
+the isolated Android ownership smoke passed and all 11 connected tests passed. Implementation details and remaining
+non-atomic identity/device caveats are recorded in
+`docs/plans/2026-10-02-owned-runtime-process-design.md`.
 
 ## Task 3: Device acceptance when the phone returns
 
-Repeat `docs/reports/native-arm64-runtime-restart-acceptance.md`: SIGSTOP owned tracer, await error, manual Restart, confirm old tracer/descendants release and new readiness. Check generated app, browser habit data, terminal re-creation and unchanged settings. No phone acceptance is available while disconnected. Do not clear user data as a workaround.
+Repeated the real device scenario after the phone returned: SIGSTOP owned
+tracer, await error, tap Restart, confirm old tracer/captured descendants release
+and new readiness. Both attempts passed (~13.2/~16.7 seconds), including a
+fresh terminal session after closing an active one. Settings/generated-app file
+checksums matched. No force-stop/data-clear workaround was needed. Browser-local
+habit data contents were not inspected. See the acceptance report; x86_64 and
+broader crash-race coverage remain separate.

@@ -228,6 +228,62 @@ class ProotRunnerTest {
     }
 
     @Test
+    fun cancelledBackpressuredDrainClosesChannelBeforeBlockingPipeCleanup() = runTest(UnconfinedTestDispatcher()) {
+        val releaseClose = CountDownLatch(1)
+        val closeStarted = CountDownLatch(1)
+        val failures = mutableListOf<Throwable>()
+        val owner = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler) +
+            CoroutineExceptionHandler { _, failure -> failures += failure })
+        val process = object : FakeProcess("", "") {
+            override fun getInputStream(): InputStream = object : ByteArrayInputStream(
+                (1..100).joinToString("\n", postfix = "\n").toByteArray(),
+            ) {
+                override fun close() {
+                    closeStarted.countDown()
+                    check(releaseClose.await(2, TimeUnit.SECONDS))
+                }
+            }
+        }
+        val handle = ProotRunner(tempFolder.newFile(), tempFolder.newFolder(),
+            factory = RecordingProcessFactory(process)).start(owner)
+        try {
+            owner.cancel()
+            assertEquals(1L, closeStarted.count)
+            assertEquals(64, withTimeout(1_000) { handle.stdout.toList() }.size)
+            assertTrue(failures.isEmpty())
+            handle.destroy()
+            assertTrue(closeStarted.await(1, TimeUnit.SECONDS))
+        } finally {
+            releaseClose.countDown()
+            owner.cancel()
+        }
+    }
+
+    @Test
+    fun shutdownSignalsBeforePipeCleanupAndBlockedCloseDoesNotBlockCaller() = runTest(UnconfinedTestDispatcher()) {
+        val closeStarted = CountDownLatch(1)
+        val releaseClose = CountDownLatch(1)
+        val process = object : FakeProcess("", "") {
+            override fun getInputStream(): InputStream = object : ByteArrayInputStream(byteArrayOf()) {
+                override fun close() {
+                    // Initial EOF drain close is harmless; explicit cleanup after exit may block.
+                    if (destroyed) {
+                        closeStarted.countDown()
+                        check(releaseClose.await(2, TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+        val handle = ProotRunner(tempFolder.newFile(), tempFolder.newFolder(),
+            factory = RecordingProcessFactory(process)).start(this)
+        try {
+            handle.destroy()
+            assertTrue(process.destroyed)
+            assertTrue("cleanup should follow signal delivery on a separate worker", closeStarted.await(1, TimeUnit.SECONDS))
+        } finally { releaseClose.countDown() }
+    }
+
+    @Test
     fun destroyCallsProcessDestroy() = runTest(UnconfinedTestDispatcher()) {
         val rootfs = tempFolder.newFolder("rootfs")
         val proot = tempFolder.newFile("proot")
@@ -403,7 +459,7 @@ private class RecordingProcessFactory(
  * `children`, `descendants`, or `supportsNormalTermination` —
  * Android's `Process` doesn't have those, and we don't need them.
  */
-private class FakeProcess(
+private open class FakeProcess(
     stdout: String,
     stderr: String,
     private val exitsOnDestroy: Boolean = true,

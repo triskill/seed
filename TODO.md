@@ -62,7 +62,25 @@ captured). Results reported in this acceptance session:
 These are manual user observations, not automated instrumentation results,
 verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
 
-### Native ARM64 instrumentation — latest run
+### Latest native ARM64 ownership/restart acceptance
+
+On Moto G32 (Android13/API33), both APKs installed with `adb install -r`:
+
+- **293 JVM tests**, debug lint and APK builds passed.
+- Isolated app-domain identity/handler/signal smoke: **1/1 passed**.
+- Full connected suite: **3 classes / 11 methods, all passed** (130.224 seconds).
+- Paused backend PRoot → error → Restart → healthy passed twice, in roughly
+  **13.2 / 16.7 seconds**. All six/eight captured old generation processes
+  disappeared, including an active terminal in the second attempt. Returning to
+  Shell created a fresh session and printed the expected command marker.
+- Settings and generated-app file checksums matched; no force-stop or data-clear
+  workaround was needed. App tab restored and temporary ADB forward removed.
+
+See `docs/reports/native-arm64-runtime-restart-acceptance.md`. Browser-local habit
+contents were not inspected; x86_64 and broader startup/crash races remain
+separate acceptance work. Non-atomic PID checks are not a same-UID sandbox.
+
+### Native ARM64 instrumentation — earlier acceptance
 
 On Moto G32 (`ZY22G56BVM`), `:app:assembleDebugAndroidTest` built successfully.
 The test APK was installed with `adb install -r`; instrumentation explicitly
@@ -488,19 +506,32 @@ roughly by release risk rather than by the historical phase numbering.
    restore readiness within 140 seconds and the old PRoot remained stopped.
    Seed was restored via SIGCONT, package force-stop and relaunch; `/health`
    returned 200 and settings/generated-app checksums matched. See
-   `docs/reports/native-arm64-runtime-restart-acceptance.md`. **Next task:
-   diagnose/fix process termination and replacement ordering, then repeat this
-   test.** First offline increment implements serialized replacement gating:
+   `docs/reports/native-arm64-runtime-restart-acceptance.md`. That failed result
+   predates the ownership implementation; the corrected scenario now passes
+   as recorded below. First offline increment implements replacement gating:
    Restart queues work off the caller thread, retains the old handle while
    waiting up to 10 seconds for its exit observation, coalesces requests and
    refuses replacement on timeout/error. Four new regression tests passed;
    all **272 JVM tests**, lint and debug/instrumentation APK builds passed.
    The deadline bounds exit waiting, not a potentially blocking synchronous
-   `destroy()` call; Android Process liveness/termination is still unreliable.
-   Reliable owned-PID signalling/identity and nonblocking shutdown remain next
-   in `docs/plans/2026-10-02-runtime-shutdown-recovery.md`. The phone was
-   disconnected, so this increment has **no new device acceptance**.
-   Terminal re-creation remains unaccepted. Stop/wipe controls and
+   `destroy()` call in the earlier implementation; liveness unreliability was
+   an unverified hypothesis, corrected by the following source validation.
+   Source validation corrected the earlier liveness/process-group hypotheses:
+   pinned PRoot ignores TERM, and inspected Android AOSP force-destroy need not
+   send KILL; broken Java liveness was not established. Ownership factory and
+   PRoot-specific QUIT/CONT cleanup are now implemented. A private bounded
+   receipt/ack establishes PID/start-time/UID/parent; expected executable and
+   kernel caught-QUIT handler readiness gate signals. Failed/superseded launches
+   stay owned until exit; cleanup retries do not bypass the replacement gate.
+   Signal delivery precedes pipe closure, with bounded independent workers and
+   cancellation-safe channel closing. **293 JVM tests**, lint and both APK builds
+   passed. After reconnection, the isolated Android smoke passed **1/1** and the
+   full suite passed **11/11** (130.224 seconds). Real paused-PRoot Restart passed
+   twice (~13.2/~16.7 seconds); all captured old backend/terminal processes
+   disappeared, a fresh terminal ran its marker command, and settings/app-file
+   checksums matched. See the ownership design and acceptance report. PID checks
+   remain non-atomic and are not a same-UID sandbox; browser-local habit contents
+   and x86_64 were not verified. Stop/wipe UI, broader crash-race coverage and
    bounded automatic supervision remain deferred.
    Binding callback timeout is implemented: accepted connections get a 10-second
    deadline; timeout releases the binding and shows a localized Retry error.
@@ -587,8 +618,10 @@ Android tooling only; Python dependencies come from
 
 ## Known v0.1 limitations (carry-forward TODOs)
 
-**Current native ARM64 acceptance:** manual provider-backed flow and all ten
-current connected methods pass; installed Pi 0.84.2 is confirmed. Remaining:
+**Current native ARM64 acceptance:** manual provider-backed flow, the expanded
+11-method connected suite, and two real paused-runtime restart/recreated-terminal
+checks pass. Installed Pi 0.84.2 was confirmed. Browser-local habit contents after
+these latest restarts and x86_64 remain separate checks. Remaining:
 runtime recovery/hardening, focused UI/terminal coverage, durable chat/replay,
 security/release work and provider-backed acceptance on x86_64. Historical results below are recorded evidence, not a
 fresh verification.
@@ -629,11 +662,11 @@ fresh verification.
   connection callbacks are rejected. Extraction failures now show manual Retry
   without automatic looping; cancellation remains silent and Ready waits for
   completed extraction. Explicit runtime Restart UI is implemented and closes
-  the current terminal session; actual wedged-process recovery **failed** the
-  authorized PRoot-pause test. Failure-point investigation is next; shutdown and
-  replacement ordering must be fixed before accepting the action. Stop/wipe UI and automatic bounded crash
-  supervision remain unfinished. Retry still re-probes
-  a live handle. Startup readiness requires
+  the current terminal session. After an earlier failed acceptance, owned
+  QUIT/CONT cleanup and serialized replacement now pass two native ARM64
+  PRoot-pause recovery tests, including basic fresh-terminal operation. Stop/wipe
+  UI, broader startup/crash-race coverage and automatic bounded supervision
+  remain unfinished. Retry still re-probes a live handle. Startup readiness requires
   `/health` to report `flask: "up"`.
 - **The active Shell path has basic manual ARM64 acceptance, not focused tests.** The Android tab
   now uses Termux `TerminalView` plus a service-owned second PRoot and Python
