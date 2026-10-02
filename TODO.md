@@ -455,7 +455,7 @@ roughly by release risk rather than by the historical phase numbering.
    and accept authenticated catalog refresh on device; finish deferred Compose
    interaction tests. Endpoint reconfiguration and host/port controls remain
    deferred.
-8. **Harden runtime recovery — process-exit detection implemented.**
+8. **Harden runtime recovery — process-exit and HTTP readiness monitoring implemented.**
    `RuntimeSupervisor` now polls handle liveness every 500 ms, including after
    initial health succeeds. Immediate/ongoing death publishes Unhealthy and
    cancels startup probing; generation/handle fencing prevents late HTTP success
@@ -465,10 +465,20 @@ roughly by release risk rather than by the historical phase numbering.
    **251 JVM tests**, debug lint and APK builds passed; the updated APK passed
    **7/7 connected methods** on Moto G32 (124.948 seconds), with unchanged
    production settings checksum. The connected suite is regression coverage,
-   not an injected on-device crash test. Remaining: continuous HTTP readiness
-   with failure thresholds, wedged-process handling, binding timeouts, retryable
-   extraction, stop/restart/wipe controls, bounded crash supervision and terminal
-   behavior across backend/rootfs restart.
+   not an injected on-device crash test.
+   `HealthMonitor.continuousStates()` now preserves startup behavior, then
+   probes `/health` every 5 seconds with a 2-second timeout. Three consecutive
+   HTTP failures/timeouts or Flask-down responses publish Unhealthy; success
+   resets the failure count. No post-start Polling/Unknown states disturb the
+   running UI; monitoring ends at sustained failure until manual Retry. Five
+   deterministic tests cover thresholds, reset, startup failure, timeout/no
+   overlap and cancellation. Latest verification: **256 JVM tests**, debug lint
+   and APK builds passed; installed APK passed **7/7 connected tests** on Moto
+   G32 (121.844 seconds), with unchanged production settings checksum. This is
+   regression coverage, not an injected on-device HTTP-outage test.
+   Remaining: explicit restart for wedged-but-live processes (Retry re-probes),
+   binding timeouts, retryable extraction, stop/restart/wipe controls, bounded
+   automatic crash supervision and terminal behavior across runtime restart.
 9. **Finish architecture/device acceptance.** `make run-phone-test` builds,
    installs, and launches the direct-native ARM64 package; x86_64 is the native
    emulator lane. QEMU support has been removed and native publication now
@@ -570,10 +580,12 @@ fresh verification.
   at FastAPI 7777 and Flask 7778.
 - **Runtime recovery is partial.** Continuous process-liveness monitoring now
   reports immediate and post-readiness process death through Unhealthy/Retry.
-  Continuous HTTP readiness is still missing, so live-but-wedged processes or
-  unhealthy guest components are not detected after startup. Binding callback
-  timeouts, retryable extraction and automatic bounded crash supervision remain
-  unfinished. Retry still re-probes a live handle. Startup readiness requires
+  Continuous HTTP readiness now detects sustained guest-component failures or
+  wedged responses after startup (three failed probes, five-second cadence,
+  two-second timeout); brief failures do not replace the running UI. Binding
+  callback timeouts, retryable extraction, explicit wedged-process restart and
+  automatic bounded crash supervision remain unfinished. Retry still re-probes
+  a live handle. Startup readiness requires
   `/health` to report `flask: "up"`.
 - **The active Shell path has basic manual ARM64 acceptance, not focused tests.** The Android tab
   now uses Termux `TerminalView` plus a service-owned second PRoot and Python

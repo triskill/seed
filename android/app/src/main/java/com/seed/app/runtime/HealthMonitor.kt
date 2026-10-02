@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withTimeout
 
-/** The embedded backend's startup health as observed over HTTP. */
+/** The embedded backend's readiness as observed over HTTP. */
 sealed class HealthState {
     data object Unknown : HealthState()
     data class Polling(val attempt: Int) : HealthState()
@@ -17,7 +17,8 @@ sealed class HealthState {
 }
 
 /**
- * Polls the embedded backend until it responds or the attempt budget is exhausted.
+ * Polls startup readiness until success or exhaustion; [continuousStates] then
+ * keeps checking readiness with a consecutive-failure threshold.
  *
  * The runtime is ready only when `/health` responds and its `flask` field is `"up"`.
  * A reachable backend can report `"down"` briefly while the embedded app is still
@@ -35,6 +36,43 @@ class HealthMonitor(
     private val maxAttempts: Int = 240,
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
+    /**
+     * Preserve startup gating, then check readiness every five seconds without
+     * emitting Polling/Unknown into the running UI. Three consecutive failures
+     * require manual Retry; a successful probe resets the failure count.
+     */
+    fun continuousStates(): Flow<HealthState> = flow {
+        var ready = false
+        states().collect { state ->
+            emit(state)
+            ready = state is HealthState.Healthy
+        }
+        if (!ready) return@flow
+
+        var failures = 0
+        var previousProbeStarted = nowMs()
+        while (true) {
+            delayUntilNextProbe(previousProbeStarted, READINESS_INTERVAL_MS)
+            previousProbeStarted = nowMs()
+            val healthy = try {
+                withTimeout(HEALTH_REQUEST_TIMEOUT_MS) {
+                    api.health().flask == FLASK_READY_STATUS
+                }
+            } catch (_: TimeoutCancellationException) {
+                false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            failures = if (healthy) 0 else failures + 1
+            if (failures >= READINESS_FAILURE_THRESHOLD) {
+                emit(HealthState.Unhealthy("Runtime health check failed repeatedly"))
+                return@flow
+            }
+        }
+    }
+
     fun states(): Flow<HealthState> = flow {
         emit(HealthState.Unknown)
 
@@ -84,13 +122,15 @@ class HealthMonitor(
         }
     }
 
-    private suspend fun delayUntilNextProbe(startedAt: Long) {
+    private suspend fun delayUntilNextProbe(startedAt: Long, cadenceMs: Long = intervalMs) {
         val elapsed = (nowMs() - startedAt).coerceAtLeast(0)
-        val remaining = intervalMs - elapsed
+        val remaining = cadenceMs - elapsed
         if (remaining > 0) delay(remaining)
     }
 
     private companion object {
+        const val READINESS_INTERVAL_MS = 5_000L
+        const val READINESS_FAILURE_THRESHOLD = 3
         const val FLASK_READY_STATUS = "up"
         const val HEALTH_REQUEST_TIMEOUT_MS = 2_000L
     }

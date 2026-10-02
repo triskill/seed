@@ -17,6 +17,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -25,6 +26,114 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HealthMonitorTest {
+
+    @Test
+    fun continuousMonitoringReportsThreeFailuresWithoutPollingUi() = runTest {
+        var calls = 0
+        val api = object : StubBackendApi() {
+            override suspend fun health(): HealthResponse {
+                calls++
+                if (calls > 1) error("unavailable")
+                return HealthResponse(status = "ok", flask = "up")
+            }
+        }
+        val states = mutableListOf<HealthState>()
+        val job = backgroundScope.launch {
+            HealthMonitor(api, nowMs = { testScheduler.currentTime }).continuousStates().toList(states)
+        }
+        runCurrent()
+        advanceTimeBy(14_999)
+        runCurrent()
+        assertEquals(HealthState.Healthy("up"), states.last())
+        assertEquals(3, calls)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(HealthState.Unhealthy("Runtime health check failed repeatedly"), states.last())
+        assertEquals(4, calls)
+        assertEquals(1, states.filterIsInstance<HealthState.Polling>().size)
+        assertTrue(job.isCompleted)
+    }
+
+    @Test
+    fun healthyProbeResetsConsecutiveFailures() = runTest {
+        var calls = 0
+        val api = object : StubBackendApi() {
+            override suspend fun health(): HealthResponse {
+                calls++
+                return HealthResponse(status = "ok", flask = if (calls == 1 || calls == 4) "up" else "down")
+            }
+        }
+        val states = mutableListOf<HealthState>()
+        val job = backgroundScope.launch {
+            HealthMonitor(api, nowMs = { testScheduler.currentTime }).continuousStates().toList(states)
+        }
+        runCurrent()
+        advanceTimeBy(29_999)
+        runCurrent()
+        assertEquals(HealthState.Healthy("up"), states.last())
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(HealthState.Unhealthy("Runtime health check failed repeatedly"), states.last())
+        assertEquals(7, calls)
+        assertTrue(job.isCompleted)
+    }
+
+    @Test
+    fun failedStartupDoesNotEnterContinuousMonitoring() = runTest {
+        val api = object : StubBackendApi() {
+            var calls = 0
+            override suspend fun health(): HealthResponse { calls++; error("offline") }
+        }
+        val states = HealthMonitor(api, maxAttempts = 1).continuousStates().toList()
+        assertEquals(1, api.calls)
+        assertEquals(HealthState.Unhealthy("offline"), states.last())
+    }
+
+    @Test
+    fun continuousProbeTimeoutCountsAsFailureAndDoesNotOverlap() = runTest {
+        var calls = 0
+        var active = 0
+        val api = object : StubBackendApi() {
+            override suspend fun health(): HealthResponse {
+                calls++
+                if (calls == 1) return HealthResponse(status = "ok", flask = "up")
+                active++
+                assertEquals(1, active)
+                try { awaitCancellation() } finally { active-- }
+            }
+        }
+        val states = mutableListOf<HealthState>()
+        backgroundScope.launch { HealthMonitor(api, nowMs = { testScheduler.currentTime }).continuousStates().toList(states) }
+        runCurrent()
+        advanceTimeBy(17_000)
+        runCurrent()
+        assertEquals(4, calls)
+        assertEquals(0, active)
+        assertEquals(HealthState.Unhealthy("Runtime health check failed repeatedly"), states.last())
+    }
+
+    @Test
+    fun cancellationDuringContinuousProbeDoesNotPublishFailure() = runTest {
+        var calls = 0
+        var cancelled = false
+        val api = object : StubBackendApi() {
+            override suspend fun health(): HealthResponse {
+                calls++
+                if (calls == 1) return HealthResponse(status = "ok", flask = "up")
+                try { awaitCancellation() } finally { cancelled = true }
+            }
+        }
+        val states = mutableListOf<HealthState>()
+        val job = backgroundScope.launch {
+            HealthMonitor(api, nowMs = { testScheduler.currentTime }).continuousStates().toList(states)
+        }
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        job.cancelAndJoin()
+        assertTrue(cancelled)
+        assertEquals(HealthState.Healthy("up"), states.last())
+    }
 
     @Test
     fun successfulProbeEmitsHealthyAndStopsPolling() = runTest {

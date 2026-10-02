@@ -86,7 +86,7 @@ class RuntimeService : Service() {
                 )
                 runner.start(serviceScope).also(::collectRuntimeLogs)
             },
-            healthStates = { HealthMonitor(ApiModule.embedded).states() },
+            healthStates = { HealthMonitor(ApiModule.embedded).continuousStates() },
             onFailure = { message, failure -> Log.e(TAG, message, failure) },
         )
         supervisor.startOrRetry()
