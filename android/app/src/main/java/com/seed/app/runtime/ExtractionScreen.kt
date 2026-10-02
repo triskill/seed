@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -12,22 +13,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.seed.app.R
 
 /**
  * Full-screen "preparing runtime" UI shown while [BootController]
- * is in [BootState.NeedsExtraction] or [BootState.Extracting].
- *
- * The screen has no buttons (no cancel in v0.1) and no navigation
- * — it blocks the rest of the app until the runtime is on disk.
- * Phase 9's [SetupScreen] will replace this once it has real user-
- * facing choices (API key, provider) to offer before the
- * extraction kicks off.
+ * is preparing the runtime or displaying a retryable preparation failure.
+ * It blocks navigation until the runtime is on disk; failures retry only when tapped.
  */
 @Composable
-fun ExtractionScreen(state: BootState) {
+fun ExtractionScreen(state: BootState, onRetry: () -> Unit = {}) {
     Box(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         contentAlignment = Alignment.Center,
@@ -42,6 +39,16 @@ fun ExtractionScreen(state: BootState) {
             )
             when (val s = state) {
                 BootState.NeedsExtraction -> CircularProgressIndicator()
+                BootState.Failed -> {
+                    Text(
+                        text = stringResource(R.string.extraction_screen_failed),
+                        modifier = Modifier.testTag("extraction-error"),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Button(onClick = onRetry, modifier = Modifier.testTag("extraction-retry")) {
+                        Text(stringResource(R.string.extraction_screen_retry))
+                    }
+                }
                 is BootState.Extracting -> when (val p = s.progress) {
                     is ExtractionProgress.Started -> {
                         CircularProgressIndicator()

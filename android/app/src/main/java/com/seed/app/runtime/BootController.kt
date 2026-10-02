@@ -1,5 +1,6 @@
 package com.seed.app.runtime
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +26,7 @@ import java.io.File
  * The `filesDir/linux/.version` file is written after a successful
  * extraction so the next launch sees an up-to-date install and
  * skips the work. If extraction is cancelled or fails, the file is
- * NOT written and the next launch re-tries.
+ * NOT written. Failures show manual Retry; a new launch also re-tries.
  */
 class BootController(
     targetDir: File,
@@ -36,6 +37,7 @@ class BootController(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
     private val extractionFlow: (File) -> Flow<ExtractionProgress> =
         RuntimeExtractor(source)::extract,
+    private val onFailure: (Throwable) -> Unit = {},
 ) {
     private val targetDir = targetDir.canonicalFile
     private val installationMutex = RuntimeInstallationCoordinator.mutexFor(this.targetDir)
@@ -60,27 +62,39 @@ class BootController(
      * Launch the extraction flow. Idempotent — calling again while
      * already running is a no-op. The UI's [BootState] observation
      * will tick through `Extracting(progress)` and end on
-     * [BootState.Ready].
+     * [BootState.Ready] or retryable [BootState.Failed].
      */
     fun runExtraction() {
         synchronized(extractionJobMonitor) {
-            if (_states.value !is BootState.NeedsExtraction || extractionJob != null) return
+            if (
+                (_states.value !is BootState.NeedsExtraction && _states.value !is BootState.Failed) ||
+                extractionJob != null
+            ) return
 
             val job = scope.launch(start = CoroutineStart.LAZY) {
-                installationMutex.withLock {
-                    // Another controller may have completed while this one waited.
-                    if (isUpToDate()) {
-                        _states.value = BootState.Ready
-                        return@withLock
-                    }
-
-                    extractionFlow(targetDir).collect { progress ->
-                        _states.value = BootState.Extracting(progress)
-                        if (progress is ExtractionProgress.Finished) {
-                            writeVersionFile()
+                try {
+                    installationMutex.withLock {
+                        // Another controller may have completed while this one waited.
+                        if (isUpToDate()) {
                             _states.value = BootState.Ready
+                            return@withLock
                         }
+
+                        var finished = false
+                        extractionFlow(targetDir).collect { progress ->
+                            _states.value = BootState.Extracting(progress)
+                            if (progress is ExtractionProgress.Finished) finished = true
+                        }
+                        check(finished) { "Runtime extraction ended without completion" }
+                        // Do not publish readiness or the marker before upstream cleanup ends.
+                        writeVersionFile()
+                        _states.value = BootState.Ready
                     }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    _states.value = BootState.Failed
+                    onFailure(failure)
                 }
             }
             extractionJob = job

@@ -51,6 +51,8 @@
     <string name="settings_status_saved">Saved</string>
 
     <!-- Runtime extraction screen (Phase 7.5). -->
+    <string name="extraction_screen_failed">Seed could not prepare the local runtime. Check available storage and tap Retry.</string>
+    <string name="extraction_screen_retry">Retry</string>
     <string name="extraction_screen_title">Preparing Seed runtime</string>
     <string name="extraction_screen_started">%1$d files, %2$d KiB</string>
     <string name="extraction_asset_proot">Proot binary</string>

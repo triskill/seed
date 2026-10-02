@@ -27,6 +27,19 @@ class StartRuntimeScreenTest {
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
+    fun extractionFailureShowsRetryAndInvokesCallback() {
+        val retries = AtomicInteger(0)
+        composeRule.setContent {
+            SeedTheme {
+                ExtractionScreen(BootState.Failed, onRetry = { retries.incrementAndGet() })
+            }
+        }
+        composeRule.onNodeWithTag("extraction-error").assertIsDisplayed()
+        composeRule.onNodeWithTag("extraction-retry").assertIsDisplayed().performClick()
+        composeRule.runOnIdle { assertEquals(1, retries.get()) }
+    }
+
+    @Test
     fun unknownShowsStartupTitleAndProgressWithoutRetry() {
         val startupTitle = composeRule.activity.getString(R.string.runtime_start_title)
         composeRule.setContent {

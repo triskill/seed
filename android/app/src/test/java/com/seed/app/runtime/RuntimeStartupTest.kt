@@ -13,6 +13,7 @@ class RuntimeStartupTest {
         val gate = RuntimeStartupGate { readyCalls += 1 }
 
         gate.update(BootState.NeedsExtraction)
+        gate.update(BootState.Failed)
         gate.update(BootState.Extracting(ExtractionProgress.Started(totalBytes = 10, fileCount = 1)))
         gate.update(BootState.Extracting(ExtractionProgress.Finished))
 
@@ -56,6 +57,10 @@ class RuntimeStartupTest {
         assertEquals(
             StartupDestination.Extraction(BootState.NeedsExtraction),
             resolveStartupDestination(BootState.NeedsExtraction, HealthState.Healthy("up")),
+        )
+        assertEquals(
+            StartupDestination.Extraction(BootState.Failed),
+            resolveStartupDestination(BootState.Failed, HealthState.Healthy("stale health")),
         )
         assertEquals(
             StartupDestination.Extraction(extracting),

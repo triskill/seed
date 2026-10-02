@@ -477,8 +477,8 @@ roughly by release risk rather than by the historical phase numbering.
    G32 (121.844 seconds), with unchanged production settings checksum. This is
    regression coverage, not an injected on-device HTTP-outage test.
    Remaining: explicit restart for wedged-but-live processes (Retry re-probes),
-   retryable extraction, stop/restart/wipe controls, bounded automatic crash
-   supervision and terminal behavior across runtime restart.
+   stop/restart/wipe controls, bounded automatic crash supervision and terminal
+   behavior across runtime restart.
    Binding callback timeout is implemented: accepted connections get a 10-second
    deadline; timeout releases the binding and shows a localized Retry error.
    Connect/release/destruction cancel the deadline; each attempt has its own
@@ -487,6 +487,17 @@ roughly by release risk rather than by the historical phase numbering.
    passed, followed by **7/7 device regression tests** (125.158 seconds). Settings
    checksums matched. Activity-level injection of withheld/stale callbacks remains
    a coverage gap; the connected suite does not simulate that failure.
+   Retryable extraction is implemented: exceptions and incomplete flows publish
+   generic `BootState.Failed` with localized Retry; retries remain single-flight
+   and failures do not auto-loop. Cancellation is rethrown without showing an
+   error. The version marker and Ready are published only after extraction's
+   Finished event and successful flow completion, including upstream cleanup.
+   Six new controller tests and startup routing assertions passed; the device
+   suite adds a Failed-screen/Retry-callback check. Latest verification:
+   **266 JVM tests**, lint and APK builds passed; installed APK passed **8/8
+   connected tests** on Moto G32 (122.484 seconds), with unchanged settings
+   checksum. Actual broken-archive/storage errors were tested only in temporary
+   JVM directories, not by deleting or corrupting the user's phone runtime.
 9. **Finish architecture/device acceptance.** `make run-phone-test` builds,
    installs, and launches the direct-native ARM64 package; x86_64 is the native
    emulator lane. QEMU support has been removed and native publication now
@@ -553,8 +564,8 @@ Android tooling only; Python dependencies come from
 
 ## Known v0.1 limitations (carry-forward TODOs)
 
-**Current native ARM64 acceptance:** manual provider-backed flow and all seven
-existing connected methods pass; installed Pi 0.84.2 is confirmed. Remaining:
+**Current native ARM64 acceptance:** manual provider-backed flow and all eight
+current connected methods pass; installed Pi 0.84.2 is confirmed. Remaining:
 runtime recovery/hardening, focused UI/terminal coverage, durable chat/replay,
 security/release work and provider-backed acceptance on x86_64. Historical results below are recorded evidence, not a
 fresh verification.
@@ -592,8 +603,10 @@ fresh verification.
   wedged responses after startup (three failed probes, five-second cadence,
   two-second timeout); brief failures do not replace the running UI. Accepted
   service bindings now time out after 10 seconds with a retryable error; stale
-  connection callbacks are rejected. Retryable extraction, explicit wedged-process
-  restart and automatic bounded crash supervision remain unfinished. Retry still re-probes
+  connection callbacks are rejected. Extraction failures now show manual Retry
+  without automatic looping; cancellation remains silent and Ready waits for
+  completed extraction. Explicit wedged-process restart, stop/restart/wipe UI
+  and automatic bounded crash supervision remain unfinished. Retry still re-probes
   a live handle. Startup readiness requires
   `/health` to report `flask: "up"`.
 - **The active Shell path has basic manual ARM64 acceptance, not focused tests.** The Android tab

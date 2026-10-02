@@ -34,6 +34,106 @@ class BootControllerTest {
     val tempFolder = TemporaryFolder()
 
     @Test
+    fun failureBecomesRetryableAndRetryIsSingleFlight() = runTest {
+        val target = tempFolder.newFolder("retry-failure")
+        var attempts = 0
+        val controller = BootController(
+            target, MapAssetSource2(), RootfsVersion("0.1.0", "B1"), scope = this,
+            extractionFlow = { flow {
+                attempts++
+                if (attempts == 1) error("broken archive")
+                emit(ExtractionProgress.Finished)
+            } },
+        )
+        controller.runExtraction()
+        runCurrent()
+        assertEquals("Failed", controller.states.value.javaClass.simpleName)
+        assertFalse(target.resolve(".version").exists())
+        assertEquals(1, attempts)
+        controller.runExtraction()
+        controller.runExtraction()
+        runCurrent()
+        assertEquals(BootState.Ready, controller.states.value)
+        assertEquals(2, attempts)
+        assertTrue(target.resolve(".version").isFile)
+    }
+
+    @Test
+    fun finishedEventDoesNotPublishReadyUntilFlowCompletes() = runTest {
+        val target = tempFolder.newFolder("finish-barrier")
+        val release = CompletableDeferred<Unit>()
+        val controller = BootController(
+            target, MapAssetSource2(), RootfsVersion("0.1.0", "B1"), scope = this,
+            extractionFlow = { flow { emit(ExtractionProgress.Finished); release.await() } },
+        )
+        controller.runExtraction()
+        runCurrent()
+        assertTrue(controller.states.value is BootState.Extracting)
+        assertFalse(target.resolve(".version").exists())
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(BootState.Ready, controller.states.value)
+    }
+
+    @Test
+    fun failureAfterFinishedCannotLeaveCurrentVersionMarker() = runTest {
+        val target = tempFolder.newFolder("late-failure")
+        val controller = BootController(
+            target, MapAssetSource2(), RootfsVersion("0.1.0", "B1"), scope = this,
+            extractionFlow = { flow { emit(ExtractionProgress.Finished); error("cleanup failed") } },
+        )
+        controller.runExtraction()
+        runCurrent()
+        assertEquals("Failed", controller.states.value.javaClass.simpleName)
+        assertFalse(target.resolve(".version").exists())
+    }
+
+    @Test
+    fun incompleteFlowBecomesFailureInsteadOfHanging() = runTest {
+        val controller = BootController(
+            tempFolder.newFolder("incomplete"), MapAssetSource2(), RootfsVersion("0.1.0", "B1"),
+            scope = this, extractionFlow = { flowOf(ExtractionProgress.Started(0, 0)) },
+        )
+        controller.runExtraction()
+        runCurrent()
+        assertEquals("Failed", controller.states.value.javaClass.simpleName)
+    }
+
+    @Test
+    fun versionWriteFailureBecomesRetryable() = runTest {
+        val target = tempFolder.newFolder("marker-failure")
+        assertTrue(target.resolve(".version").mkdir())
+        val controller = BootController(
+            target, MapAssetSource2(), RootfsVersion("0.1.0", "B1"), scope = this,
+            extractionFlow = { flowOf(ExtractionProgress.Finished) },
+        )
+        controller.runExtraction()
+        runCurrent()
+        assertEquals("Failed", controller.states.value.javaClass.simpleName)
+        assertTrue(target.resolve(".version").delete())
+        controller.runExtraction()
+        runCurrent()
+        assertEquals(BootState.Ready, controller.states.value)
+    }
+
+    @Test
+    fun extractionCancellationDoesNotBecomeFailureOrWriteMarker() = runTest {
+        val target = tempFolder.newFolder("cancel-silent")
+        val owner = Job()
+        val controller = BootController(
+            target, MapAssetSource2(), RootfsVersion("0.1.0", "B1"),
+            scope = CoroutineScope(coroutineContext + owner),
+            extractionFlow = { flow { emit(ExtractionProgress.Started(0, 0)); awaitCancellation() } },
+        )
+        controller.runExtraction()
+        runCurrent()
+        owner.cancel()
+        runCurrent()
+        assertTrue(controller.states.value is BootState.Extracting)
+        assertFalse(target.resolve(".version").exists())
+    }
+
+    @Test
     fun freshInstallTransitionsNeedsExtractionToExtractingToReady() = runTest(UnconfinedTestDispatcher()) {
         val target = tempFolder.newFolder("linux")
         // No .version file present → NeedsExtraction.

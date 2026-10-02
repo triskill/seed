@@ -9,11 +9,13 @@ package com.seed.app.runtime
  *   progress to render).
  * - [Extracting] — extraction is in progress; `progress` is the
  *   latest [ExtractionProgress] event from the flow.
+ * - [Failed] — preparation failed; show a generic message and manual Retry.
  * - [Ready] — extraction succeeded (or wasn't needed) and the
  *   normal app UI (`SeedNav`) should be shown.
  */
 sealed class BootState {
     data object NeedsExtraction : BootState()
     data class Extracting(val progress: ExtractionProgress) : BootState()
+    data object Failed : BootState()
     data object Ready : BootState()
 }

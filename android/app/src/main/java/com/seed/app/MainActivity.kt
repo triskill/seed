@@ -145,6 +145,7 @@ class MainActivity : ComponentActivity() {
             source = assetSource,
             assetVersion = assetVersion,
             scope = lifecycleScope,
+            onFailure = { failure -> Log.e(TAG, "Runtime preparation failed", failure) },
         )
 
         lifecycleScope.launch {
@@ -163,7 +164,10 @@ class MainActivity : ComponentActivity() {
                 val bootState by bootController.states.collectAsState()
                 val healthState by runtimeHealth.collectAsState()
                 when (val destination = resolveStartupDestination(bootState, healthState)) {
-                    is StartupDestination.Extraction -> ExtractionScreen(destination.state)
+                    is StartupDestination.Extraction -> ExtractionScreen(
+                        state = destination.state,
+                        onRetry = bootController::runExtraction,
+                    )
                     is StartupDestination.Runtime -> StartRuntimeScreen(
                         health = destination.health,
                         onRetry = ::retryRuntime,

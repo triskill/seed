@@ -11,6 +11,7 @@ internal fun resolveStartupDestination(
     health: HealthState,
 ): StartupDestination = when (boot) {
     BootState.NeedsExtraction,
+    BootState.Failed,
     is BootState.Extracting,
     -> StartupDestination.Extraction(boot)
 
