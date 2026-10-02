@@ -1,10 +1,15 @@
 package com.seed.app.runtime
 
 import android.os.Build
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.seed.app.data.AndroidSettingsRepo
 import com.seed.app.ui.settings.SettingsForm
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -72,11 +77,10 @@ class NativeProotSmokeTest {
         assertEquals("APP_DOMAIN_PROOT_ENV_OK", pythonOutput.trim())
 
         // This executes PiRunner *inside* Android PRoot. The runtime has no API
-        // key during instrumentation, so a successful launch/RPC round trip is
-        // the explicit provider error emitted by the real pi Node process.
+        // key during instrumentation. Probe state without contacting a provider;
+        // correlated RPC responses belong to rpc_request(), not read_lines().
         val piSmokeScript = """
             import asyncio
-            import json
             import sys
             sys.path.insert(0, "/home/seed/backend")
             from seed_backend.orchestrator import pi_cmd_for_role, pi_env_for_role
@@ -91,26 +95,12 @@ class NativeProotSmokeTest {
                 )
                 try:
                     await runner.start()
-                    await runner.send(json.dumps({"type": "prompt", "message": "hello"}))
-                    diagnostics = []
-                    async with asyncio.timeout(20):
-                        async for line in runner.read_lines():
-                            try:
-                                event = json.loads(line)
-                            except json.JSONDecodeError:
-                                # PiRunner merges child stderr into its line stream.
-                                # Linker diagnostics may precede JSONL; treat them as
-                                # ordinary text instead of protocol.
-                                diagnostics.append(line)
-                                continue
-                            if event.get("type") == "response":
-                                assert event.get("success") is False, event
-                                assert "API key" in event.get("error", ""), event
-                                print("APP_DOMAIN_PI_RPC_OK")
-                                return
-                    raise AssertionError(
-                        f"pi RPC response stream ended; diagnostics={diagnostics[-3:]}"
-                    )
+                    event = await runner.rpc_request({"type": "get_state"}, timeout=20)
+                    assert event.get("type") == "response"
+                    assert event.get("command") == "get_state"
+                    assert event.get("success") is True
+                    assert isinstance(event.get("data"), dict)
+                    print("APP_DOMAIN_PI_RPC_OK")
                 finally:
                     await runner.stop()
 
@@ -194,7 +184,7 @@ class NativeProotSmokeTest {
     }
 
     @Test
-    fun persistedSelectionReachesNextPiGeneration() {
+    fun persistedPreferencesStayOutOfPiEnvironment() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val runtimeDir = File(context.cacheDir, "native-proot-persist/runtime")
         runBlocking {
@@ -203,63 +193,70 @@ class NativeProotSmokeTest {
         val rootfs = File(runtimeDir, "rootfs")
         val nativeProot = NativeProot.resolve(context.applicationInfo.nativeLibraryDir)
 
-        // Persist a selection through the same encrypted repo Android uses in
-        // production. This is the Phase 4 acceptance gate: after the user
-        // saves a model in Settings, the next PRoot generation must see the
-        // saved env vars.
-        val repo = AndroidSettingsRepo(context)
-        runBlocking {
-            repo.save(
-                SettingsForm(
-                    provider = "opencode-go",
-                    model = "deepseek-v4-flash",
-                    apiKey = "instrumentation-not-a-real-key",
-                    // "high" is intentionally not the default ("low") so a
-                    // regression that drops KEY_THINKING_LEVEL from
-                    // putNonSecretSettings fails the round-trip assertion
-                    // below rather than silently matching the default.
-                    thinkingLevel = "high",
+        // Exercise the production repository with isolated preference storage.
+        // Never overwrite the phone's configured provider/model or credentials.
+        val preferencesDir = File(context.cacheDir, "selection-test-${System.nanoTime()}")
+        check(preferencesDir.mkdirs())
+        val storeJob = Job()
+        val store = PreferenceDataStoreFactory.create(
+            scope = CoroutineScope(Dispatchers.IO + storeJob),
+            produceFile = { File(preferencesDir, "settings.preferences_pb") },
+        )
+        val repo = AndroidSettingsRepo(context, store)
+        try {
+            runBlocking {
+                assertEquals(null, repo.load())
+                repo.save(
+                    SettingsForm(
+                        provider = "opencode-go",
+                        model = "deepseek-v4-flash",
+                        apiKey = "instrumentation-not-a-real-key",
+                        // Non-default thinking checks the persisted preference boundary.
+                        thinkingLevel = "high",
+                    ),
+                )
+            }
+            val persisted = requireNotNull(runBlocking { repo.load() }) {
+                "SettingsForm did not round-trip through AndroidSettingsRepo"
+            }
+            assertEquals("opencode-go", persisted.provider)
+            assertEquals("deepseek-v4-flash", persisted.model)
+            assertEquals("high", persisted.thinkingLevel)
+            assertTrue(
+                "Android must not persist the test credential",
+                persisted.apiKey != "instrumentation-not-a-real-key",
+            )
+
+            // Preferences round-trip locally; Pi selection/auth belong to shared
+            // files, not credential or selection environment overrides.
+            val environment = ProotEnvironment.createBackend(
+                tempDir = File(context.cacheDir, "native-proot-persist/tmp"),
+                installation = nativeProot,
+            ) + persisted.toPiRuntimeEnvironment()
+            val output = runGuest(
+                domain = File("/proc/self/attr/current").readText().trim(),
+                rootfs = rootfs,
+                nativeProot = nativeProot,
+                environment = environment,
+                command = listOf(
+                    "/usr/bin/python3",
+                    "-c",
+                    """
+                        import os
+                        assert os.environ["PI_CODING_AGENT_DIR"] == "/home/seed/.pi/agent"
+                        assert "SEED_PI_PROVIDER" not in os.environ
+                        assert "SEED_PI_MODEL" not in os.environ
+                        assert "SEED_PI_THINKING" not in os.environ
+                        assert "OPENCODE_API_KEY" not in os.environ
+                        print("APP_DOMAIN_PERSIST_OK")
+                    """.trimIndent(),
                 ),
             )
+            assertEquals("APP_DOMAIN_PERSIST_OK", output.trim())
+        } finally {
+            runBlocking { storeJob.cancelAndJoin() }
+            check(preferencesDir.deleteRecursively()) { "Could not remove test preferences" }
         }
-        val persisted = requireNotNull(runBlocking { repo.load() }) {
-            "SettingsForm did not round-trip through AndroidSettingsRepo"
-        }
-        assertEquals("opencode-go", persisted.provider)
-        assertEquals("deepseek-v4-flash", persisted.model)
-        assertEquals("high", persisted.thinkingLevel)
-        assertEquals("instrumentation-not-a-real-key", persisted.apiKey)
-
-        // Convert the persisted form to the env map Android injects into the
-        // next PRoot generation.
-        val environment = ProotEnvironment.createBackend(
-            tempDir = File(context.cacheDir, "native-proot-persist/tmp"),
-            installation = nativeProot,
-        ) + persisted.toPiRuntimeEnvironment()
-
-        // Run a guest Python interpreter and assert the env vars are exactly
-        // what we saved. This is the strongest possible test that the
-        // selection reaches the next generation without manual rewriting.
-        val output = runGuest(
-            domain = File("/proc/self/attr/current").readText().trim(),
-            rootfs = rootfs,
-            nativeProot = nativeProot,
-            environment = environment,
-            command = listOf(
-                "/usr/bin/python3",
-                "-c",
-                """
-                    import os
-                    assert os.environ["PI_CODING_AGENT_DIR"] == "/home/seed/.pi/agent"
-                    assert "SEED_PI_PROVIDER" not in os.environ
-                    assert "SEED_PI_MODEL" not in os.environ
-                    assert "SEED_PI_THINKING" not in os.environ
-                    assert "OPENCODE_API_KEY" not in os.environ
-                    print("APP_DOMAIN_PERSIST_OK")
-                """.trimIndent(),
-            ),
-        )
-        assertEquals("APP_DOMAIN_PERSIST_OK", output.trim())
     }
 
     private fun runGuest(

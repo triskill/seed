@@ -8,8 +8,9 @@ Flask mutation seed; SQLite-backed features are planned but not implemented.
 FastAPI runs on 7777 and the generated Flask app runs separately on 7778 in
 both host and Android runtimes; Flask's development reloader makes worker edits live. The Shell tab now contains a Termux terminal view
 backed by a second PRoot process and a no-fork Python command bridge. Embedded
-process bring-up works, but a provider-backed end-to-end build is still not
-accepted and the release blockers below remain.
+process bring-up and a provider-backed habit-tracker build have manual,
+user-reported acceptance on native ARM64. Automated/device coverage and the
+release blockers below remain.
 
 **Original design:** [`docs/plans/2026-06-30-seed-app-design.md`](docs/plans/2026-06-30-seed-app-design.md) (vision, architecture, and risks; some runtime details are superseded here).
 **Original phased plan:** [`docs/plans/2026-06-30-seed-v0.1-bootstrap.md`](docs/plans/2026-06-30-seed-v0.1-bootstrap.md) (historical task-by-task specification; current status lives in this TODO).
@@ -28,16 +29,72 @@ test run or device acceptance. Historical verification dates remain below._
 | 0 | Project skeleton + local backend + web app | ✅ done (8/8) |
 | 1 | Shell endpoint | ✅ backend endpoint done (5/5); the Android Shell tab now uses a separate interactive terminal instead |
 | 2 | pi runner (pipe wrapper, ANSI strip, tool filter) | ✅ done (6/6); Android-compatible `subprocess.Popen` launcher accepted on x86_64 emulator 2026-08-14 |
-| 3 | Middle-man + worker orchestration | ⚠️ native ARM64 embedded processes start and accept RPC; encrypted Android credential startup is wired, but a real provider-backed turn is not yet accepted |
-| 4 | System prompts + first real agent loop | ⚠️ host demo done (4/4); not reproduced inside the standalone APK |
+| 3 | Middle-man + worker orchestration | ✅ provider-backed native ARM64 build manually accepted with OpenRouter; automated and x86_64 acceptance remain separate |
+| 4 | System prompts + first real agent loop | ✅ host demo done (4/4); habit-tracker build manually accepted inside the native ARM64 APK |
 | 5 | Android shell (4 screens, nav, WebView) | ✅ original UI phase done (9/9); Shell was subsequently replaced by the terminal implementation |
 | 6 | Android ↔ backend wiring | ✅ original wiring done (5/5); `/shell/exec` is no longer the active Android Shell UI path |
 | 7 | Native PRoot packaging + rootfs extraction | ✅ direct-native ARM64 phone and x86_64 emulator lanes; QEMU remains removed |
 | 8 | Foreground service | ✅ done (4/4); now also owns the lazy terminal session manager |
 | 9 | First-run runtime startup gate | ✅ done (4/4); phone build/install/launch targets are available |
-| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; Settings persists a selection and replaces only the two Pi agents, while FastAPI, Flask, and PRoot stay running. Remaining: provider-backed E2E, cancellation/recovery under network loss, release QA, OAuth spike |
+| 10 | Embedded agent loop + end-to-end polish | ⬜ partial; Settings persists a selection and replaces only the two Pi agents, while FastAPI, Flask, and PRoot stay running. Manual ARM64 build, cancellation/continued work and temporary internet-loss recovery accepted; remaining: automated coverage, x86_64 acceptance, durable history, release QA, provider-specific OAuth acceptance |
 
-**Embedded runtime acceptance recorded so far:**
+### Native ARM64 manual acceptance — user-reported
+
+On the connected Moto G32, the user reports rebuilding/deploying the runtime
+and selecting OpenRouter's free-model router (displayed as "free models
+router"; exact model ID and installed Pi version were not independently
+captured). Results reported in this acceptance session:
+
+- Settings catalog update/save appeared successful; no error reported.
+- Chat built a working habit tracker and transitioned from running to done.
+- Adding habits and marking them done worked; data survived refresh and
+  closing/reopening Seed.
+- Terminal was reported working; focused automated terminal coverage remains.
+- Stop ended an active look-and-feel task. A follow-up to continue was accepted,
+  completed, and successfully upgraded the app.
+- Internet was disabled after task start for about 20 seconds. After restoring
+  it, the middle-man automatically started the task again and it completed;
+  the user found recovery satisfactory. This demonstrates provider-network
+  interruption recovery, not a loopback Chat WebSocket disconnect/replay test.
+- An extra prompt to add an index link was acceptable to the user; **no
+  index-link follow-up is requested**.
+
+These are manual user observations, not automated instrumentation results,
+verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
+
+### Native ARM64 instrumentation — latest run
+
+On Moto G32 (`ZY22G56BVM`), `:app:assembleDebugAndroidTest` built successfully.
+The test APK was installed with `adb install -r`; instrumentation explicitly
+selected `StartRuntimeScreenTest` and
+`NativeProotSmokeTest#runsGuestPythonPiAndFlaskReloadFromAndroidAppDomain`.
+
+- **5 startup-screen Compose tests passed.**
+- **Runtime smoke passed after correcting a stale test API.** The original
+  test waited for an RPC response in `read_lines()`, but PiRunner deliberately
+  routes responses only to `rpc_request()`. A correlated `get_state` probe
+  succeeded; the corrected device test passed Python/environment, real Pi RPC
+  and Flask source-edit/reload checks without contacting a provider.
+- **Unlocked combined rerun: OK (6 tests), 85.227 seconds.** All five Compose
+  tests and the corrected runtime smoke passed together. An intermediate run
+  had five `No compose hierarchies found` failures while the phone was dozing
+  with a secure keyguard showing; those did not recur after unlocking.
+- The stale persisted-selection test is now
+  `persistedPreferencesStayOutOfPiEnvironment`: it uses the production settings
+  repository with a temporary injected DataStore, cancels the store and removes
+  its files in `finally`, and checks that Android does not save the fake key or
+  inject selection/credential overrides into Pi. Real settings are never saved
+  by the test. Before/after production settings-file checksums matched.
+- **Full connected suite: OK (7 tests), 117.023 seconds**, on the unlocked
+  native ARM64 Moto G32. Both debug APKs built and installed with `adb install -r`;
+  Android JVM tests and debug lint passed in the same verification session.
+
+Latest local runner output: `/tmp/seed-device-acceptance-full.log` (not a
+tracked report). Installed package metadata confirms Pi **0.84.2**. This accepts
+these seven instrumentation methods, not every deferred UI/terminal/security
+scenario or x86_64. **Next backlog task: runtime recovery/hardening.**
+
+**Historical embedded runtime acceptance:**
 
 * On `seed_dev` x86_64 (2026-08-12/14), the APK installs and launches without
   a host backend. `BootController` extracts the Alpine rootfs and version data;
@@ -55,12 +112,15 @@ test run or device acceptance. Historical verification dates remain below._
 * The current Shell implementation is no longer the accepted HTTP form/log UI:
   it is a Termux `TerminalView` backed by a service-owned, lazy secondary PRoot
   session and a Python no-fork command REPL. The implementation builds, but no
-  device acceptance or dedicated terminal tests are recorded at current HEAD.
+  dedicated terminal tests are recorded. Basic native ARM64 terminal behavior
+  now has user-reported manual acceptance above.
 
 **Latest recorded local verification:** the Pi catalog update plan records
 `make verify` passing with **297 Python tests**, scoped Ruff/mypy, Android JVM
 tests and lint; runtime-tool shell tests and `bash -n scripts/build-runtime.sh`
-also passed. The Pi **0.84.2** runtime image/APK was not rebuilt or installed.
+also passed. That verification run did not rebuild/install the Pi **0.84.2**
+runtime image/APK. The user subsequently reports rebuilding and deploying to
+the phone; installed Pi version has not been independently verified.
 Authenticated openai-codex catalog/device acceptance remains pending. See
 [`docs/plans/2026-09-30-pi-model-catalog-update.md`](docs/plans/2026-09-30-pi-model-catalog-update.md).
 
@@ -348,8 +408,12 @@ roughly by release risk rather than by the historical phase numbering.
    remains a privately reviewed follow-up.
 2. **Restore a trustworthy verification baseline.** The
    `NativeProotSmokeTest` environment API compile regression is fixed and the
-   instrumentation APK compiles. Run all 6 connected methods on matching
-   direct-native targets; compilation is not device acceptance. Investigate the intermittent
+   instrumentation APK compiles. The latest native ARM64 run passed all five
+   startup-screen tests initially; the Pi RPC smoke passed after a test API
+   correction. The unlocked six-method combined rerun passed.
+   The seventh method now uses isolated preference storage; all seven connected
+   methods passed together on the native ARM64 phone. Python flake diagnosis
+   and broader static coverage remain separate work. Investigate the intermittent
    process-group-cleanup and Flask-readiness failures seen on the first combined
    Python run. `test_service.py`'s machine-specific checkout path, global-default
    monkeypatch and fixed-port coupling have been removed; `make verify`, CI and
@@ -357,8 +421,8 @@ roughly by release risk rather than by the historical phase numbering.
    Expand static coverage and run the still-unaccepted connected suite.
 3. **Android-compatible `PiRunner` — completed 2026-08-14.** The direct-argv
    `subprocess.Popen`/pipe implementation is accepted on x86_64, including two
-   live pi RPC processes and an error round-trip. A successful provider-backed
-   model/tool turn still needs acceptance.
+   live pi RPC processes and an error round-trip. A provider-backed native ARM64
+   build now has manual acceptance above; x86_64 provider-backed acceptance remains.
 4. **Keep the prototype simple.** Flask runs as its own reloading process on
    7778; do not add WSGI mounting, transactional reload infrastructure, or an
    app-reload event unless a later accepted requirement needs it.
@@ -381,8 +445,9 @@ roughly by release risk rather than by the historical phase numbering.
    persistent-shell semantics). Remove or clearly label the now-unused
    `ShellViewModel`/form UI, and decide whether `/shell/exec` remains supported;
    if it does, add job IDs/cancellation and isolation. For Chat, surface
-   connection failures and reliable offline delivery; verify the existing
-   bounded in-generation replay and cancellation on device, and add durable
+   connection failures and reliable offline delivery. Manual Stop/continued
+   work and temporary provider-network loss passed; loopback WS disconnect and
+   bounded in-generation replay still need specific acceptance. Add durable
    chat/replay history across runtime restart.
 7. **Finish Settings acceptance.** Save now validates and applies the two Pi
    agents before persisting preferences, without restarting FastAPI/Flask/PRoot.
@@ -401,8 +466,9 @@ roughly by release risk rather than by the historical phase numbering.
    full guest/native pairing preflights and failure/switch coverage rather than
    carrying forward the obsolete QEMU implementation tasks. Run the complete
    standalone provider-backed flow on native ARM64 first, then x86_64.
-10. **Run the product demo and release checks.** Complete the “Add a habit
-    tracker” standalone-APK demo; resolve the 27 lint warnings, release signing,
+10. **Run release checks.** The “Add a habit tracker” standalone-APK demo
+    has user-reported native ARM64 acceptance above. Resolve the historically
+    recorded lint warnings (recount on the next lint run), release signing,
     minification, dependency provenance/licensing (including PRoot and Termux),
     notification/icon polish, and App-bar health status. Synchronize `README.md`,
     `android/README.md`, and runtime docs with loopback port 7777 and the two
@@ -459,18 +525,20 @@ Android tooling only; Python dependencies come from
 
 ## Known v0.1 limitations (carry-forward TODOs)
 
-**Next acceptance priority:** rebuild/install Pi 0.84.2 on native ARM64, verify
-an authenticated catalog update and provider-backed tool/build turn, then run
-connected UI/terminal acceptance and repeat the supported flow on x86_64.
-Historical results below are recorded evidence, not a fresh verification.
+**Current native ARM64 acceptance:** manual provider-backed flow and all seven
+existing connected methods pass; installed Pi 0.84.2 is confirmed. Remaining:
+runtime recovery/hardening, focused UI/terminal coverage, durable chat/replay,
+security/release work and provider-backed acceptance on x86_64. Historical results below are recorded evidence, not a
+fresh verification.
 
-- **The embedded agents and credential startup are wired, but a provider-backed
-  turn is not yet accepted.** Pipe-backed `PiRunner` starts both real pi RPC
+- **Provider-backed native ARM64 build is manually accepted; broader coverage
+  remains.** Pipe-backed `PiRunner` starts both real pi RPC
   processes inside Android PRoot, and Chat surfaces the expected missing-key
   response. Saved Android provider/model/key settings now enter new PRoot
   generations through an allowlisted environment mapping. No operational key
   was available for the historical verification. Validated agent-only apply is
-  now implemented; provider-backed device acceptance remains pending.
+  now implemented; native ARM64 manual acceptance is recorded above, while
+  automated and x86_64 provider-backed coverage remain pending.
 - **Prototype reload behavior is Flask's development reloader.** The generated
   app is separate on port 7778; no bespoke reload or WebSocket reload event is
   part of this prototype.
@@ -496,12 +564,12 @@ Historical results below are recorded evidence, not a fresh verification.
   health is not continuously monitored after the first success. A wedged but
   still-alive process is re-polled rather than restarted. Startup readiness now
   requires `/health` to report `flask: "up"`.
-- **The active Shell path changed and is not yet accepted.** The Android tab
+- **The active Shell path has basic manual ARM64 acceptance, not focused tests.** The Android tab
   now uses Termux `TerminalView` plus a service-owned second PRoot and Python
   no-fork REPL; the former `ShellViewModel`/Cancel UI is unused. The bridge keeps
   cwd and a few built-ins, but each external line runs in a fresh `sh -c`, so it
-  is not a fully persistent shell. It has no focused tests or recorded device
-  run. The legacy HTTP endpoint remains available; its library can cancel, but
+  is not a fully persistent shell. It has no focused tests; the user reports
+  the terminal working on native ARM64. The legacy HTTP endpoint remains available; its library can cancel, but
   the protocol cannot, and merged process pipes leave `stderr` empty.
 - **Legacy HTTP `ShellSession` is process-global.** Complete shell expressions
   now run through `sh -c`, preserving final cwd/OLDPWD through private reporting
@@ -512,7 +580,9 @@ Historical results below are recorded evidence, not a fresh verification.
   but full chat replay and prompt deduplication do not survive runtime restart.
   Offline delivery, cancellation and network-loss behavior need device
   acceptance; durable history remains unfinished.
-- **Verification is still incomplete at the connected-device boundary.**
+- **Existing native ARM64 connected suite is accepted; broader coverage remains.**
+  The latest run above passed all seven current methods. The following
+  September verification/QEMU results are historical, not the current suite status.
   GitHub Actions now runs Python suites, scoped static checks, Android JVM tests,
   debug lint and a tracked-HEAD secret scan; `make verify` runs the same code
   checks locally. On 2026-09-29, `make verify` passed (276 Python tests plus

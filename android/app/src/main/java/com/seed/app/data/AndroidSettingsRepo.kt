@@ -90,9 +90,12 @@ internal class LegacyCredential(
  * "Saved" status pill depends on this.
  *
  */
-class AndroidSettingsRepo(context: Context) : SettingsRepo {
+class AndroidSettingsRepo internal constructor(
+    context: Context,
+    private val ds: DataStore<Preferences>,
+) : SettingsRepo {
 
-    private val ds: DataStore<Preferences> = context.settingsDataStore
+    constructor(context: Context) : this(context, context.settingsDataStore)
 
     private val legacyCredential = LegacyCredential(
         exists = { File(context.applicationInfo.dataDir, "shared_prefs/$SECURE_PREFS_NAME.xml").exists() },
