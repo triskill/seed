@@ -476,9 +476,16 @@ roughly by release risk rather than by the historical phase numbering.
    and APK builds passed; installed APK passed **7/7 connected tests** on Moto
    G32 (121.844 seconds), with unchanged production settings checksum. This is
    regression coverage, not an injected on-device HTTP-outage test.
-   Remaining: explicit restart for wedged-but-live processes (Retry re-probes),
-   stop/restart/wipe controls, bounded automatic crash supervision and terminal
-   behavior across runtime restart.
+   Explicit Restart runtime is now offered beside Retry on runtime errors when
+   a live service binder is available. It closes/releases the existing terminal
+   session before requesting supervisor process replacement; a later Shell visit
+   creates a fresh session. No rootfs/preferences/Pi config are deleted. Two
+   ordering tests and two Compose action/visibility tests were added; all
+   **268 JVM tests**, lint and APK builds passed, followed by **10/10 connected
+   tests** (126.186 seconds) with unchanged settings checksum. Real wedged-process
+   termination/recovery and terminal re-creation still need focused device
+   acceptance; best-effort PRoot shutdown/overlapping generations remain known
+   limitations. Remaining: stop/wipe controls and bounded automatic supervision.
    Binding callback timeout is implemented: accepted connections get a 10-second
    deadline; timeout releases the binding and shows a localized Retry error.
    Connect/release/destruction cancel the deadline; each attempt has its own
@@ -564,7 +571,7 @@ Android tooling only; Python dependencies come from
 
 ## Known v0.1 limitations (carry-forward TODOs)
 
-**Current native ARM64 acceptance:** manual provider-backed flow and all eight
+**Current native ARM64 acceptance:** manual provider-backed flow and all ten
 current connected methods pass; installed Pi 0.84.2 is confirmed. Remaining:
 runtime recovery/hardening, focused UI/terminal coverage, durable chat/replay,
 security/release work and provider-backed acceptance on x86_64. Historical results below are recorded evidence, not a
@@ -605,8 +612,10 @@ fresh verification.
   service bindings now time out after 10 seconds with a retryable error; stale
   connection callbacks are rejected. Extraction failures now show manual Retry
   without automatic looping; cancellation remains silent and Ready waits for
-  completed extraction. Explicit wedged-process restart, stop/restart/wipe UI
-  and automatic bounded crash supervision remain unfinished. Retry still re-probes
+  completed extraction. Explicit runtime Restart UI is implemented and closes
+  the current terminal session; actual wedged-process recovery remains unaccepted
+  because shutdown is best-effort. Stop/wipe UI and automatic bounded crash
+  supervision remain unfinished. Retry still re-probes
   a live handle. Startup readiness requires
   `/health` to report `flask: "up"`.
 - **The active Shell path has basic manual ARM64 acceptance, not focused tests.** The Android tab

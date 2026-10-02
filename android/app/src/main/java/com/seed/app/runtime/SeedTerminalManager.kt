@@ -137,8 +137,8 @@ class SeedTerminalManager(
     }
 
     /**
-     * Permanently stop the terminal session and release resources.
-     * Called when the RuntimeService is destroyed.
+     * Stop the current terminal session and release it. A later getOrCreateSession
+     * creates a fresh session. Used by runtime restart and service destruction.
      */
     @Synchronized
     fun close() {

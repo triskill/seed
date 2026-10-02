@@ -30,6 +30,7 @@ import com.seed.app.R
 fun StartRuntimeScreen(
     health: HealthState,
     onRetry: () -> Unit,
+    onRestart: (() -> Unit)? = null,
 ) {
     Surface(
         modifier = Modifier
@@ -64,6 +65,7 @@ fun StartRuntimeScreen(
                     is HealthState.Unhealthy -> RuntimeStartError(
                         message = health.message,
                         onRetry = onRetry,
+                        onRestart = onRestart,
                     )
                 }
             }
@@ -90,6 +92,7 @@ private fun RuntimeStartProgress(attempt: Int?) {
 private fun RuntimeStartError(
     message: String,
     onRetry: () -> Unit,
+    onRestart: (() -> Unit)?,
 ) {
     Surface(
         modifier = Modifier
@@ -119,5 +122,17 @@ private fun RuntimeStartError(
         modifier = Modifier.testTag("runtime-start-retry"),
     ) {
         Text(stringResource(R.string.runtime_start_retry))
+    }
+    if (onRestart != null) {
+        Text(
+            text = stringResource(R.string.runtime_restart_explanation),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(
+            onClick = onRestart,
+            modifier = Modifier.testTag("runtime-start-restart"),
+        ) {
+            Text(stringResource(R.string.runtime_restart))
+        }
     }
 }

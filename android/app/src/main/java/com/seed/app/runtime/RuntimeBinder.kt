@@ -28,7 +28,10 @@ class RuntimeBinder internal constructor(
 
     fun retry() = supervisor.startOrRetry()
 
-    fun restart() = supervisor.restart()
+    fun restart() = restartRuntimeWithFreshTerminal(
+        closeTerminal = terminalManager::close,
+        restartRuntime = supervisor::restart,
+    )
 
     fun stop() = stopService()
 }

@@ -171,6 +171,7 @@ class MainActivity : ComponentActivity() {
                     is StartupDestination.Runtime -> StartRuntimeScreen(
                         health = destination.health,
                         onRetry = ::retryRuntime,
+                        onRestart = if (runtimeBinder?.isBinderAlive == true) ::restartRuntime else null,
                     )
 
                     is StartupDestination.Seed -> SeedNav(
@@ -246,6 +247,16 @@ class MainActivity : ComponentActivity() {
         clearRuntimeBinder()
         releaseFrameworkBinding()
         startAndBindRuntime()
+    }
+
+    private fun restartRuntime() {
+        val binder = runtimeBinder
+        if (binder == null || !binder.isBinderAlive) {
+            retryRuntime()
+            return
+        }
+        runtimeHealth.value = HealthState.Unknown
+        binder.restart()
     }
 
     private fun rejectCurrentBinding(messageRes: Int) {

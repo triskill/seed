@@ -40,6 +40,38 @@ class StartRuntimeScreenTest {
     }
 
     @Test
+    fun runtimeFailureOffersSeparateRetryAndRestartActions() {
+        val retries = AtomicInteger(0)
+        val restarts = AtomicInteger(0)
+        composeRule.setContent {
+            SeedTheme {
+                StartRuntimeScreen(
+                    health = HealthState.Unhealthy("Runtime is not responding"),
+                    onRetry = { retries.incrementAndGet() },
+                    onRestart = { restarts.incrementAndGet() },
+                )
+            }
+        }
+        composeRule.onNodeWithTag("runtime-start-restart").assertIsDisplayed().performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, restarts.get())
+            assertEquals(0, retries.get())
+        }
+        composeRule.onNodeWithTag("runtime-start-retry").performClick()
+        composeRule.runOnIdle { assertEquals(1, retries.get()) }
+    }
+
+    @Test
+    fun startupDoesNotOfferRestartEvenWhenActionIsAvailable() {
+        composeRule.setContent {
+            SeedTheme {
+                StartRuntimeScreen(HealthState.Unknown, onRetry = {}, onRestart = {})
+            }
+        }
+        composeRule.onAllNodesWithTag("runtime-start-restart").assertCountEquals(0)
+    }
+
+    @Test
     fun unknownShowsStartupTitleAndProgressWithoutRetry() {
         val startupTitle = composeRule.activity.getString(R.string.runtime_start_title)
         composeRule.setContent {
@@ -118,6 +150,7 @@ class StartRuntimeScreenTest {
         composeRule.onNodeWithTag("runtime-start-retry").assertIsDisplayed()
         composeRule.onNodeWithText(retryLabel).assertIsDisplayed()
         composeRule.onAllNodesWithTag("runtime-start-progress").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("runtime-start-restart").assertCountEquals(0)
     }
 
     @Test
