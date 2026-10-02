@@ -26,6 +26,7 @@ import com.seed.app.runtime.BootState
 import com.seed.app.runtime.ExtractionScreen
 import com.seed.app.runtime.HealthState
 import com.seed.app.runtime.RootfsVersion
+import com.seed.app.runtime.RuntimeBindingTimeout
 import com.seed.app.runtime.RuntimeBinder
 import com.seed.app.runtime.RuntimeService
 import com.seed.app.runtime.SeedTerminalManager
@@ -65,9 +66,16 @@ class MainActivity : ComponentActivity() {
         // Permission denial does not gate or stop the foreground runtime.
     }
 
-    private val runtimeConnection = object : ServiceConnection {
+    private var runtimeConnection: ServiceConnection? = null
+    private val bindingTimeout = RuntimeBindingTimeout(lifecycleScope) {
+        if (!activityDestroyed && acceptedBinding && runtimeBinder == null) {
+            rejectCurrentBinding(R.string.runtime_binding_timeout)
+        }
+    }
+
+    private fun newRuntimeConnection() = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
-            if (activityDestroyed || !frameworkBindingRegistered || !acceptedBinding) return
+            if (!isCurrentConnection(this)) return
 
             if (!service.isBinderAlive || !service.pingBinder()) {
                 rejectCurrentBinding(R.string.runtime_binding_dead)
@@ -80,6 +88,7 @@ class MainActivity : ComponentActivity() {
                 return
             }
 
+            bindingTimeout.cancel()
             clearRuntimeBinder()
             runtimeBinder = binder
             terminalManager = binder.terminalManager
@@ -93,26 +102,30 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
-            if (activityDestroyed || !frameworkBindingRegistered || !acceptedBinding) return
+            if (!isCurrentConnection(this)) return
             clearRuntimeBinder()
             publishRuntimeError(R.string.runtime_service_disconnected)
             // The platform keeps this binding active and may reconnect it.
         }
 
         override fun onBindingDied(name: ComponentName) {
-            if (activityDestroyed || !frameworkBindingRegistered || !acceptedBinding) return
+            if (!isCurrentConnection(this)) return
             clearRuntimeBinder()
             releaseFrameworkBinding()
             publishRuntimeError(R.string.runtime_binding_died)
         }
 
         override fun onNullBinding(name: ComponentName) {
-            if (activityDestroyed || !frameworkBindingRegistered || !acceptedBinding) return
+            if (!isCurrentConnection(this)) return
             clearRuntimeBinder()
             releaseFrameworkBinding()
             publishRuntimeError(R.string.runtime_binding_null)
         }
     }
+
+    private fun isCurrentConnection(connection: ServiceConnection): Boolean =
+        !activityDestroyed && frameworkBindingRegistered && acceptedBinding &&
+            runtimeConnection === connection
 
     private val runtimeStartupGate = RuntimeStartupGate(::startAndBindRuntime)
 
@@ -196,9 +209,11 @@ class MainActivity : ComponentActivity() {
             }
 
             acceptedBinding = false
+            val connection = newRuntimeConnection()
+            runtimeConnection = connection
             frameworkBindingRegistered = true
             val accepted = try {
-                bindService(serviceIntent, runtimeConnection, Context.BIND_AUTO_CREATE)
+                bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE)
             } catch (failure: Exception) {
                 Log.e(TAG, "Failed to bind runtime service", failure)
                 releaseFrameworkBinding()
@@ -209,6 +224,8 @@ class MainActivity : ComponentActivity() {
             if (!accepted) {
                 releaseFrameworkBinding()
                 publishRuntimeError(R.string.runtime_binding_rejected)
+            } else {
+                bindingTimeout.arm()
             }
         } finally {
             requestRuntimeNotificationPermissionIfNeeded()
@@ -241,12 +258,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun releaseFrameworkBinding() {
+        bindingTimeout.cancel()
         acceptedBinding = false
+        val connection = runtimeConnection
+        runtimeConnection = null
         if (!frameworkBindingRegistered) return
 
         frameworkBindingRegistered = false
+        if (connection == null) return
         try {
-            unbindService(runtimeConnection)
+            unbindService(connection)
         } catch (_: IllegalArgumentException) {
             // The framework already discarded the connection; local state is released.
         }

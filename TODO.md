@@ -477,8 +477,16 @@ roughly by release risk rather than by the historical phase numbering.
    G32 (121.844 seconds), with unchanged production settings checksum. This is
    regression coverage, not an injected on-device HTTP-outage test.
    Remaining: explicit restart for wedged-but-live processes (Retry re-probes),
-   binding timeouts, retryable extraction, stop/restart/wipe controls, bounded
-   automatic crash supervision and terminal behavior across runtime restart.
+   retryable extraction, stop/restart/wipe controls, bounded automatic crash
+   supervision and terminal behavior across runtime restart.
+   Binding callback timeout is implemented: accepted connections get a 10-second
+   deadline; timeout releases the binding and shows a localized Retry error.
+   Connect/release/destruction cancel the deadline; each attempt has its own
+   ServiceConnection identity so stale callbacks cannot affect a retry. Four
+   deterministic timer tests passed; all **260 JVM tests**, lint and APK builds
+   passed, followed by **7/7 device regression tests** (125.158 seconds). Settings
+   checksums matched. Activity-level injection of withheld/stale callbacks remains
+   a coverage gap; the connected suite does not simulate that failure.
 9. **Finish architecture/device acceptance.** `make run-phone-test` builds,
    installs, and launches the direct-native ARM64 package; x86_64 is the native
    emulator lane. QEMU support has been removed and native publication now
@@ -582,9 +590,10 @@ fresh verification.
   reports immediate and post-readiness process death through Unhealthy/Retry.
   Continuous HTTP readiness now detects sustained guest-component failures or
   wedged responses after startup (three failed probes, five-second cadence,
-  two-second timeout); brief failures do not replace the running UI. Binding
-  callback timeouts, retryable extraction, explicit wedged-process restart and
-  automatic bounded crash supervision remain unfinished. Retry still re-probes
+  two-second timeout); brief failures do not replace the running UI. Accepted
+  service bindings now time out after 10 seconds with a retryable error; stale
+  connection callbacks are rejected. Retryable extraction, explicit wedged-process
+  restart and automatic bounded crash supervision remain unfinished. Retry still re-probes
   a live handle. Startup readiness requires
   `/health` to report `flask: "up"`.
 - **The active Shell path has basic manual ARM64 acceptance, not focused tests.** The Android tab

@@ -64,6 +64,7 @@
     <string name="runtime_start_error_title">Seed runtime could not start</string>
     <string name="runtime_start_retry">Retry</string>
     <string name="runtime_service_start_failed">Seed could not start the local runtime. Tap Retry to try again.</string>
+    <string name="runtime_binding_timeout">Connecting to the local runtime timed out. Tap Retry to reconnect.</string>
     <string name="runtime_binding_failed">Seed could not connect to the local runtime. Tap Retry to reconnect.</string>
     <string name="runtime_binding_rejected">Android rejected the local runtime connection. Tap Retry to reconnect.</string>
     <string name="runtime_binding_invalid">The local runtime returned an invalid connection. Tap Retry to reconnect.</string>
