@@ -426,6 +426,93 @@ class RuntimeSupervisorTest {
     }
 
     @Test
+    fun restartDoesNotDestroyRuntimeOnCallerThread() = runTest {
+        val stale = FakeProotHandle()
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { stale },
+            healthStates = { flowOf(HealthState.Healthy("up")) },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        supervisor.restart()
+        assertEquals(0, stale.destroyCalls)
+        runCurrent()
+        assertEquals(1, stale.destroyCalls)
+    }
+
+    @Test
+    fun restartWaitsForExitAndCoalescesRepeatedRequests() = runTest {
+        val stale = FakeProotHandle(exitOnDestroy = false)
+        val replacement = FakeProotHandle()
+        var starts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { starts++; if (starts == 1) stale else replacement },
+            healthStates = { flowOf(HealthState.Healthy("up")) },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        supervisor.restart()
+        runCurrent()
+        supervisor.restart()
+        supervisor.startOrRetry()
+        runCurrent()
+        assertEquals(1, starts)
+        assertEquals(1, stale.destroyCalls)
+        assertEquals(HealthState.Unknown, supervisor.health.value)
+        stale.alive = false
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(2, starts)
+        assertEquals(HealthState.Healthy("up"), supervisor.health.value)
+    }
+
+    @Test
+    fun stubbornOldRuntimeTimesOutWithoutLaunchingReplacement() = runTest {
+        val stale = FakeProotHandle(exitOnDestroy = false)
+        var starts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { starts++; stale },
+            healthStates = { flowOf(HealthState.Healthy("up")) },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        supervisor.restart()
+        runCurrent()
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals(1, starts)
+        assertEquals(HealthState.Unhealthy("Could not stop the previous runtime. Close and reopen Seed."), supervisor.health.value)
+        assertTrue(supervisor.isRuntimeAlive)
+        supervisor.startOrRetry()
+        runCurrent()
+        assertEquals(1, starts)
+    }
+
+    @Test
+    fun stopDuringShutdownNeverStartsReplacement() = runTest {
+        val stale = FakeProotHandle(exitOnDestroy = false)
+        var starts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { starts++; stale },
+            healthStates = { flowOf(HealthState.Healthy("up")) },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        supervisor.restart()
+        runCurrent()
+        supervisor.stop()
+        stale.alive = false
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertEquals(1, starts)
+        assertFalse(supervisor.isRuntimeAlive)
+    }
+
+    @Test
     fun immediatelyDeadProcessBecomesUnhealthyWithoutProbing() = runTest {
         var probes = 0
         val supervisor = RuntimeSupervisor(
@@ -552,6 +639,7 @@ class RuntimeSupervisorTest {
 
 private class FakeProotHandle(
     var alive: Boolean = true,
+    private val exitOnDestroy: Boolean = true,
 ) : ProotHandle {
     var destroyCalls: Int = 0
         private set
@@ -562,6 +650,6 @@ private class FakeProotHandle(
 
     override fun destroy() {
         destroyCalls += 1
-        alive = false
+        if (exitOnDestroy) alive = false
     }
 }

@@ -21,7 +21,8 @@ internal class RuntimeSupervisor(
     private val onFailure: (message: String, failure: Throwable) -> Unit = { _, _ -> },
 ) {
     private val mutableHealth = MutableStateFlow<HealthState>(HealthState.Unknown)
-    private val commands = Channel<Long>(capacity = Channel.CONFLATED)
+    private data class Command(val generation: Long, val restart: Boolean = false)
+    private val commands = Channel<Command>(capacity = Channel.CONFLATED)
     private val terminal = AtomicBoolean(false)
     private val lifecycleLock = Any()
     private var generation = 0L
@@ -38,39 +39,21 @@ internal class RuntimeSupervisor(
     /** Queues startup/retry work in [scope] and returns without spawning on the caller thread. */
     fun startOrRetry() {
         synchronized(lifecycleLock) {
-            if (terminal.get()) return
+            if (terminal.get() || restartPending) return
             generation += 1
             mutableHealth.value = HealthState.Unknown
-            if (!restartPending) commands.trySend(generation)
+            commands.trySend(Command(generation))
         }
     }
 
-    /** Replace the current PRoot generation while keeping the service alive. */
-    fun restart() = replaceGeneration()
-
-    /** Bump the generation, tear down the active handle, and queue a new
-     *  process start. This remains only for explicit runtime recovery; model
-     *  settings replace Pi agents through FastAPI and never call this method.
-     */
-    private fun replaceGeneration() {
-        val activeHandle = synchronized(lifecycleLock) {
-            if (terminal.get()) return
+    /** Queue explicit replacement; retain ownership until the old handle exits. */
+    fun restart() {
+        synchronized(lifecycleLock) {
+            if (terminal.get() || restartPending) return
             generation += 1
             mutableHealth.value = HealthState.Unknown
-            if (restartPending) return
             restartPending = true
-            handle.also { handle = null }
-        }
-        // Best-effort destroy; we don't wait for it. The handle's destroy()
-        // runs SIGTERM and spawns a daemon thread that escalates to SIGKILL
-        // after a grace period, but on Android PRoot may stay alive because
-        // it created its own process group. We intentionally do not block
-        // here: the new generation's process start must proceed so the UI
-        // gets a Healthy state for the next handle.
-        activeHandle?.destroy()
-        synchronized(lifecycleLock) {
-            restartPending = false
-            if (!terminal.get()) commands.trySend(generation)
+            commands.trySend(Command(generation, restart = true))
         }
     }
 
@@ -90,39 +73,70 @@ internal class RuntimeSupervisor(
         var healthCollection: Job? = null
         var livenessWatch: Job? = null
         try {
-            for (commandGeneration in commands) {
-                livenessWatch?.cancelAndJoin()
-                livenessWatch = null
-                healthCollection?.cancelAndJoin()
-                healthCollection = null
+            for (command in commands) {
+                val commandGeneration = command.generation
+                try {
+                    livenessWatch?.cancelAndJoin()
+                    livenessWatch = null
+                    healthCollection?.cancelAndJoin()
+                    healthCollection = null
 
-                if (!isCurrent(commandGeneration)) continue
-                val activeHandle = activeOrReplacement(commandGeneration) ?: continue
-                if (!isCurrent(commandGeneration)) continue
-                if (!activeHandle.isAlive) {
-                    publishForHandle(commandGeneration, activeHandle, processExited())
-                    continue
-                }
-
-                val collector = launch {
-                    collectHealth(commandGeneration, activeHandle)
-                }
-                healthCollection = collector
-                livenessWatch = launch {
-                    while (isCurrent(commandGeneration)) {
-                        if (!activeHandle.isAlive) {
-                            publishForHandle(commandGeneration, activeHandle, processExited())
-                            collector.cancel()
-                            break
-                        }
-                        delay(500)
+                    if (!isCurrent(commandGeneration)) continue
+                    if (command.restart && !stopBeforeReplacement(commandGeneration)) continue
+                    val activeHandle = activeOrReplacement(commandGeneration) ?: continue
+                    if (!isCurrent(commandGeneration)) continue
+                    if (!activeHandle.isAlive) {
+                        publishForHandle(commandGeneration, activeHandle, processExited())
+                        continue
                     }
+
+                    val collector = launch {
+                        collectHealth(commandGeneration, activeHandle)
+                    }
+                    healthCollection = collector
+                    livenessWatch = launch {
+                        while (isCurrent(commandGeneration)) {
+                            if (!activeHandle.isAlive) {
+                                publishForHandle(commandGeneration, activeHandle, processExited())
+                                collector.cancel()
+                                break
+                            }
+                            delay(500)
+                        }
+                    }
+                } finally {
+                    if (command.restart) synchronized(lifecycleLock) { restartPending = false }
                 }
             }
         } finally {
             livenessWatch?.cancel()
             healthCollection?.cancel()
         }
+    }
+
+    private suspend fun stopBeforeReplacement(commandGeneration: Long): Boolean {
+        val previous = synchronized(lifecycleLock) { handle } ?: return true
+        try {
+            previous.destroy()
+            if (!previous.awaitExit(10_000)) {
+                publishIfCurrent(commandGeneration, HealthState.Unhealthy(
+                    "Could not stop the previous runtime. Close and reopen Seed.",
+                ))
+                return false
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            onFailure("Could not stop embedded runtime", failure)
+            publishIfCurrent(commandGeneration, HealthState.Unhealthy("Could not stop the previous runtime"))
+            return false
+        }
+        synchronized(lifecycleLock) {
+            if (handle === previous && generation == commandGeneration && !terminal.get()) {
+                handle = null
+            }
+        }
+        return isCurrent(commandGeneration)
     }
 
     private suspend fun activeOrReplacement(commandGeneration: Long): ProotHandle? {

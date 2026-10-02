@@ -5,6 +5,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
@@ -195,6 +197,12 @@ interface ProotHandle {
 
     /** Sends SIGTERM and asynchronously escalates after a five-second grace period. */
     fun destroy()
+
+    /** Await the handle's exit observation; Android ownership still needs device validation. */
+    suspend fun awaitExit(timeoutMs: Long): Boolean = withTimeoutOrNull(timeoutMs) {
+        while (isAlive) delay(100)
+        true
+    } ?: false
 }
 
 /**

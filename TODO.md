@@ -483,9 +483,25 @@ roughly by release risk rather than by the historical phase numbering.
    ordering tests and two Compose action/visibility tests were added; all
    **268 JVM tests**, lint and APK builds passed, followed by **10/10 connected
    tests** (126.186 seconds) with unchanged settings checksum. Real wedged-process
-   termination/recovery and terminal re-creation still need focused device
-   acceptance; best-effort PRoot shutdown/overlapping generations remain known
-   limitations. Remaining: stop/wipe controls and bounded automatic supervision.
+   termination/recovery was subsequently tested and **failed acceptance**:
+   pausing the backend PRoot triggered the error screen, but Restart did not
+   restore readiness within 140 seconds and the old PRoot remained stopped.
+   Seed was restored via SIGCONT, package force-stop and relaunch; `/health`
+   returned 200 and settings/generated-app checksums matched. See
+   `docs/reports/native-arm64-runtime-restart-acceptance.md`. **Next task:
+   diagnose/fix process termination and replacement ordering, then repeat this
+   test.** First offline increment implements serialized replacement gating:
+   Restart queues work off the caller thread, retains the old handle while
+   waiting up to 10 seconds for its exit observation, coalesces requests and
+   refuses replacement on timeout/error. Four new regression tests passed;
+   all **272 JVM tests**, lint and debug/instrumentation APK builds passed.
+   The deadline bounds exit waiting, not a potentially blocking synchronous
+   `destroy()` call; Android Process liveness/termination is still unreliable.
+   Reliable owned-PID signalling/identity and nonblocking shutdown remain next
+   in `docs/plans/2026-10-02-runtime-shutdown-recovery.md`. The phone was
+   disconnected, so this increment has **no new device acceptance**.
+   Terminal re-creation remains unaccepted. Stop/wipe controls and
+   bounded automatic supervision remain deferred.
    Binding callback timeout is implemented: accepted connections get a 10-second
    deadline; timeout releases the binding and shows a localized Retry error.
    Connect/release/destruction cancel the deadline; each attempt has its own
@@ -613,8 +629,9 @@ fresh verification.
   connection callbacks are rejected. Extraction failures now show manual Retry
   without automatic looping; cancellation remains silent and Ready waits for
   completed extraction. Explicit runtime Restart UI is implemented and closes
-  the current terminal session; actual wedged-process recovery remains unaccepted
-  because shutdown is best-effort. Stop/wipe UI and automatic bounded crash
+  the current terminal session; actual wedged-process recovery **failed** the
+  authorized PRoot-pause test. Failure-point investigation is next; shutdown and
+  replacement ordering must be fixed before accepting the action. Stop/wipe UI and automatic bounded crash
   supervision remain unfinished. Retry still re-probes
   a live handle. Startup readiness requires
   `/health` to report `flask: "up"`.
