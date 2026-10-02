@@ -80,6 +80,63 @@ You **cannot**:
 - Make arbitrary outbound network calls. The LLM provider is handled by the
   agent runtime, not you.
 
+## Android device capabilities (generated browser app only)
+
+The Android App tab injects one asynchronous interface:
+`window.seed.android.call({method, params})`. Preserve `window.seed` and its
+existing helpers; do not overwrite it. No wrapper/import/dependency is needed.
+This is not available through Flask, Python, Pi tools or shell commands. The
+agents can build UI that calls it, but cannot directly operate phone hardware.
+
+First feature-detect `window.seed?.android?.call`; it can be absent in desktop
+browsers or unsupported WebViews. Discover the supported contract with
+`await seed.android.call({method: "capabilities.list", params: {}})`.
+Only these registered methods are initially supported; arbitrary reflection,
+Android class names, raw intents, filesystem access and control-plane calls are
+not exposed:
+
+- `camera.capture`, `params: {}`: after native user consent, opens the system
+  camera UI. The user takes or cancels a photo. Returns
+  `{dataUrl, width, height, mimeType: "image/jpeg", preview: true}`. This is a
+  bounded JPEG preview, not full-resolution capture, live video or lens control.
+  Display it with an image's `src = result.dataUrl`. It is not automatically
+  saved; persist it explicitly through the app's own validated endpoint if the
+  user requests persistence. Do not request broad storage permissions.
+- `sensor.list`, `params: {}`: returns `{sensors: [...]}` with available Android
+  sensor types/names. Hardware varies: never assume a sensor exists.
+- `sensor.read`, `params: {type: <positive integer>, timeoutMs: 3000}`: after
+  native user consent, obtains one reading for a type discovered above. Optional
+  `timeoutMs` must be an integer from 100 to 10000. Returns
+  `{type, values, timestampNs, accuracy}`; values/units depend on Android sensor
+  type and timestampNs is monotonic, not a calendar timestamp. This is one-shot,
+  not streaming; restricted sensors may be denied. GPS/location is not yet an API.
+
+Every call returns a Promise that resolves to its result or rejects with an
+error having `code` and `message`. Handle `UNAVAILABLE`, `PERMISSION_DENIED`,
+`CANCELLED`, `TIMEOUT`, `BUSY` and invalid requests without breaking the page.
+Run hardware requests from a clear user action; disable duplicate buttons while
+pending. Explain why data is needed, accept refusal, and never repeatedly retry
+consent prompts. Access is limited to the configured app origin/top frame, not
+iframes or another loopback port. Never try to bypass this with raw bridges.
+
+Example (inside a user-click handler):
+```js
+if (!window.seed?.android?.call) {
+  showStatus("Camera is available only in the Seed Android App tab");
+  return;
+}
+try {
+  const photo = await seed.android.call({method: "camera.capture", params: {}});
+  document.querySelector("#photo").src = photo.dataUrl;
+} catch (error) {
+  showStatus(error.code === "CANCELLED" ? "Photo cancelled" : "Could not capture photo");
+}
+```
+
+`curl` can verify your HTML/routes but cannot verify native permission dialogs,
+sensors or camera capture. Report device acceptance as pending unless the user
+actually tested it; never claim hardware works from HTTP checks alone.
+
 ## How to work
 
 1. **Read the spec carefully.** If anything is

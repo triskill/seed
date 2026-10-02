@@ -73,6 +73,9 @@ class RuntimeService : Service() {
             startProcess = {
                 val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
                 val runtimeDir = File(filesDir, LINUX_DIRECTORY)
+                AgentPromptInstaller.install(File(runtimeDir, ROOTFS_DIRECTORY)) { role ->
+                    assets.open("agent-prompts/$role").use { it.readBytes() }
+                }
                 GuestDns.sync(this@RuntimeService, File(runtimeDir, ROOTFS_DIRECTORY))
                 val baseEnvironment = ProotEnvironment.createBackend(
                     tempDir = File(cacheDir, PROOT_TEMP_DIRECTORY),

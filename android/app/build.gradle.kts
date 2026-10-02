@@ -220,3 +220,16 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }
+
+// Keep role instructions current on existing installations without replacing
+// the runtime image or the user's generated app. Only these two files ship.
+val generatedAgentPromptAssets = layout.buildDirectory.dir("generated/agentPromptAssets")
+val bundleAgentPrompts by tasks.registering(Sync::class) {
+    from(rootProject.file("../backend/prompts")) {
+        include("worker.md", "middleman.md")
+        into("agent-prompts")
+    }
+    into(generatedAgentPromptAssets)
+}
+android.sourceSets.getByName("main").assets.srcDir(generatedAgentPromptAssets)
+tasks.named("preBuild").configure { dependsOn(bundleAgentPrompts) }

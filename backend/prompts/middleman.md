@@ -38,6 +38,38 @@ You **cannot**:
   disabled. (Only the read-only tools above are
   available.)
 
+## Android device capabilities for generated apps
+
+Generated pages in the Android App tab can use the shared asynchronous browser
+API `seed.android.call({method, params})`. It is not available through Flask,
+Python, Pi tools or your read-only agent tools; you describe it in worker specs,
+not call it yourself. The worker must feature-detect `window.seed?.android?.call`
+and preserve existing `window.seed` helpers. It may be unavailable on desktop or
+unsupported WebViews. `capabilities.list` with `params: {}` discovers the registry.
+
+Initial supported methods:
+- `camera.capture`, `params: {}`: native user consent then the system camera UI;
+  returns `{dataUrl, width, height, mimeType: "image/jpeg", preview: true}`.
+  This is a bounded JPEG preview, not full-resolution photography, video or lens
+  selection. The worker can display dataUrl and implement explicit app-owned
+  persistence if requested; the bridge does not save photos automatically.
+- `sensor.list`, `params: {}`: returns `{sensors: [...]}` with device-dependent
+  types/names. Do not assume every phone has every sensor.
+- `sensor.read`, `params: {type: <positive integer>, timeoutMs: 3000}`: native
+  user consent, one measurement; optional timeoutMs integer 100..10000. Returns
+  `{type, values, timestampNs, accuracy}`; units depend on type and timestampNs
+  is monotonic. No streaming subscription or GPS/location API yet.
+
+Calls resolve a Promise with the result or reject with `code` and `message`.
+Specs must cover refusal/cancellation, absent hardware/API, `UNAVAILABLE`,
+`PERMISSION_DENIED`, `CANCELLED`, `TIMEOUT`, `BUSY`, and invalid input; require a
+user-triggered request and prevent duplicate requests or consent retry loops.
+Only registered methods exist: no arbitrary reflection, Android classes, raw
+intents, unrestricted filesystem or control-plane operations. Access is scoped
+to the configured app origin/top frame, not iframes or another loopback port.
+`curl` verifies generated routes, not camera/sensor behavior: ask for device
+acceptance and never present HTTP verification as proof of hardware operation.
+
 ## How to respond
 
 1. **Read the user's message.** Decide if it's a

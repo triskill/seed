@@ -64,13 +64,32 @@ verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
 
 ### Next priority — Android device capabilities for generated apps
 
-User-selected next work: Android system capabilities (camera first) usable by
-WebView-hosted generated apps, before Stop/wipe controls. Design the capability
-API, exact-origin restrictions and user permission flow before implementation.
-Document supported APIs, limitations and error handling in both middleman and
-worker system prompts so agents can build against them. Camera capture versus
-live preview is still to be agreed; GPS/sensors are later candidates. Never give
-generated apps unrestricted access to Android or backend control-plane secrets.
+First slice implemented: generated apps use
+`seed.android.call({method, params})` for `capabilities.list`, `camera.capture`,
+`sensor.list`, and one-shot `sensor.read`. Generic JS transport, strict native
+schemas/registry, exact origin+port/top-frame checks, consent dialogs, bounded
+waits and cancellation cleanup; no arbitrary Android reflection. Camera returns
+bounded JPEG previews through the system camera UI. SensorManager covers sensor
+types generically, including one-shot trigger types; no per-sensor JS wrappers.
+
+Both agent system prompts document the contract. APK-bundled role instructions
+are deployed before backend startup without replacing the rootfs or generated
+app; installed prompt hashes match source. See
+`docs/android-device-capabilities.md` and the implementation plan/report.
+
+Verification: **303 JVM tests**, **12 browser SDK tests**, **296 backend tests**,
+lint and both APK builds passed. On Moto G32, **5 classes / 21 connected methods
+passed** (131.238 seconds), including exact-origin/frame denial, bridge replies/
+cancellation, fake-camera late-result/bitmap cleanup, and a real accelerometer
+host reading after consent. Settings and generated-app file checksums match;
+runtime readiness restored after the update. Browser-history restoration bug
+found in review was fixed with a red/green SDK regression.
+
+**Next:** user-operated real camera capture/return/cancel acceptance. Fake camera
+tests do not prove the system camera flow; no photograph was taken automatically.
+Full-resolution/video, sensor streams and GPS/location remain follow-ups, ahead
+of deferred Stop/wipe UI. Never expose unrestricted Android operations or backend
+control-plane secrets. The user's generated app was not modified for this work.
 
 ### Latest native ARM64 ownership/restart acceptance
 

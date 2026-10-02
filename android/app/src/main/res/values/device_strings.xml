@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="device_confirmation_title">Allow device access?</string>
+    <string name="device_camera_confirmation">This app wants to open the camera and receive a small photo preview. Only continue if you trust this app.</string>
+    <string name="device_sensor_confirmation">This app wants to read one measurement from a device sensor. Only continue if you trust this app.</string>
+    <string name="device_allow">Allow once</string>
+    <string name="device_deny">Deny</string>
+</resources>

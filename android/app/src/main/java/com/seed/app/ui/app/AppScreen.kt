@@ -15,6 +15,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.seed.app.BuildConfig
+import com.seed.app.device.DeviceWebBridge
+import com.seed.app.device.rememberDeviceCapabilityHost
 
 /**
  * App tab — shows the user's webapp inside a WebView.
@@ -81,7 +83,10 @@ fun AppScreen(modifier: Modifier = Modifier) {
     // `rememberSaveable`) — the WebView saves its
     // own state via the parent Activity's
     // onSaveInstanceState.
-    val webView = remember { WebView(context) }
+    val host = rememberDeviceCapabilityHost()
+    val webView = remember(context) { WebView(context) }
+    // Install the origin-bound document-start bridge before the first load.
+    val bridge = remember(webView, host) { DeviceWebBridge(webView, host, BuildConfig.WEBAPP_DEV_URL) }
 
     // Tear the WebView down when the composable
     // leaves the composition (tab change, app
@@ -89,8 +94,9 @@ fun AppScreen(modifier: Modifier = Modifier) {
     // runs once per AndroidView entry, so the
     // `remember`-ed WebView is the same instance
     // the factory wired up.
-    DisposableEffect(Unit) {
+    DisposableEffect(webView, bridge) {
         onDispose {
+            bridge.close()
             (webView.parent as? ViewGroup)?.removeView(webView)
             webView.destroy()
         }
@@ -100,6 +106,7 @@ fun AppScreen(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxSize(),
         factory = { ctx ->
             SwipeRefreshLayout(ctx).apply {
+                val refreshLayout = this
                 setOnRefreshListener { webView.reload() }
                 addView(
                     webView.apply {
@@ -109,6 +116,16 @@ fun AppScreen(modifier: Modifier = Modifier) {
                         )
                         settings.applySafeSettings()
                         webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                                bridge.onNavigation()
+                                super.onPageStarted(view, url, favicon)
+                            }
+
+                            override fun onPageFinished(view: WebView, url: String?) {
+                                refreshLayout.isRefreshing = false
+                                super.onPageFinished(view, url)
+                            }
+
                             override fun shouldOverrideUrlLoading(
                                 view: WebView,
                                 request: WebResourceRequest,

@@ -137,6 +137,21 @@ def test_worker_prompt_does_not_tell_agent_to_restart_webapp():
 
 
 
+def test_prompts_describe_shared_android_capability_contract():
+    """Both roles know the same allowlisted browser API, not arbitrary reflection."""
+    for prompt in (_MIDDLEMAN_PROMPT, _WORKER_PROMPT):
+        text = prompt.read_text(encoding="utf-8")
+        for required in (
+            "seed.android.call", "capabilities.list", "camera.capture",
+            "sensor.list", "sensor.read", "timeoutMs", "dataUrl",
+            "preview", "BUSY", "PERMISSION_DENIED", "UNAVAILABLE",
+            "user consent", "not available through Flask", "curl",
+        ):
+            assert required in text, f"{prompt.name} lacks {required}"
+        assert "arbitrary reflection" in text
+        assert "full-resolution" in text
+
+
 def test_middleman_prompt_matches_enforced_tool_allowlist():
     """The prompt must not advertise shell access the runner will block."""
     text = _MIDDLEMAN_PROMPT.read_text(encoding="utf-8")
