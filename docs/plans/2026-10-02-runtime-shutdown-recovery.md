@@ -49,6 +49,6 @@ Repeated the real device scenario after the phone returned: SIGSTOP owned
 tracer, await error, tap Restart, confirm old tracer/captured descendants release
 and new readiness. Both attempts passed (~13.2/~16.7 seconds), including a
 fresh terminal session after closing an active one. Settings/generated-app file
-checksums matched. No force-stop/data-clear workaround was needed. Browser-local
-habit data contents were not inspected. See the acceptance report; x86_64 and
+checksums matched. No force-stop/data-clear workaround was needed. The user subsequently confirmed browser-local habit data
+is still present (manual persistence acceptance, not a store hash). See the acceptance report; x86_64 and
 broader crash-race coverage remain separate.

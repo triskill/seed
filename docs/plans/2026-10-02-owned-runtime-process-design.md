@@ -105,7 +105,8 @@ an active terminal was closed and a new session printed its marker after the
 second restart. Settings and generated-app file checksums matched. See
 `docs/reports/native-arm64-runtime-restart-acceptance.md` for details and limits.
 
-**Next:** x86_64 and broader crash/supervision coverage. Browser-local habit data
-contents still require user confirmation; they were not inspected by these
-checksums. `/proc`/signal checks remain non-atomic; this is not a sandbox against
+The user subsequently confirmed local habit data is still present; browser-local
+persistence is manually accepted, not inspected through file checksums.
+
+**Next:** x86_64 and broader crash/supervision coverage. `/proc`/signal checks remain non-atomic; this is not a sandbox against
 hostile same-UID code or a pidfd guarantee.

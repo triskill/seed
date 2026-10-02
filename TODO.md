@@ -62,6 +62,16 @@ captured). Results reported in this acceptance session:
 These are manual user observations, not automated instrumentation results,
 verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
 
+### Next priority — Android device capabilities for generated apps
+
+User-selected next work: Android system capabilities (camera first) usable by
+WebView-hosted generated apps, before Stop/wipe controls. Design the capability
+API, exact-origin restrictions and user permission flow before implementation.
+Document supported APIs, limitations and error handling in both middleman and
+worker system prompts so agents can build against them. Camera capture versus
+live preview is still to be agreed; GPS/sensors are later candidates. Never give
+generated apps unrestricted access to Android or backend control-plane secrets.
+
 ### Latest native ARM64 ownership/restart acceptance
 
 On Moto G32 (Android13/API33), both APKs installed with `adb install -r`:
@@ -76,9 +86,9 @@ On Moto G32 (Android13/API33), both APKs installed with `adb install -r`:
 - Settings and generated-app file checksums matched; no force-stop or data-clear
   workaround was needed. App tab restored and temporary ADB forward removed.
 
-See `docs/reports/native-arm64-runtime-restart-acceptance.md`. Browser-local habit
-contents were not inspected; x86_64 and broader startup/crash races remain
-separate acceptance work. Non-atomic PID checks are not a same-UID sandbox.
+The user subsequently confirmed browser-local habit data is still present.
+See `docs/reports/native-arm64-runtime-restart-acceptance.md`; x86_64 and broader
+startup/crash races remain separate acceptance work. Non-atomic PID checks are not a same-UID sandbox.
 
 ### Native ARM64 instrumentation — earlier acceptance
 
@@ -530,8 +540,8 @@ roughly by release risk rather than by the historical phase numbering.
    twice (~13.2/~16.7 seconds); all captured old backend/terminal processes
    disappeared, a fresh terminal ran its marker command, and settings/app-file
    checksums matched. See the ownership design and acceptance report. PID checks
-   remain non-atomic and are not a same-UID sandbox; browser-local habit contents
-   and x86_64 were not verified. Stop/wipe UI, broader crash-race coverage and
+   remain non-atomic and are not a same-UID sandbox. The user confirmed browser-
+   local habit data survived; x86_64 was not verified. Stop/wipe UI, broader crash-race coverage and
    bounded automatic supervision remain deferred.
    Binding callback timeout is implemented: accepted connections get a 10-second
    deadline; timeout releases the binding and shows a localized Retry error.
@@ -620,8 +630,8 @@ Android tooling only; Python dependencies come from
 
 **Current native ARM64 acceptance:** manual provider-backed flow, the expanded
 11-method connected suite, and two real paused-runtime restart/recreated-terminal
-checks pass. Installed Pi 0.84.2 was confirmed. Browser-local habit contents after
-these latest restarts and x86_64 remain separate checks. Remaining:
+checks pass. Installed Pi 0.84.2 was confirmed, and the user confirmed browser-
+local habit data survived the latest restarts. x86_64 remains a separate check. Remaining:
 runtime recovery/hardening, focused UI/terminal coverage, durable chat/replay,
 security/release work and provider-backed acceptance on x86_64. Historical results below are recorded evidence, not a
 fresh verification.

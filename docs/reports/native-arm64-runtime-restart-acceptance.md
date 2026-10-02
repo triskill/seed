@@ -62,6 +62,8 @@ storage was cleared. Results on the new implementation:
     printed the expected marker (screenshot inspected).
 - Production settings and generated-app file checksums (excluding transient
   Python bytecode) matched before installation and after both restarts.
+- The user subsequently confirmed local habit data is still present after these
+  restarts. This is user-reported functional persistence, not a browser-store hash.
 - Temporary ADB forward/UI dumps were removed and the App tab restored.
 - Local runner logs: `/tmp/seed-owned-host-smoke-device.log`,
   `/tmp/seed-owned-full-device.log`, `/tmp/seed-owned-phone-build.log`.
@@ -69,9 +71,9 @@ storage was cleared. Results on the new implementation:
 This accepts the observed native ARM64 ownership and paused-runtime recovery
 scenario, including basic terminal re-creation. It does not prove atomic PID
 signaling, all possible descendant races, crash-at-every-startup-stage behavior,
-x86_64 compatibility, or browser-local habit data contents. The generated app's
-files were unchanged; user confirmation of browser-local habit data remains
-separate. Source/PID-reuse and same-UID limitations are documented in the design.
+x86_64 compatibility, or a byte-for-byte browser-store comparison. The generated
+app's files were unchanged, and browser-local habit persistence has user-reported
+acceptance. Source/PID-reuse and same-UID limitations are documented in the design.
 
 ## Remaining work
 
