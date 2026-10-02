@@ -455,10 +455,20 @@ roughly by release risk rather than by the historical phase numbering.
    and accept authenticated catalog refresh on device; finish deferred Compose
    interaction tests. Endpoint reconfiguration and host/port controls remain
    deferred.
-8. **Harden runtime recovery.** Keep monitoring after initial health; detect
-   process death and wedged processes; add binding timeouts, retryable extraction
-   errors, explicit stop/restart/wipe controls, and bounded crash supervision.
-   Define how a live terminal session behaves when the backend/rootfs restarts.
+8. **Harden runtime recovery — process-exit detection implemented.**
+   `RuntimeSupervisor` now polls handle liveness every 500 ms, including after
+   initial health succeeds. Immediate/ongoing death publishes Unhealthy and
+   cancels startup probing; generation/handle fencing prevents late HTTP success
+   from masking death. Existing Retry manually replaces a dead handle; no
+   automatic restart policy was added. Six new deterministic tests cover these
+   cases, stale watcher/restart and intentional shutdown. Verification: all
+   **251 JVM tests**, debug lint and APK builds passed; the updated APK passed
+   **7/7 connected methods** on Moto G32 (124.948 seconds), with unchanged
+   production settings checksum. The connected suite is regression coverage,
+   not an injected on-device crash test. Remaining: continuous HTTP readiness
+   with failure thresholds, wedged-process handling, binding timeouts, retryable
+   extraction, stop/restart/wipe controls, bounded crash supervision and terminal
+   behavior across backend/rootfs restart.
 9. **Finish architecture/device acceptance.** `make run-phone-test` builds,
    installs, and launches the direct-native ARM64 package; x86_64 is the native
    emulator lane. QEMU support has been removed and native publication now
@@ -558,12 +568,13 @@ fresh verification.
   explicitly refreshes catalogs. Pi 0.84.2 delivery/authenticated device
   acceptance and Compose interaction tests remain pending. Ports remain fixed
   at FastAPI 7777 and Flask 7778.
-- **Runtime recovery is incomplete.** A process that dies immediately can
-  leave health at `Unknown`; an accepted service binding has no callback
-  timeout; extraction failures are not translated into retryable UI; and
-  health is not continuously monitored after the first success. A wedged but
-  still-alive process is re-polled rather than restarted. Startup readiness now
-  requires `/health` to report `flask: "up"`.
+- **Runtime recovery is partial.** Continuous process-liveness monitoring now
+  reports immediate and post-readiness process death through Unhealthy/Retry.
+  Continuous HTTP readiness is still missing, so live-but-wedged processes or
+  unhealthy guest components are not detected after startup. Binding callback
+  timeouts, retryable extraction and automatic bounded crash supervision remain
+  unfinished. Retry still re-probes a live handle. Startup readiness requires
+  `/health` to report `flask: "up"`.
 - **The active Shell path has basic manual ARM64 acceptance, not focused tests.** The Android tab
   now uses Termux `TerminalView` plus a service-owned second PRoot and Python
   no-fork REPL; the former `ShellViewModel`/Cancel UI is unused. The bridge keeps

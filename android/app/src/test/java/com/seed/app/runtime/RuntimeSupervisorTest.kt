@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -424,6 +425,128 @@ class RuntimeSupervisorTest {
         assertFalse(supervisor.isRuntimeAlive)
     }
 
+    @Test
+    fun immediatelyDeadProcessBecomesUnhealthyWithoutProbing() = runTest {
+        var probes = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { FakeProotHandle(alive = false) },
+            healthStates = { probes++; flowOf(HealthState.Healthy("up")) },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        assertEquals(HealthState.Unhealthy("Embedded runtime process exited"), supervisor.health.value)
+        assertEquals(0, probes)
+    }
+
+    @Test
+    fun deathAfterHealthyReportsFailureWithoutAutomaticRestart() = runTest {
+        val handle = FakeProotHandle()
+        var starts = 0
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { starts++; handle },
+            healthStates = { flowOf(HealthState.Healthy("up")) },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        handle.alive = false
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(HealthState.Unhealthy("Embedded runtime process exited"), supervisor.health.value)
+        assertEquals(1, starts)
+    }
+
+    @Test
+    fun deathDuringProbeCancelsHealthCollectionAndAllowsManualRetry() = runTest {
+        val stale = FakeProotHandle()
+        val replacement = FakeProotHandle()
+        val handles = ArrayDeque(listOf(stale, replacement))
+        var probes = 0
+        var cancelled = false
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { handles.removeFirst() },
+            healthStates = {
+                probes++
+                if (probes == 1) flow {
+                    emit(HealthState.Polling(1))
+                    try { awaitCancellation() } finally { cancelled = true }
+                } else flowOf(HealthState.Healthy("recovered"))
+            },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        stale.alive = false
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue(cancelled)
+        assertEquals(HealthState.Unhealthy("Embedded runtime process exited"), supervisor.health.value)
+        supervisor.startOrRetry()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(HealthState.Healthy("recovered"), supervisor.health.value)
+        assertEquals(1, stale.destroyCalls)
+        assertEquals(0, replacement.destroyCalls)
+        assertTrue(handles.isEmpty())
+    }
+
+    @Test
+    fun lateHealthSuccessCannotHideDeadProcessBeforeWatcherRuns() = runTest {
+        val handle = FakeProotHandle()
+        val releaseProbe = CompletableDeferred<Unit>()
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { handle },
+            healthStates = { flow {
+                releaseProbe.await()
+                emit(HealthState.Healthy("stale success"))
+            } },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        handle.alive = false
+        releaseProbe.complete(Unit)
+        runCurrent()
+        assertEquals(HealthState.Unhealthy("Embedded runtime process exited"), supervisor.health.value)
+    }
+
+    @Test
+    fun stopDoesNotReportIntentionalShutdownAsCrash() = runTest {
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { FakeProotHandle() },
+            healthStates = { flowOf(HealthState.Healthy("up")) },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        supervisor.stop()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(HealthState.Healthy("up"), supervisor.health.value)
+    }
+
+    @Test
+    fun oldWatcherCannotReportCrashAfterExplicitRestart() = runTest {
+        val stale = FakeProotHandle()
+        val replacement = FakeProotHandle()
+        val handles = ArrayDeque(listOf(stale, replacement))
+        val supervisor = RuntimeSupervisor(
+            scope = backgroundScope,
+            startProcess = { handles.removeFirst() },
+            healthStates = { flowOf(HealthState.Healthy("up")) },
+        )
+        supervisor.startOrRetry()
+        runCurrent()
+        supervisor.restart()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(HealthState.Healthy("up"), supervisor.health.value)
+        assertTrue(replacement.isAlive)
+        assertEquals(1, stale.destroyCalls)
+    }
 
 }
 

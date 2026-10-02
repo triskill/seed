@@ -88,20 +88,39 @@ internal class RuntimeSupervisor(
 
     private suspend fun processCommands() = coroutineScope {
         var healthCollection: Job? = null
+        var livenessWatch: Job? = null
         try {
             for (commandGeneration in commands) {
+                livenessWatch?.cancelAndJoin()
+                livenessWatch = null
                 healthCollection?.cancelAndJoin()
                 healthCollection = null
 
                 if (!isCurrent(commandGeneration)) continue
                 val activeHandle = activeOrReplacement(commandGeneration) ?: continue
-                if (!activeHandle.isAlive || !isCurrent(commandGeneration)) continue
+                if (!isCurrent(commandGeneration)) continue
+                if (!activeHandle.isAlive) {
+                    publishForHandle(commandGeneration, activeHandle, processExited())
+                    continue
+                }
 
-                healthCollection = launch {
-                    collectHealth(commandGeneration)
+                val collector = launch {
+                    collectHealth(commandGeneration, activeHandle)
+                }
+                healthCollection = collector
+                livenessWatch = launch {
+                    while (isCurrent(commandGeneration)) {
+                        if (!activeHandle.isAlive) {
+                            publishForHandle(commandGeneration, activeHandle, processExited())
+                            collector.cancel()
+                            break
+                        }
+                        delay(500)
+                    }
                 }
             }
         } finally {
+            livenessWatch?.cancel()
             healthCollection?.cancel()
         }
     }
@@ -151,19 +170,35 @@ internal class RuntimeSupervisor(
         return replacement
     }
 
-    private suspend fun collectHealth(commandGeneration: Long) {
+    private suspend fun collectHealth(commandGeneration: Long, activeHandle: ProotHandle) {
         try {
             healthStates().collect { state ->
-                publishIfCurrent(commandGeneration, state)
+                publishForHandle(commandGeneration, activeHandle, state)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
             onFailure("Health check failed", failure)
-            publishIfCurrent(
+            publishForHandle(
                 commandGeneration,
+                activeHandle,
                 HealthState.Unhealthy(failure.message ?: "Health check failed"),
             )
+        }
+    }
+
+    private fun processExited() = HealthState.Unhealthy("Embedded runtime process exited")
+
+    /** A late HTTP response must not mask process death or affect a replacement. */
+    private fun publishForHandle(
+        commandGeneration: Long,
+        activeHandle: ProotHandle,
+        state: HealthState,
+    ) {
+        synchronized(lifecycleLock) {
+            if (!terminal.get() && generation == commandGeneration && handle === activeHandle) {
+                mutableHealth.value = if (activeHandle.isAlive) state else processExited()
+            }
         }
     }
 
