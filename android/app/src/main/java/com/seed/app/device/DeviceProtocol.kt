@@ -66,13 +66,16 @@ object DeviceProtocol {
         )
         fun entry(method: String, description: String, schema: Map<String, Any>, limitations: List<String>) = mapOf("method" to method, "description" to description, "paramsSchema" to schema, "resultSchema" to resultSchemas.getValue(method), "limitations" to limitations)
         return mapOf("protocolVersion" to 1,
+            "consent" to mapOf("scope" to "origin+capability", "choices" to listOf("Allow once", "Allow", "Deny"),
+                "groups" to mapOf("camera" to listOf("camera.capture"), "sensors" to listOf("sensor.list", "sensor.read")),
+                "revocation" to "Settings > Device access", "androidPermissions" to "Still required independently"),
             "limits" to mapOf("requestMaxBytes" to 8192, "requestIdPattern" to "[A-Za-z0-9_-]{1,64}", "maxConcurrentOperations" to 1, "hostTimeoutMs" to 120000),
             "reply" to mapOf("success" to "{v:1,id,ok:true,result}", "failure" to "{v:1,id,ok:false,error:{code,message}}", "errorCodes" to listOf("INVALID_REQUEST", "UNKNOWN_METHOD", "BUSY", "PERMISSION_DENIED", "UNAVAILABLE", "TIMEOUT", "CANCELLED", "INTERNAL_ERROR")),
             "capabilities" to listOf(
             entry("capabilities.list", "Describe approved Android capabilities", emptySchema, emptyList()),
-            entry("camera.capture", "Ask for consent and open system camera", emptySchema, listOf("User confirmation required", "Bounded JPEG preview/data URL only; no full resolution or video")),
-            entry("sensor.list", "Ask for consent and list available Android sensors", emptySchema, listOf("User confirmation required", "Availability depends on device and platform restrictions")),
-            entry("sensor.read", "Ask for consent and obtain one sensor measurement", mapOf("type" to "object", "required" to listOf("type"), "additionalProperties" to false, "properties" to mapOf("type" to mapOf("type" to "integer", "minimum" to 1, "maximum" to Int.MAX_VALUE), "timeoutMs" to mapOf("type" to "integer", "minimum" to 100, "maximum" to 10000, "default" to 3000))), listOf("User confirmation required", "One-shot only, no subscriptions; unsupported or restricted sensors fail"))
+            entry("camera.capture", "Open system camera with approved Camera access", emptySchema, listOf("Consent required unless Allow grant is remembered",  "Bounded JPEG preview/data URL only; no full resolution or video")),
+            entry("sensor.list", "List available Android sensors with approved Sensors access", emptySchema, listOf("Consent required unless Allow grant is remembered",  "Availability depends on device and platform restrictions")),
+            entry("sensor.read", "Obtain one sensor measurement with approved Sensors access", mapOf("type" to "object", "required" to listOf("type"), "additionalProperties" to false, "properties" to mapOf("type" to mapOf("type" to "integer", "minimum" to 1, "maximum" to Int.MAX_VALUE), "timeoutMs" to mapOf("type" to "integer", "minimum" to 100, "maximum" to 10000, "default" to 3000))), listOf("Consent required unless Allow grant is remembered", "One-shot only, no subscriptions; unsupported or restricted sensors fail"))
         ), "limitations" to listOf("One active operation", "Android app main frame only", "120 second host timeout"))
     }
 }

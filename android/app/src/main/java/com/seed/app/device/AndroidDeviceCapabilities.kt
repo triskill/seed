@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.seed.app.R
+import com.seed.app.BuildConfig
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
@@ -29,31 +30,55 @@ import kotlin.coroutines.resumeWithException
 import kotlin.math.roundToInt
 
 @Composable
-fun rememberDeviceCapabilityHost(): DeviceCapabilityHost {
+fun rememberDeviceCapabilityHost(
+    consentStore: DeviceConsentStore? = null,
+    origin: String = BuildConfig.WEBAPP_DEV_URL,
+): DeviceCapabilityHost {
     val context = LocalContext.current
-    val host = remember(context) { AndroidDeviceCapabilities(context) }
+    val store = consentStore ?: remember(context) { PreferencesDeviceConsentStore(context) }
+    val host = remember(context, store, origin) { AndroidDeviceCapabilities(context, store, origin) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) {
         host.cameraResult(it)
     }
     SideEffect { host.launchCamera = { launcher.launch(null) } }
     DisposableEffect(host) { onDispose { host.close() } }
-    host.confirmation?.let { method ->
-        AlertDialog(
-            onDismissRequest = { host.confirm(false) },
-            title = { Text(stringResource(R.string.device_confirmation_title)) },
-            text = { Text(stringResource(if (method == "camera.capture") R.string.device_camera_confirmation else R.string.device_sensor_confirmation)) },
-            confirmButton = { TextButton(onClick = { host.confirm(true) }) { Text(stringResource(R.string.device_allow)) } },
-            dismissButton = { TextButton(onClick = { host.confirm(false) }) { Text(stringResource(R.string.device_deny)) } },
-        )
-    }
+    DeviceConsentDialog(host)
     return host
 }
 
-internal class AndroidDeviceCapabilities(private val context: Context) : DeviceCapabilityHost {
+@Composable
+internal fun DeviceConsentDialog(host: AndroidDeviceCapabilities) {
+    host.confirmation?.let { method ->
+        val token = host.confirmationToken
+        AlertDialog(
+            onDismissRequest = { host.confirm(DeviceConsentDecision.DENY, token) },
+            title = { Text(stringResource(R.string.device_confirmation_title)) },
+            text = { androidx.compose.foundation.layout.Column {
+                Text(stringResource(if (method == "camera.capture") R.string.device_camera_confirmation else R.string.device_sensor_confirmation))
+                Text(stringResource(R.string.device_remember_explanation, host.origin))
+            } },
+            confirmButton = { TextButton(onClick = { host.confirm(DeviceConsentDecision.ALLOW, token) }) { Text(stringResource(R.string.device_allow_remember)) } },
+            dismissButton = { androidx.compose.foundation.layout.Row {
+                TextButton(onClick = { host.confirm(DeviceConsentDecision.ONCE, token) }) { Text(stringResource(R.string.device_allow)) }
+                TextButton(onClick = { host.confirm(DeviceConsentDecision.DENY, token) }) { Text(stringResource(R.string.device_deny)) }
+            } },
+        )
+    }
+}
+
+internal class AndroidDeviceCapabilities(
+    private val context: Context,
+    private val consentStore: DeviceConsentStore,
+    origin: String = BuildConfig.WEBAPP_DEV_URL,
+) : DeviceCapabilityHost {
+    val origin = canonicalDeviceOrigin(origin)
+    var confirmationToken: Long = 0
+        private set
     var confirmation by mutableStateOf<String?>(null)
         private set
     var launchCamera: () -> Unit = {}
-    private var approval: CancellableContinuation<Boolean>? = null
+    private var approval: CancellableContinuation<DeviceConsentDecision>? = null
+    private var consentApproval: DeviceConsentApproval? = null
     private val camera = CameraResultSlot<Bitmap?>()
     private var operation: Job? = null
     private var closed = false
@@ -113,22 +138,40 @@ internal class AndroidDeviceCapabilities(private val context: Context) : DeviceC
         } catch (error: CancellationException) { throw error }
         catch (error: DeviceCapabilityError) { throw error }
         catch (error: Exception) { throw nativeError(error) }
-        finally { approval = null; confirmation = null; operation = null }
+        finally { consentApproval?.cancel(); consentApproval = null; approval = null; confirmation = null; operation = null }
     }
 
     private suspend fun consent(method: String) {
-        val allowed = suspendCancellableCoroutine<Boolean> { continuation ->
+        val group = deviceConsentGroup(method) ?: throw DeviceCapabilityError("UNKNOWN_METHOD", "Unknown device method")
+        consentStore.prepare()
+        currentCoroutineContext().ensureActive()
+        if (consentStore.isGranted(origin, group)) return
+        val request = DeviceConsentApproval(consentStore, origin, group)
+        val decision = suspendCancellableCoroutine<DeviceConsentDecision> { continuation ->
+            consentApproval = request
             approval = continuation
+            confirmationToken++
             confirmation = method
-            continuation.invokeOnCancellation { onMain { if (approval === continuation) { approval = null; confirmation = null } } }
+            continuation.invokeOnCancellation {
+                request.cancel()
+                onMain { if (approval === continuation) { approval = null; confirmation = null } }
+            }
         }
-        if (!allowed) throw DeviceCapabilityError("PERMISSION_DENIED", "Device access declined")
+        if (decision == DeviceConsentDecision.DENY) throw DeviceCapabilityError("PERMISSION_DENIED", "Device access declined")
     }
-    fun confirm(allowed: Boolean) {
-        val pending = approval
-        approval = null
-        confirmation = null
-        if (pending?.isActive == true) pending.resume(allowed)
+    /** Compatibility: true has always meant allow this invocation only. */
+    fun confirm(allowed: Boolean) = confirm(if (allowed) DeviceConsentDecision.ONCE else DeviceConsentDecision.DENY)
+
+    fun confirm(decision: DeviceConsentDecision, token: Long = confirmationToken) {
+        onMain {
+            val pending = approval
+            if (token != confirmationToken || pending?.isActive != true || closed || operation?.isActive != true) return@onMain
+            // No suspension between active approval and the in-memory grant; apply writes disk asynchronously.
+            if (consentApproval?.decide(decision) != true) return@onMain
+            approval = null
+            confirmation = null
+            pending.resume(decision)
+        }
     }
     fun cameraResult(bitmap: Bitmap?) {
         if (!camera.complete(bitmap)) bitmap?.recycle()
@@ -136,6 +179,7 @@ internal class AndroidDeviceCapabilities(private val context: Context) : DeviceC
     override fun close() {
         onMain {
             closed = true
+            consentApproval?.cancel()
             confirmation = null
             approval?.cancel()
             approval = null

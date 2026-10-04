@@ -5,4 +5,12 @@
     <string name="device_sensor_confirmation">This app wants to read one measurement from a device sensor. Only continue if you trust this app.</string>
     <string name="device_allow">Allow once</string>
     <string name="device_deny">Deny</string>
+    <string name="device_allow_remember">Allow</string>
+    <string name="device_remember_explanation">Allow remembers this device access for all app pages at %1$s until you revoke it in Settings. Allow once applies only to this request. Android permissions are separate and cannot be bypassed.</string>
+    <string name="device_access_title">Device access</string>
+    <string name="device_access_explanation">Remembered access applies to all app pages at this origin. Revoke to ask again on the next request; data already delivered is not recalled. Android permissions remain separate.</string>
+    <string name="device_group_camera">Camera</string>
+    <string name="device_group_sensors">Sensors</string>
+    <string name="device_revoke">Revoke %1$s access</string>
+    <string name="device_not_granted">No remembered %1$s access</string>
 </resources>

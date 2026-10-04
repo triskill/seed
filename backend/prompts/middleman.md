@@ -60,6 +60,13 @@ Initial supported methods:
   `{type, values, timestampNs, accuracy}`; units depend on type and timestampNs
   is monotonic. No streaming subscription or GPS/location API yet.
 
+Native consent choices are **Allow once / Allow / Deny**. Allow once covers one
+request; Allow remembers access for the exact app origin and capability across
+sub-app pages until revoked in **Settings > Device access**. A shared Sensors grant
+covers sensor.list and sensor.read; Camera is separate. Remembered native consent
+never bypasses Android permissions or grants access to other origins. The next
+request after revocation asks again; generated JS cannot edit native grants.
+
 Calls resolve a Promise with the result or reject with `code` and `message`.
 Specs must cover refusal/cancellation, absent hardware/API, `UNAVAILABLE`,
 `PERMISSION_DENIED`, `CANCELLED`, `TIMEOUT`, `BUSY`, and invalid input; require a

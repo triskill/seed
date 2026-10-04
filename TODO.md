@@ -62,7 +62,24 @@ captured). Results reported in this acceptance session:
 These are manual user observations, not automated instrumentation results,
 verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
 
-### Next priority — Android device capabilities for generated apps
+### Urgent device fixes (user-reported)
+
+1. **Remembered consent implemented:** buttons **Allow once / Allow / Deny**.
+   Allow persists exact-origin Camera/Sensors grants across sub-app pages;
+   Settings > Device access revokes them. Native permissions remain independent.
+   307 JVM tests, lint and APK builds passed; prompt tests 12/12. New native/UI
+   regressions compile but are unrun because ADB reports unauthorized. Review
+   found no blocking/important issue; real process-restart persistence remains
+   device acceptance work.
+2. **Rotation returning sub-apps to index:** next implementation; save/restore
+   current browsing state rather than unconditionally loading the root URL.
+3. **Missing GPS:** next after rotation; permission-aware foreground
+   location.current through the same JSON protocol, not background tracking.
+
+See `docs/plans/2026-10-02-device-priority-fixes.md` and its verification report.
+No generated-app/provider/browser data is cleared to implement these fixes.
+
+### Android device capabilities — initial slice
 
 First slice implemented: generated apps use
 `seed.android.call({method, params})` for `capabilities.list`, `camera.capture`,

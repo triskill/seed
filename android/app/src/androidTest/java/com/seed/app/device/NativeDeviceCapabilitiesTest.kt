@@ -9,6 +9,59 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeDeviceCapabilitiesTest {
+    @Test fun onceRememberedRecreationRevocationAndLateApproval() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "device-consent-test-${java.util.UUID.randomUUID()}"
+        val store = PreferencesDeviceConsentStore(context, name)
+        val origin = canonicalDeviceOrigin("http://localhost:8080/apps/a")
+        try {
+            withContext(Dispatchers.Main) {
+                var host = AndroidDeviceCapabilities(context, store, origin)
+                suspend fun ask(decision: DeviceConsentDecision) {
+                    val call = async { host.invoke("sensor.list", emptyMap()) }
+                    withTimeout(5000) { while (host.confirmation == null) delay(10) }
+                    host.confirm(decision)
+                    call.await()
+                }
+                ask(DeviceConsentDecision.ONCE)
+                assertFalse(withContext(Dispatchers.IO) { store.isGranted(origin, DeviceConsentGroup.SENSORS) })
+                ask(DeviceConsentDecision.ALLOW)
+                host.close()
+                host = AndroidDeviceCapabilities(context, PreferencesDeviceConsentStore(context, name), origin)
+                withTimeout(5000) { host.invoke("sensor.list", emptyMap()) }
+                assertNull(host.confirmation)
+                try {
+                    withTimeout(5000) { host.invoke("sensor.read", mapOf("type" to Int.MAX_VALUE)) }
+                    fail("Unknown sensor should not be available")
+                } catch (error: DeviceCapabilityError) { assertEquals("UNAVAILABLE", error.code) }
+                assertNull(host.confirmation)
+                val otherOrigin = AndroidDeviceCapabilities(context, store, "http://localhost:8081/apps/b")
+                val isolated = async { otherOrigin.invoke("sensor.list", emptyMap()) }
+                withTimeout(5000) { while (otherOrigin.confirmation == null) delay(10) }
+                isolated.cancelAndJoin()
+                otherOrigin.close()
+                assertFalse(withContext(Dispatchers.IO) { store.isGranted(origin, DeviceConsentGroup.CAMERA) })
+                assertFalse(withContext(Dispatchers.IO) { store.isGranted("http://localhost:8081", DeviceConsentGroup.SENSORS) })
+                withContext(Dispatchers.IO) { store.revoke(origin, DeviceConsentGroup.SENSORS) }
+                val cancelled = async { host.invoke("sensor.list", emptyMap()) }
+                withTimeout(5000) { while (host.confirmation == null) delay(10) }
+                val staleToken = host.confirmationToken
+                cancelled.cancelAndJoin()
+                host.confirm(DeviceConsentDecision.ALLOW, staleToken)
+                assertFalse(withContext(Dispatchers.IO) { store.isGranted(origin, DeviceConsentGroup.SENSORS) })
+                val denied = async { runCatching { host.invoke("sensor.list", emptyMap()) } }
+                withTimeout(5000) { while (host.confirmation == null) delay(10) }
+                host.confirm(DeviceConsentDecision.ALLOW, staleToken)
+                assertEquals("sensor.list", host.confirmation)
+                assertFalse(withContext(Dispatchers.IO) { store.isGranted(origin, DeviceConsentGroup.SENSORS) })
+                host.confirm(DeviceConsentDecision.DENY)
+                assertEquals("PERMISSION_DENIED", (denied.await().exceptionOrNull() as DeviceCapabilityError).code)
+                ask(DeviceConsentDecision.ONCE)
+                host.close()
+            }
+        } finally { context.deleteSharedPreferences(name) }
+    }
+
     @Test fun previewIsBoundedAndContainsNoFilePath() {
         val bitmap = Bitmap.createBitmap(1200, 800, Bitmap.Config.ARGB_8888)
         val result = encodeCameraPreview(bitmap)
@@ -38,11 +91,14 @@ class NativeDeviceCapabilitiesTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         org.junit.Assume.assumeTrue(android.content.Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).resolveActivity(context.packageManager) != null)
         withContext(Dispatchers.Main) {
-            val host = AndroidDeviceCapabilities(context)
+            val store = MemoryDeviceConsentStore()
+            store.grant(canonicalDeviceOrigin(com.seed.app.BuildConfig.WEBAPP_DEV_URL), DeviceConsentGroup.SENSORS)
+            val host = AndroidDeviceCapabilities(context, store)
             var launches = 0
             host.launchCamera = { launches++ }
             val first = async { host.invoke("camera.capture", emptyMap()) }
             yield()
+            assertEquals("camera.capture", host.confirmation)
             host.confirm(true)
             yield()
             assertEquals(1, launches)
@@ -56,6 +112,7 @@ class NativeDeviceCapabilitiesTest {
             assertTrue(old.isRecycled)
             val second = async { host.invoke("camera.capture", emptyMap()) }
             yield()
+            assertEquals("camera.capture", host.confirmation)
             host.confirm(true)
             yield()
             host.cameraResult(Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888))
@@ -70,7 +127,7 @@ class NativeDeviceCapabilitiesTest {
     @Test fun consentCancellationAndDisposalNeverLaunchCamera() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         withContext(Dispatchers.Main) {
-            val host = AndroidDeviceCapabilities(context)
+            val host = AndroidDeviceCapabilities(context, MemoryDeviceConsentStore())
             host.launchCamera = { fail("Camera must not launch") }
             val pending = async { host.invoke("sensor.read", mapOf("type" to Sensor.TYPE_ACCELEROMETER)) }
             yield()
@@ -96,7 +153,7 @@ class NativeDeviceCapabilitiesTest {
         org.junit.Assume.assumeNotNull(manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER))
         androidx.test.core.app.ActivityScenario.launch(androidx.activity.ComponentActivity::class.java).use {
             withContext(Dispatchers.Main) {
-                val host = AndroidDeviceCapabilities(context)
+                val host = AndroidDeviceCapabilities(context, MemoryDeviceConsentStore())
                 try {
                     val reading = async { host.invoke("sensor.read", mapOf("type" to Sensor.TYPE_ACCELEROMETER, "timeoutMs" to 3000)) }
                     yield()

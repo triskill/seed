@@ -49,6 +49,13 @@ class DeviceProtocolTest {
         assertTrue(errorCodes.contains("PERMISSION_DENIED"))
         assertFalse(errorCodes.contains("DENIED"))
         assertEquals(1, manifest["protocolVersion"])
+        assertTrue("Consent choices must be discoverable", manifest["consent"] is Map<*, *>)
+        val consent = manifest["consent"] as Map<*, *>
+        assertEquals(listOf("Allow once", "Allow", "Deny"), consent["choices"])
+        assertEquals("origin+capability", consent["scope"])
+        val groups = consent["groups"] as Map<*, *>
+        assertEquals(listOf("sensor.list", "sensor.read"), groups["sensors"])
+        assertEquals(listOf("camera.capture"), groups["camera"])
         assertEquals(8192, (manifest["limits"] as Map<*, *>)["requestMaxBytes"])
         val capabilities = manifest["capabilities"] as List<*>
         assertEquals(4, capabilities.size)

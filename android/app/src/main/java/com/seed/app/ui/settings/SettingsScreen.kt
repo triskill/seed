@@ -107,6 +107,8 @@ fun SettingsScreen(
         SettingsHeader(isSaved = isSaved)
 
         HorizontalDivider()
+        DeviceAccessSettings()
+        HorizontalDivider()
 
         Text(
             text = stringResource(R.string.settings_section_login),

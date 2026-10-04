@@ -111,6 +111,13 @@ not exposed:
   type and timestampNs is monotonic, not a calendar timestamp. This is one-shot,
   not streaming; restricted sensors may be denied. GPS/location is not yet an API.
 
+Native consent choices are **Allow once / Allow / Deny**. Allow once covers one
+request; Allow remembers access for the exact app origin and capability across
+sub-app pages until revoked in **Settings > Device access**. A shared Sensors grant
+covers sensor.list and sensor.read; Camera is separate. Remembered native consent
+never bypasses Android permissions or grants access to other origins. After
+revocation the next request asks again; do not try to change native grants from JS.
+
 Every call returns a Promise that resolves to its result or rejects with an
 error having `code` and `message`. Handle `UNAVAILABLE`, `PERMISSION_DENIED`,
 `CANCELLED`, `TIMEOUT`, `BUSY` and invalid requests without breaking the page.

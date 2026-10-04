@@ -23,6 +23,15 @@ Preserve existing `window.seed` helpers (for example `seed.fetch`). No script im
 
 Sensor types come from `sensor.list`; the same native reader covers different sensors. Units depend on the Android sensor type; timestamps are monotonic nanoseconds, not dates. Restricted sensors can be denied. GPS and streaming subscriptions are not implemented in this slice.
 
+Native consent offers **Allow once / Allow / Deny**. Allow once covers one call;
+Allow remembers the exact origin and capability until revoked in **Settings >
+Device access**. Camera is separate from Sensors; a Sensors grant covers both
+sensor.list and sensor.read across sub-app pages. Grants survive host/activity
+recreation and are stored separately from provider settings/credentials. Android
+permissions remain independent; remembered native consent cannot bypass them.
+Denial, dismissal, canceled requests and stale confirmations do not grant access.
+Revocation applies to future requests, not data already returned.
+
 Camera data is not automatically persisted. Display its data URL in an `<img>`; if the user requests saving, use a validated app-owned upload endpoint and storage inside the generated-app workspace. No app keys, Android file paths or control-plane capability are returned. Run reads/capture from a clear user action and handle refusals without repeatedly requesting consent.
 
 ```js
@@ -43,7 +52,8 @@ The SDK adds a version and correlation ID to `{method,params}`. The native envel
 
 The bridge requires WebView `WEB_MESSAGE_LISTENER` and `DOCUMENT_START_SCRIPT` support; there is no insecure `addJavascriptInterface` fallback. Injection and requests are restricted to the exact app origin including port, with native source-origin/current-page/top-frame checks. Backend ports and other origins do not get native privileges. Direct subframe calls are rejected; same-origin frames are not an isolation boundary against their parent under browser rules. Generated apps remain untrusted code; this limited bridge is not a complete Linux/browser sandbox.
 
-Navigation or disposal cancels pending work. A canceled camera request's late activity result must not fulfill a later request. Sensor listeners are removed on success, timeout, denial and cancellation. Consent dialogs and system camera operations remain user-controlled.
+Navigation or disposal cancels pending work. A canceled camera request's late activity result must not fulfill a later request. Sensor listeners are removed on success, timeout, denial and cancellation. Consent dialogs (when no remembered grant exists) and system camera operations
+remain user-controlled.
 
 ## Prompt delivery and verification
 
