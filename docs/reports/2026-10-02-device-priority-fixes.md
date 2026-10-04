@@ -25,6 +25,42 @@ provider data and the pre-existing seed_version.json change are untouched.
 
 ## 2. Rotation
 
+### Current live-orientation behavior (supersedes the original limitation below)
+
+MainActivity and the isolated debug fixture now handle
+`orientation|screenSize|screenLayout` without Activity recreation. Existing
+remember keys are stable across rotation; the same WebView/device host remains
+live, retaining DOM, JavaScript heap, form, scroll and active sensor streams,
+while Compose/AndroidView resize. Background sensor cleanup is unchanged.
+Saved browsing restoration and all four explicit recreation/disposal tests remain
+for genuine recreation/process death; arbitrary heap restoration is not promised.
+`smallestScreenSize` is not included: this change targets rotation, not physical
+display or multi-window continuity. Android references:
+https://developer.android.com/guide/topics/manifest/activity-element and
+https://developer.android.com/guide/topics/resources/runtime-changes.
+
+Verification: new manifest contract failed before the change (1 test, expected
+missing configChanges), then full `./gradlew testDebugUnitTest lintDebug
+assembleDebug assembleDebugAndroidTest` passed: **334 JVM tests, 0 failures/errors/skips**,
+lint **0 errors / 36 warnings**, both debug APKs built. Two new instrumentation
+methods compile: portrait/landscape identity + live JS/form/scroll/document-token
+and resize assertions; real accelerometer continuity + background stop (skips on
+sensorless devices). Both restore requestedOrientation in finally.
+Installed both APKs with -r: **46/46 Moto G32 instrumentation tests passed**,
+156.601 seconds, including live orientation and sensor/background tests. Backend
+healthy after startup; temporary health ADB forward removed. Read-only review found
+no blockers. Settings/auth hashes match the earlier baseline. Two generated-app
+files (lm.html/lm.js) differ from the older recovery baseline; no pre-install app
+snapshot was taken for this step, so unchanged app hashes are not claimed. No app
+source was edited by this implementation, and no data was cleared or restored.
+Manual rotation in the user's generated page remains acceptance work.
+Backend/SDK unchanged, so their suites were not rerun.
+Logs: /tmp/seed-live-rotation-device.log and /tmp/seed-live-rotation-build.log.
+Pre-existing seed_version.json remains untouched.
+User manually accepted real camera capture/return; cancel flow is not yet accepted.
+
+### Historical recreation-only implementation
+
 Root cause: a recreated AppScreen always loaded the configured index and had no
 explicit browsing-state capture/restore. Implemented a saveable state holder
 that captures the live WebView during Activity state saving (before disposal),

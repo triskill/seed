@@ -58,6 +58,9 @@ import com.seed.app.device.rememberDeviceCapabilityHost
  *     recomposition. Without this, every recompose
  *     would tear down the WebView and lose scroll
  *     position, form state, etc.
+ *   - MainActivity handles orientation/screenSize/screenLayout changes without
+ *     recreation: this same WebView, DOM, JS heap and device host stay live while
+ *     Compose/AndroidView resize. Background sensor cleanup remains unchanged.
  *   - A saveable Bundle captures browsing history during Activity state saving
  *     and before tab disposal. Restoration precedes any fallback load. This
  *     preserves trusted URLs/history, not arbitrary JavaScript heap or DOM state.

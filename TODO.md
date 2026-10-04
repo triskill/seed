@@ -97,12 +97,16 @@ the user's generated page remain separate acceptance work.
    regressions compile but are unrun because ADB reports unauthorized. Review
    found no blocking/important issue; real process-restart persistence remains
    device acceptance work.
-2. **Rotation route/history restoration implemented:** save live WebView state
-   before disposal, restore trusted history/route before index fallback, and
-   retain navigation state while runtime binding delays composition. 310 JVM
-   tests, lint and APK builds passed; four new recreation/history tests compile
-   but are unrun (phone unauthorized). Actual rotation acceptance pending; no
-   arbitrary JS-heap/DOM-state retention claim.
+2. **Live rotation implemented:** MainActivity handles orientation/screenSize/
+   screenLayout without recreation, retaining the SAME WebView, DOM/JS heap,
+   unsaved form/scroll and active sensor host while UI resizes. Existing saved
+   route/history restoration remains for genuine recreation/process death;
+   background sensors still stop. 334 JVM tests pass; lint (0 errors, 36 warnings)
+   and debug/app-test APK builds pass. **46/46 Moto G32 tests pass**, including
+   live identity/state/resize and sensor continuity/background cleanup across
+   actual requestedOrientation changes. Installed with -r; backend healthy.
+   Manual rotation acceptance in the user's generated page remains pending. Four existing
+   explicit recreation/disposal tests retained. No heap persistence across death.
 3. **Foreground GPS/location implemented:** `location.current` with Android
    coarse/fine permission, remembered Location grant/revocation, bounded one-shot
    provider read and visible-Activity gating. Coarse requests never expose fine
@@ -138,8 +142,8 @@ host reading after consent. Settings and generated-app file checksums match;
 runtime readiness restored after the update. Browser-history restoration bug
 found in review was fixed with a red/green SDK regression.
 
-**Next:** user-operated real camera capture/return/cancel acceptance. Fake camera
-tests do not prove the system camera flow; no photograph was taken automatically.
+**Camera acceptance:** user manually accepted real capture/return. Cancel flow
+is not yet accepted; fake camera tests do not prove that system-camera path.
 Full-resolution/video remain follow-ups; sensor streams are implemented above. GPS/location is now
 implemented in the urgent fixes above, pending device acceptance; Stop/wipe UI
 remains deferred. Never expose unrestricted Android operations or backend

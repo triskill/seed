@@ -1,6 +1,11 @@
 package com.seed.app.ui.app
 
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -17,6 +22,99 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 class AppScreenRotationTest {
+    @Test fun portraitLandscapeRotationKeepsLivePageAndResizesWithoutReload() = withFixture { scenario, root, _ ->
+        awaitUrl(scenario, root)
+        var originalOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        scenario.onActivity { originalOrientation = it.requestedOrientation }
+        try {
+            rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, Configuration.ORIENTATION_PORTRAIT)
+            lateinit var activity: RotationFixtureActivity
+            lateinit var view: WebView
+            var portraitWidth = 0
+            scenario.onActivity {
+                activity = it
+                view = webView(it.window.decorView)!!
+                portraitWidth = view.width
+            }
+            assertEquals("true", javascript(scenario, "window.liveHeap={token:'rotation-only'};document.getElementById('form').value='unsaved';window.scrollTo(0,600);true"))
+            val scroll = javascript(scenario, "window.scrollY").toDouble()
+            assertTrue("Fixture must actually scroll", scroll > 0)
+            val loads = javascript(scenario, "window.documentToken")
+            for ((requested, configuration) in listOf(
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE to Configuration.ORIENTATION_LANDSCAPE,
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to Configuration.ORIENTATION_PORTRAIT,
+            )) {
+                rotate(scenario, requested, configuration)
+                scenario.onActivity {
+                    assertSame(activity, it)
+                    assertSame(view, webView(it.window.decorView))
+                    if (configuration == Configuration.ORIENTATION_LANDSCAPE) assertTrue(view.width > portraitWidth)
+                }
+                assertEquals("\"rotation-only\"", javascript(scenario, "window.liveHeap.token"))
+                assertEquals("\"unsaved\"", javascript(scenario, "document.getElementById('form').value"))
+                assertEquals(loads, javascript(scenario, "window.documentToken"))
+                assertEquals(scroll, javascript(scenario, "window.scrollY").toDouble(), 2.0)
+            }
+        } finally { scenario.onActivity { it.requestedOrientation = originalOrientation } }
+    }
+
+    @Test fun activeSensorStreamSurvivesRotationAndStopsInBackground() = withFixture(sensorGrant = true) { scenario, root, _ ->
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = context.getSystemService(android.content.Context.SENSOR_SERVICE) as android.hardware.SensorManager
+        org.junit.Assume.assumeTrue(manager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) != null)
+        awaitUrl(scenario, root)
+        var originalOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        scenario.onActivity { originalOrientation = it.requestedOrientation }
+        try {
+            rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, Configuration.ORIENTATION_PORTRAIT)
+            javascript(scenario, "window.samples=0;window.streamClosed=false;seed.android.subscribe({method:'sensor.subscribe',params:{type:1,rateHz:30}},()=>{window.samples++}).then(s=>{window.stream=s;s.closed.then(()=>{window.streamClosed=true})});true")
+            awaitJavascript(scenario, "window.samples > 2")
+            val before = javascript(scenario, "window.samples").toInt()
+            rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, Configuration.ORIENTATION_LANDSCAPE)
+            awaitJavascript(scenario, "window.samples > ${before + 2}")
+            assertEquals("false", javascript(scenario, "window.streamClosed"))
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            awaitJavascript(scenario, "window.streamClosed")
+            val stopped = javascript(scenario, "window.samples")
+            Thread.sleep(300)
+            assertEquals(stopped, javascript(scenario, "window.samples"))
+        } finally { scenario.onActivity { it.requestedOrientation = originalOrientation } }
+    }
+
+    private fun awaitJavascript(scenario: ActivityScenario<RotationFixtureActivity>, expression: String) {
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (System.nanoTime() < deadline) {
+            if (javascript(scenario, expression) == "true") return
+            Thread.sleep(50)
+        }
+        fail("JavaScript condition did not become true: $expression")
+    }
+
+    private fun rotate(scenario: ActivityScenario<RotationFixtureActivity>, requested: Int, expected: Int) {
+        scenario.onActivity { it.requestedOrientation = requested }
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (System.nanoTime() < deadline) {
+            var ready = false
+            scenario.onActivity {
+                val view = webView(it.window.decorView)
+                ready = it.resources.configuration.orientation == expected && view != null &&
+                    if (expected == Configuration.ORIENTATION_LANDSCAPE) view.width > view.height else view.height > view.width
+            }
+            if (ready) { InstrumentationRegistry.getInstrumentation().waitForIdleSync(); return }
+            Thread.sleep(50)
+        }
+        fail("Orientation/layout did not reach $expected")
+    }
+
+    private fun javascript(scenario: ActivityScenario<RotationFixtureActivity>, script: String): String {
+        val latch = CountDownLatch(1)
+        var result = ""
+        scenario.onActivity { webView(it.window.decorView)!!.evaluateJavascript(script) { value -> result = value; latch.countDown() } }
+        assertTrue("JavaScript callback timed out", latch.await(5, TimeUnit.SECONDS))
+        return result
+    }
+
     @Test fun nestedRouteQueryFragmentAndBackHistorySurviveRecreation() = withFixture { scenario, root, _ ->
         awaitUrl(scenario, root)
         navigate(scenario, "${root}nested?filter=one#detail")
@@ -81,12 +179,14 @@ class AppScreenRotationTest {
 
     private fun withFixture(
         delayOnRecreation: Boolean = false,
+        sensorGrant: Boolean = false,
         test: (ActivityScenario<RotationFixtureActivity>, String, androidx.compose.runtime.MutableState<Boolean>) -> Unit,
     ) {
         LoopbackPageServer().use { server ->
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val prefs = "rotation-fixture-${UUID.randomUUID()}"
             val store = PreferencesDeviceConsentStore(context, prefs)
+            if (sensorGrant) store.grant(com.seed.app.device.canonicalDeviceOrigin(server.root), com.seed.app.device.DeviceConsentGroup.SENSORS)
             val gate = mutableStateOf(!delayOnRecreation)
             RotationFixtureActivity.content = { recreated ->
                 val ready = if (delayOnRecreation && !recreated) true else gate.value
@@ -136,6 +236,7 @@ class AppScreenRotationTest {
 private class LoopbackPageServer : AutoCloseable {
     private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
     private val running = AtomicBoolean(true)
+    private val documentLoads = AtomicInteger()
     val root = "http://127.0.0.1:${server.localPort}/"
     private val worker = Thread {
         while (running.get()) {
@@ -144,7 +245,7 @@ private class LoopbackPageServer : AutoCloseable {
                 val reader = it.getInputStream().bufferedReader()
                 reader.readLine()
                 while (!reader.readLine().isNullOrEmpty()) { }
-                val body = "<!doctype html><html><body>Isolated rotation fixture<a href='/nested?filter=one#detail'>Nested</a></body></html>".toByteArray()
+                val body = "<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><script>window.documentToken=${documentLoads.incrementAndGet()};</script></head><body style='height:5000px;margin:0'>Isolated rotation fixture<input id='form'><a href='/nested?filter=one#detail'>Nested</a></body></html>".toByteArray()
                 it.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray())
                 it.getOutputStream().write(body)
             }
