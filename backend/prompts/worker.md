@@ -109,12 +109,26 @@ not exposed:
   `timeoutMs` must be an integer from 100 to 10000. Returns
   `{type, values, timestampNs, accuracy}`; values/units depend on Android sensor
   type and timestampNs is monotonic, not a calendar timestamp. This is one-shot,
-  not streaming; restricted sensors may be denied. GPS/location is not yet an API.
+  not streaming; restricted sensors may be denied. Use location.current below for
+  geographic location (GPS is not an Android SensorManager sensor).
+- `location.current`, `params: {accuracy: "coarse", timeoutMs: 15000}`: foreground
+  one-shot GPS/location, with separate Location grant and Android permissions.
+  Both params are optional: accuracy is "coarse" (default) or "fine", timeoutMs
+  is an integer 1000..60000. Returns
+  `{latitude, longitude, accuracyMeters, timestampMs, precision, ageMs}`.
+  timestampMs is wall-clock milliseconds; ageMs reports fix age (<=10000).
+  Requested fine precision is a preference, not a guarantee: respect approximate
+  Android access and returned precision ("coarse" or "fine"). Coarse requests
+  never return fine coordinates even if Android has precise permission. Location
+  services/provider must be enabled; indoors a GPS fix can time out. Show honest
+  denied/disabled/unavailable/timeout states, not made-up or stale positions. No
+  background tracking, continuous subscriptions or automatic precise-permission
+  upgrade loops. Android can revoke permission independently of native consent.
 
 Native consent choices are **Allow once / Allow / Deny**. Allow once covers one
 request; Allow remembers access for the exact app origin and capability across
 sub-app pages until revoked in **Settings > Device access**. A shared Sensors grant
-covers sensor.list and sensor.read; Camera is separate. Remembered native consent
+covers sensor.list and sensor.read; Camera and Location are separate. Remembered native consent
 never bypasses Android permissions or grants access to other origins. After
 revocation the next request asks again; do not try to change native grants from JS.
 

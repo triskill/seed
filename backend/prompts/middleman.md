@@ -58,12 +58,24 @@ Initial supported methods:
 - `sensor.read`, `params: {type: <positive integer>, timeoutMs: 3000}`: native
   user consent, one measurement; optional timeoutMs integer 100..10000. Returns
   `{type, values, timestampNs, accuracy}`; units depend on type and timestampNs
-  is monotonic. No streaming subscription or GPS/location API yet.
+  is monotonic. No streaming subscriptions.
+- `location.current`, `params: {accuracy: "coarse", timeoutMs: 15000}`: foreground
+  one-shot GPS/location with a separate Location grant and Android permissions.
+  Params optional: accuracy "coarse" (default) or "fine"; integer timeoutMs
+  1000..60000 (default15000). Returns
+  `{latitude, longitude, accuracyMeters, timestampMs, precision, ageMs}`.
+  timestampMs is wall-clock milliseconds and ageMs is fix age (<=10000).
+  Fine is a preference, not a guarantee; respect approximate Android permission
+  and returned precision ("coarse"/"fine"). Coarse requests do not expose fine
+  coordinates even when Android has fine access. Require an honest unavailable/
+  denied/disabled/timeout UX; no stale fabricated fixes. Location services must
+  be enabled and indoor GPS can time out. No background tracking or repeated
+  automatic precise-permission upgrade prompts.
 
 Native consent choices are **Allow once / Allow / Deny**. Allow once covers one
 request; Allow remembers access for the exact app origin and capability across
 sub-app pages until revoked in **Settings > Device access**. A shared Sensors grant
-covers sensor.list and sensor.read; Camera is separate. Remembered native consent
+covers sensor.list and sensor.read; Camera and Location are separate. Remembered native consent
 never bypasses Android permissions or grants access to other origins. The next
 request after revocation asks again; generated JS cannot edit native grants.
 

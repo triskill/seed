@@ -22,6 +22,18 @@ class DeviceProtocolTest {
             try { DeviceProtocol.parse("""{"v":1,"id":"1","method":"sensor.read","params":$params}"""); fail(params) } catch (_: DeviceCapabilityError) { }
         }
     }
+    @Test fun locationParametersAreStrictAndDiscoverable() {
+        fun parse(params: String) = DeviceProtocol.parse("""{"v":1,"id":"gps","method":"location.current","params":$params}""")
+        assertEquals(mapOf("accuracy" to "coarse", "timeoutMs" to 15000), parse("{}").params)
+        assertEquals(mapOf("accuracy" to "fine", "timeoutMs" to 1000), parse("""{"accuracy":"fine","timeoutMs":1000}""").params)
+        assertEquals(60000, parse("""{"timeoutMs":60000}""").params["timeoutMs"])
+        for (params in listOf("""{"accuracy":"precise"}""", """{"accuracy":null}""", """{"timeoutMs":999}""", """{"timeoutMs":60001}""", """{"timeoutMs":1000.5}""", """{"timeoutMs":"15000"}""", """{"watch":true}""")) {
+            try { parse(params); fail(params) } catch (e: DeviceCapabilityError) { assertEquals("INVALID_REQUEST", e.code) }
+        }
+        assertEquals("location", deviceConsentGroup("location.current")?.id)
+        val entry = (DeviceProtocol.capabilities()["capabilities"] as List<*>).map { it as Map<*, *> }.single { it["method"] == "location.current" }
+        assertEquals(listOf("latitude", "longitude", "accuracyMeters", "timestampMs", "precision", "ageMs"), (entry["resultSchema"] as Map<*, *>)["required"])
+    }
     @Test fun registryAndEnvelopeTypes() {
         fun request(method: String, params: String = "{}", id: String = "abc_1") = """{"v":1,"id":"$id","method":"$method","params":$params}"""
         for (method in listOf("capabilities.list", "camera.capture", "sensor.list")) {
@@ -58,7 +70,8 @@ class DeviceProtocolTest {
         assertEquals(listOf("camera.capture"), groups["camera"])
         assertEquals(8192, (manifest["limits"] as Map<*, *>)["requestMaxBytes"])
         val capabilities = manifest["capabilities"] as List<*>
-        assertEquals(4, capabilities.size)
+        assertEquals(listOf("location.current"), groups["location"])
+        assertEquals(5, capabilities.size)
         capabilities.forEach { assertTrue((it as Map<*, *>)["resultSchema"] is Map<*, *>) }
     }
 }

@@ -161,6 +161,16 @@ def test_prompts_explain_remembered_device_consent():
         assert "Sensors grant" in text
 
 
+def test_prompts_describe_foreground_location_and_approximate_access():
+    for prompt in (_MIDDLEMAN_PROMPT, _WORKER_PROMPT):
+        text = prompt.read_text(encoding="utf-8")
+        for required in ("location.current", "accuracyMeters", "timestampMs", "ageMs",
+                         "approximate", "foreground", "60000", "Location grant"):
+            assert required in text, f"{prompt.name} lacks {required}"
+        assert "GPS/location is not yet an API" not in text
+        assert "or GPS/location API yet" not in text
+
+
 def test_middleman_prompt_matches_enforced_tool_allowlist():
     """The prompt must not advertise shell access the runner will block."""
     text = _MIDDLEMAN_PROMPT.read_text(encoding="utf-8")

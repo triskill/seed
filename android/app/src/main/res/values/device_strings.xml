@@ -11,6 +11,8 @@
     <string name="device_access_explanation">Remembered access applies to all app pages at this origin. Revoke to ask again on the next request; data already delivered is not recalled. Android permissions remain separate.</string>
     <string name="device_group_camera">Camera</string>
     <string name="device_group_sensors">Sensors</string>
+    <string name="device_group_location">Location</string>
+    <string name="device_location_confirmation">This app wants one foreground location fix. Android location permission is also required; approximate access is supported. Only continue if you trust this app.</string>
     <string name="device_revoke">Revoke %1$s access</string>
     <string name="device_not_granted">No remembered %1$s access</string>
 </resources>

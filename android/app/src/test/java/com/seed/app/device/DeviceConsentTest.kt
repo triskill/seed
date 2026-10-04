@@ -40,6 +40,22 @@ class DeviceConsentTest {
         assertFalse(store.isGranted(origin, DeviceConsentGroup.SENSORS))
     }
 
+    @Test fun locationGrantsAreIndependentAndRevocable() {
+        val store = MemoryDeviceConsentStore()
+        val origin = canonicalDeviceOrigin("http://localhost:8080/apps/a")
+        val group = deviceConsentGroup("location.current")!!
+        assertEquals(DeviceConsentGroup.LOCATION, group)
+        store.grant(origin, DeviceConsentGroup.SENSORS)
+        store.grant(origin, DeviceConsentGroup.CAMERA)
+        assertFalse(store.isGranted(origin, group))
+        assertTrue(DeviceConsentApproval(store, origin, group).decide(DeviceConsentDecision.ALLOW))
+        assertTrue(store.isGranted(canonicalDeviceOrigin("http://localhost:8080/apps/b"), group))
+        assertFalse(store.isGranted(canonicalDeviceOrigin("http://localhost:8081"), group))
+        store.revoke(origin, group)
+        assertFalse(store.isGranted(origin, group))
+        assertTrue(store.isGranted(origin, DeviceConsentGroup.CAMERA))
+        assertTrue(store.isGranted(origin, DeviceConsentGroup.SENSORS))
+    }
     @Test fun invalidOriginsAreRejected() {
         for (url in listOf("file:///tmp/a", "http://user:password@example.com", "not a url")) {
             try { canonicalDeviceOrigin(url); fail(url) } catch (_: IllegalArgumentException) { }

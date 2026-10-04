@@ -37,6 +37,13 @@ object DeviceProtocol {
         val raw = obj["params"] as? Map<*, *> ?: invalid()
         val params: Map<String, Any?> = when (method) {
             "capabilities.list", "camera.capture", "sensor.list" -> { if (raw.isNotEmpty()) invalid(); emptyMap() }
+            "location.current" -> {
+                if (raw.keys.any { it !in setOf("accuracy", "timeoutMs") }) invalid()
+                val accuracy = if (raw.containsKey("accuracy")) raw["accuracy"] else "coarse"
+                if (accuracy !in setOf("coarse", "fine")) invalid()
+                val timeout = if (raw.containsKey("timeoutMs")) integer(raw["timeoutMs"], 1000, 60000) else 15000
+                mapOf("accuracy" to accuracy, "timeoutMs" to timeout)
+            }
             "sensor.read" -> {
                 if (!raw.containsKey("type") || raw.keys.any { it !in setOf("type", "timeoutMs") }) invalid()
                 val type = integer(raw["type"], 1, Int.MAX_VALUE)
@@ -59,6 +66,12 @@ object DeviceProtocol {
     fun capabilities(): Map<String, Any?> {
         val emptySchema = mapOf("type" to "object", "properties" to emptyMap<String, Any>(), "additionalProperties" to false)
         val resultSchemas = mapOf(
+            "location.current" to mapOf("type" to "object", "required" to listOf("latitude", "longitude", "accuracyMeters", "timestampMs", "precision", "ageMs"), "properties" to mapOf(
+                "latitude" to mapOf("type" to "number", "minimum" to -90, "maximum" to 90),
+                "longitude" to mapOf("type" to "number", "minimum" to -180, "maximum" to 180),
+                "accuracyMeters" to mapOf("type" to "number", "minimum" to 0),
+                "timestampMs" to mapOf("type" to "integer"), "ageMs" to mapOf("type" to "integer", "minimum" to 0, "maximum" to 10000),
+                "precision" to mapOf("type" to "string", "enum" to listOf("coarse", "fine")))),
             "capabilities.list" to mapOf("type" to "object", "required" to listOf("capabilities", "limitations"), "properties" to mapOf("capabilities" to mapOf("type" to "array", "items" to mapOf("type" to "object")), "limitations" to mapOf("type" to "array", "items" to mapOf("type" to "string")))),
             "camera.capture" to mapOf("type" to "object", "required" to listOf("dataUrl", "width", "height", "mimeType", "preview"), "properties" to mapOf("dataUrl" to mapOf("type" to "string"), "width" to mapOf("type" to "integer"), "height" to mapOf("type" to "integer"), "mimeType" to mapOf("const" to "image/jpeg"), "preview" to mapOf("const" to true))),
             "sensor.list" to mapOf("type" to "object", "required" to listOf("sensors"), "properties" to mapOf("sensors" to mapOf("type" to "array", "items" to mapOf("type" to "object", "description" to "Sensor type, name, vendor, version, stringType, maxRange, resolution, power, minDelay, reportingMode and wakeUp")))),
@@ -67,12 +80,16 @@ object DeviceProtocol {
         fun entry(method: String, description: String, schema: Map<String, Any>, limitations: List<String>) = mapOf("method" to method, "description" to description, "paramsSchema" to schema, "resultSchema" to resultSchemas.getValue(method), "limitations" to limitations)
         return mapOf("protocolVersion" to 1,
             "consent" to mapOf("scope" to "origin+capability", "choices" to listOf("Allow once", "Allow", "Deny"),
-                "groups" to mapOf("camera" to listOf("camera.capture"), "sensors" to listOf("sensor.list", "sensor.read")),
+                "groups" to mapOf("camera" to listOf("camera.capture"), "sensors" to listOf("sensor.list", "sensor.read"), "location" to listOf("location.current")),
                 "revocation" to "Settings > Device access", "androidPermissions" to "Still required independently"),
             "limits" to mapOf("requestMaxBytes" to 8192, "requestIdPattern" to "[A-Za-z0-9_-]{1,64}", "maxConcurrentOperations" to 1, "hostTimeoutMs" to 120000),
             "reply" to mapOf("success" to "{v:1,id,ok:true,result}", "failure" to "{v:1,id,ok:false,error:{code,message}}", "errorCodes" to listOf("INVALID_REQUEST", "UNKNOWN_METHOD", "BUSY", "PERMISSION_DENIED", "UNAVAILABLE", "TIMEOUT", "CANCELLED", "INTERNAL_ERROR")),
             "capabilities" to listOf(
             entry("capabilities.list", "Describe approved Android capabilities", emptySchema, emptyList()),
+            entry("location.current", "Obtain one foreground location fix with approved Location access", mapOf("type" to "object", "additionalProperties" to false, "properties" to mapOf(
+                "accuracy" to mapOf("type" to "string", "enum" to listOf("coarse", "fine"), "default" to "coarse"),
+                "timeoutMs" to mapOf("type" to "integer", "minimum" to 1000, "maximum" to 60000, "default" to 15000))),
+                listOf("Consent and Android foreground permission required independently", "One-shot only; no background tracking or subscriptions", "Fix age at most 10000ms; timeout removes listeners", "Coarse is quantized to a 0.01 degree grid with accuracy at least 1500m", "Fine preference falls back to coarse when Android grants approximate access; no upgrade prompt")),
             entry("camera.capture", "Open system camera with approved Camera access", emptySchema, listOf("Consent required unless Allow grant is remembered",  "Bounded JPEG preview/data URL only; no full resolution or video")),
             entry("sensor.list", "List available Android sensors with approved Sensors access", emptySchema, listOf("Consent required unless Allow grant is remembered",  "Availability depends on device and platform restrictions")),
             entry("sensor.read", "Obtain one sensor measurement with approved Sensors access", mapOf("type" to "object", "required" to listOf("type"), "additionalProperties" to false, "properties" to mapOf("type" to mapOf("type" to "integer", "minimum" to 1, "maximum" to Int.MAX_VALUE), "timeoutMs" to mapOf("type" to "integer", "minimum" to 100, "maximum" to 10000, "default" to 3000))), listOf("Consent required unless Allow grant is remembered", "One-shot only, no subscriptions; unsupported or restricted sensors fail"))

@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import com.seed.app.R
 import com.seed.app.BuildConfig
@@ -36,12 +37,25 @@ fun rememberDeviceCapabilityHost(
 ): DeviceCapabilityHost {
     val context = LocalContext.current
     val store = consentStore ?: remember(context) { PreferencesDeviceConsentStore(context) }
-    val host = remember(context, store, origin) { AndroidDeviceCapabilities(context, store, origin) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val foreground = remember(lifecycleOwner) { LifecycleLocationForeground(lifecycleOwner.lifecycle) }
+    val host = remember(context, store, origin, foreground) {
+        AndroidDeviceCapabilities(context, store, origin, locationForeground = foreground)
+    }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) {
         host.cameraResult(it)
     }
-    SideEffect { host.launchCamera = { launcher.launch(null) } }
-    DisposableEffect(host) { onDispose { host.close() } }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        host.locationPermissionResult(it)
+    }
+    SideEffect {
+        host.launchCamera = { launcher.launch(null) }
+        host.launchLocationPermissions = { permissionLauncher.launch(it) }
+    }
+    DisposableEffect(host, foreground) {
+        foreground.attach()
+        onDispose { host.close(); foreground.detach() }
+    }
     DeviceConsentDialog(host)
     return host
 }
@@ -54,7 +68,11 @@ internal fun DeviceConsentDialog(host: AndroidDeviceCapabilities) {
             onDismissRequest = { host.confirm(DeviceConsentDecision.DENY, token) },
             title = { Text(stringResource(R.string.device_confirmation_title)) },
             text = { androidx.compose.foundation.layout.Column {
-                Text(stringResource(if (method == "camera.capture") R.string.device_camera_confirmation else R.string.device_sensor_confirmation))
+                Text(stringResource(when (deviceConsentGroup(method)) {
+                    DeviceConsentGroup.CAMERA -> R.string.device_camera_confirmation
+                    DeviceConsentGroup.LOCATION -> R.string.device_location_confirmation
+                    else -> R.string.device_sensor_confirmation
+                }))
                 Text(stringResource(R.string.device_remember_explanation, host.origin))
             } },
             confirmButton = { TextButton(onClick = { host.confirm(DeviceConsentDecision.ALLOW, token) }) { Text(stringResource(R.string.device_allow_remember)) } },
@@ -70,6 +88,9 @@ internal class AndroidDeviceCapabilities(
     private val context: Context,
     private val consentStore: DeviceConsentStore,
     origin: String = BuildConfig.WEBAPP_DEV_URL,
+    locationPermission: LocationPermission = AndroidLocationPermission(context),
+    locationProvider: LocationProvider = AndroidLocationProvider(context),
+    private val locationForeground: LocationForeground = AlwaysLocationForeground,
 ) : DeviceCapabilityHost {
     val origin = canonicalDeviceOrigin(origin)
     var confirmationToken: Long = 0
@@ -80,6 +101,11 @@ internal class AndroidDeviceCapabilities(
     private var approval: CancellableContinuation<DeviceConsentDecision>? = null
     private var consentApproval: DeviceConsentApproval? = null
     private val camera = CameraResultSlot<Bitmap?>()
+    private val location = LocationCurrent(locationPermission, locationProvider, locationForeground, ::onMain)
+    var launchLocationPermissions: (Array<String>) -> Unit
+        get() = location.launchPermissions
+        set(value) { location.launchPermissions = value }
+    fun locationPermissionResult(result: Map<String, Boolean>) { onMain { location.permissionResult(result) } }
     private var operation: Job? = null
     private var closed = false
     private val manager = context.getSystemService(SensorManager::class.java)
@@ -87,11 +113,16 @@ internal class AndroidDeviceCapabilities(
     @OptIn(ExperimentalCoroutinesApi::class)
     override suspend fun invoke(method: String, params: Map<String, Any?>): Map<String, Any?> = withContext(Dispatchers.Main.immediate) {
         if (closed) throw DeviceCapabilityError("CANCELLED", "Device access closed")
-        if (operation != null || camera.isBusy()) throw DeviceCapabilityError("BUSY", "Device operation in progress")
+        if (operation != null || camera.isBusy() || location.isPermissionBusy()) throw DeviceCapabilityError("BUSY", "Device operation in progress")
         operation = currentCoroutineContext()[Job]
         try {
             when (method) {
                 "sensor.list" -> { consent(method); sensorMetadata(manager) }
+                "location.current" -> {
+                    if (!locationForeground.isVisible()) throw DeviceCapabilityError("UNAVAILABLE", "Location requires a visible app")
+                    consent(method)
+                    location.current(params)
+                }
                 "camera.capture" -> {
                     if (Intent(MediaStore.ACTION_IMAGE_CAPTURE).resolveActivity(context.packageManager) == null)
                         throw DeviceCapabilityError("UNAVAILABLE", "No camera app available")
@@ -184,6 +215,7 @@ internal class AndroidDeviceCapabilities(
             approval?.cancel()
             approval = null
             camera.close()
+            location.close()
             operation?.cancel()
             launchCamera = {}
         }

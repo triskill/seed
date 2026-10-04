@@ -46,4 +46,40 @@ JavaScript heap, DOM form state or process-death state survives.
 
 ## 3. Foreground location/GPS
 
-Pending implementation after rotation commit.
+Added `location.current` with optional accuracy coarse/fine (default coarse) and
+integer timeoutMs 1000..60000 (default15000). Returns latitude, longitude,
+accuracyMeters, timestampMs, precision and ageMs. Separate origin-bound Location
+grant/revocation and explicit location consent text; Android coarse/fine grants
+remain independently required. First fine request asks coarse+fine together;
+approximate-only grants are respected without repeated upgrade prompts.
+
+Coarse output is quantized to two decimal degrees and accuracy reported at least
+1500m, even when Android has fine permission. Source providers use network/fused
+or GPS when precise platform access permits; GPS-only fine-granted devices can
+still provide a quantized coarse result. Only fixes aged 0..10000ms are accepted;
+permission is rechecked before returning. No coordinates logged, no background
+permission, Google dependency or tracking service. Production Activity lifecycle
+blocks hidden starts and stops reads with structured CANCELLED errors; permission
+activity waits remain isolated from camera and don't leak late results to another
+request. Success, denial, stop, timeout and cancellation remove listeners.
+
+Final verification: **323 JVM tests**, **12 browser SDK tests**, **298 backend
+tests**, lint and both APK builds passed. One pre-existing Starlette/httpx warning.
+Protocol/foreground/privacy and GPS-only/coarse regressions observed RED/GREEN.
+Review found no additional important bug beyond the subsequently corrected
+GPS-only provider fallback. Both agent prompts and API docs now describe location
+and remembered consent; they are bundled for deployment on runtime startup.
+
+**35 instrumentation methods compile but are unrun on these fixes.** Fake
+permission/provider and UI tests cover location scenarios; actual Android
+permission dialogs, live GPS, persisted consent across process restart and real
+rotation remain pending because the phone is still ADB unauthorized. No install,
+position acquisition or device data reset performed for these fixes.
+
+## Next acceptance
+
+Authorize USB debugging, install both APKs with -r, run the 35-method suite, then
+check remembered consent/revocation, rotate a real generated sub-page in both
+directions, and approve approximate/precise location on the phone. Validate
+settings, app files and user-reported browser data without clearing storage.
+Live sensor/camera/location requests are never accepted solely from fake tests.

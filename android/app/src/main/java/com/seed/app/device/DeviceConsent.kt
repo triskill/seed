@@ -4,7 +4,7 @@ import java.net.URI
 import java.util.Locale
 
 /** Stable persisted IDs, independent of method names and translated UI labels. */
-enum class DeviceConsentGroup(val id: String) { CAMERA("camera"), SENSORS("sensors") }
+enum class DeviceConsentGroup(val id: String) { CAMERA("camera"), SENSORS("sensors"), LOCATION("location") }
 enum class DeviceConsentDecision { ONCE, ALLOW, DENY }
 
 interface DeviceConsentStore {
@@ -49,6 +49,7 @@ fun canonicalDeviceOrigin(url: String): String {
 
 fun deviceConsentGroup(method: String): DeviceConsentGroup? = when (method) {
     "camera.capture" -> DeviceConsentGroup.CAMERA
+    "location.current" -> DeviceConsentGroup.LOCATION
     "sensor.list", "sensor.read" -> DeviceConsentGroup.SENSORS
     else -> null
 }

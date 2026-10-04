@@ -37,7 +37,11 @@ fun DeviceAccessSettings(
         Text(canonicalOrigin, style = MaterialTheme.typography.bodySmall)
         Text(stringResource(R.string.device_access_explanation), style = MaterialTheme.typography.bodySmall)
         DeviceConsentGroup.entries.forEach { group ->
-            val label = stringResource(if (group == DeviceConsentGroup.CAMERA) R.string.device_group_camera else R.string.device_group_sensors)
+            val label = stringResource(when (group) {
+                DeviceConsentGroup.CAMERA -> R.string.device_group_camera
+                DeviceConsentGroup.SENSORS -> R.string.device_group_sensors
+                DeviceConsentGroup.LOCATION -> R.string.device_group_location
+            })
             if (group in grants) {
                 TextButton(
                     modifier = Modifier.semantics { testTag = "device-revoke-${group.id}" },

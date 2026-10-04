@@ -84,6 +84,39 @@ class DeviceWebBridgeTest {
             fixture(server, host) { view, _ -> main { view.loadUrl(server.url) }; waitTitle(view, "INTERNAL_ERROR:Device operation failed"); assertEquals(1, host.calls.get()) }
         }
     }
+    @Test fun locationStopRepliesCancelledAndReleasesBridgeRequest() {
+        val subscribed = CountDownLatch(1)
+        var stop: (() -> Unit)? = null
+        var visible = true
+        val removed = AtomicInteger()
+        val foreground = object : LocationForeground {
+            override fun isVisible() = visible
+            override suspend fun awaitResumed() = Unit
+            override fun onStop(callback: () -> Unit): () -> Unit { stop = callback; return { stop = null } }
+        }
+        val provider = object : LocationProvider {
+            override fun enabledProviders() = listOf("network")
+            override fun elapsedRealtimeMs() = 20000L
+            override fun subscribe(provider: String, fix: (LocationFix) -> Unit, unavailable: () -> Unit): () -> Unit {
+                subscribed.countDown()
+                return { removed.incrementAndGet() }
+            }
+        }
+        val permission = object : LocationPermission { override fun grants() = LocationGrants(true, false) }
+        val location = LocationCurrent(permission, provider, foreground)
+        val host = Host { location.current(emptyMap()) }
+        LocalServer { html("seed.android.call({method:'location.current',params:{}}).then(()=>document.title='unexpected',e=>document.title=e.code)") }.use { server ->
+            fixture(server, host) { view, _ ->
+                main { view.loadUrl(server.url) }
+                assertTrue(subscribed.await(5, TimeUnit.SECONDS))
+                main { visible = false; stop!!() }
+                waitTitle(view, "CANCELLED")
+                assertEquals(1, removed.get())
+                main { view.evaluateJavascript("seed.android.call({method:'location.current',params:{}}).catch(e=>document.title=e.code)", null) }
+                waitTitle(view, "UNAVAILABLE") // Not BUSY: the first promise and native listener were cleaned up.
+            }
+        }
+    }
     @Test fun backendPortAndSubframesCannotInvokeHost() {
         val host = Host { emptyMap() }
         val attempt = "if(window.seedDeviceTransport)seedDeviceTransport.postMessage(JSON.stringify({v:1,id:'frame',method:'sensor.list',params:{}}));document.title='done'"

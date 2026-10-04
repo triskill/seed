@@ -77,8 +77,14 @@ verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
    tests, lint and APK builds passed; four new recreation/history tests compile
    but are unrun (phone unauthorized). Actual rotation acceptance pending; no
    arbitrary JS-heap/DOM-state retention claim.
-3. **Missing GPS:** next after rotation; permission-aware foreground
-   location.current through the same JSON protocol, not background tracking.
+3. **Foreground GPS/location implemented:** `location.current` with Android
+   coarse/fine permission, remembered Location grant/revocation, bounded one-shot
+   provider read and visible-Activity gating. Coarse requests never expose fine
+   coordinates; stale fixes (>10s) rejected, listeners cleaned on every exit.
+   Both agent prompts/API docs updated. Final 323 JVM / 12 SDK / 298 backend
+   tests, lint and APK builds pass; 35 instrumentation methods compile but are
+   unrun. Actual Android permission/GPS/rotation/remembered-consent acceptance
+   awaits USB debugging authorization. No background tracking or data clear.
 
 See `docs/plans/2026-10-02-device-priority-fixes.md` and its verification report.
 No generated-app/provider/browser data is cleared to implement these fixes.
@@ -108,8 +114,9 @@ found in review was fixed with a red/green SDK regression.
 
 **Next:** user-operated real camera capture/return/cancel acceptance. Fake camera
 tests do not prove the system camera flow; no photograph was taken automatically.
-Full-resolution/video, sensor streams and GPS/location remain follow-ups, ahead
-of deferred Stop/wipe UI. Never expose unrestricted Android operations or backend
+Full-resolution/video and sensor streams remain follow-ups. GPS/location is now
+implemented in the urgent fixes above, pending device acceptance; Stop/wipe UI
+remains deferred. Never expose unrestricted Android operations or backend
 control-plane secrets. The user's generated app was not modified for this work.
 
 ### Latest native ARM64 ownership/restart acceptance
