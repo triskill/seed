@@ -233,3 +233,14 @@ val bundleAgentPrompts by tasks.registering(Sync::class) {
 }
 android.sourceSets.getByName("main").assets.srcDir(generatedAgentPromptAssets)
 tasks.named("preBuild").configure { dependsOn(bundleAgentPrompts) }
+
+val generatedBackendPatchAssets = layout.buildDirectory.dir("generated/backendPatchAssets")
+val bundleBackendPatches by tasks.registering(Sync::class) {
+    from(rootProject.file("../backend/seed_backend")) {
+        include("orchestrator.py", "pi_runner.py")
+        into("backend-patches")
+    }
+    into(generatedBackendPatchAssets)
+}
+android.sourceSets.getByName("main").assets.srcDir(generatedBackendPatchAssets)
+tasks.named("preBuild").configure { dependsOn(bundleBackendPatches) }

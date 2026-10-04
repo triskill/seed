@@ -62,6 +62,20 @@ captured). Results reported in this acceptance session:
 These are manual user observations, not automated instrumentation results,
 verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
 
+### Agent recovery and responsive sensors
+
+- **Role recovery implemented:** three bounded replacements per role, stop/reap
+  before replacement, RPC readiness, preserved tool policy/model/session config,
+  no failed-task replay, cancellation/shutdown coordination. 307 backend tests,
+  326 JVM tests, lint and APK builds pass. Installed backend patch hashes match
+  source; isolated Moto G32 fake-role tool-violation/EOF recovery passes. Settings,
+  auth and app-file hashes unchanged. No runtime corruption found in inspected
+  files; PRoot/shared Android UID filesystem isolation remains unresolved.
+- **Next: sensor streaming**, 30Hz default/cap60Hz with latest-sample coalescing,
+  lifecycle cleanup and existing Sensors consent, not repeated one-shot polling.
+
+See `docs/plans/2026-10-04-agent-recovery-and-sensor-streaming.md` and its report.
+
 ### Urgent device fixes (user-reported)
 
 1. **Remembered consent implemented:** buttons **Allow once / Allow / Deny**.

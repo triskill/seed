@@ -329,7 +329,14 @@ class Orchestrator:
     # Includes request write and response wait; allow slow Android startup.
     _STARTUP_RPC_TIMEOUT: float = 15.0
 
-    def __init__(self, middleman: PiRunner, worker: PiRunner, task_store: TaskStore | None = None) -> None:
+    _RECOVERY_BACKOFF = (0.25, 1.0, 2.0)
+
+    def __init__(self, middleman: PiRunner, worker: PiRunner, task_store: TaskStore | None = None, *, runner_factory=None) -> None:
+        self._runner_factory = runner_factory
+        self._stopping = False
+        self._role_locks = {role: asyncio.Lock() for role in ('middleman', 'worker')}
+        self._recoveries = {role: 0 for role in ('middleman', 'worker')}
+        self._recovery_tasks: dict[str, asyncio.Task] = {}
         self.generation_id = uuid.uuid4().hex
         self._event_id = 0
         self._journal: deque[dict] = deque(maxlen=512)
@@ -382,7 +389,7 @@ class Orchestrator:
     @property
     def ready(self) -> bool:
         """Both runners must be available for requests, including after restarts."""
-        return self._ready and all(
+        return self._ready and not self._stopping and not self._middleman_unavailable and not self._worker_blocked and all(
             runner.ready if isinstance(runner, PiRunner) else getattr(runner, 'pid', True) is not None
             for runner in (self.middleman, self.worker)
         )
@@ -466,8 +473,20 @@ class Orchestrator:
         so the queues drain to subscribers before the WS
         handlers see the connection close.
         """
+        self._stopping = True
         self._ready = False
         self._middleman_unavailable = True
+        self._worker_blocked = True
+        owned = list(self._recovery_tasks.values()) + [self._cancel_timeout_task, self._abort_task]
+        for task in owned:
+            if task is not None:
+                task.cancel()
+        for task in owned:
+            if task is not None:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         for task in (self._read_middleman_task, self._read_worker_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -717,27 +736,24 @@ class Orchestrator:
             await asyncio.sleep(delay)
             if not (self._active and self.task_status['taskId'] == task_id and self._cancel_requested):
                 return
-            self._worker_blocked = True
-            old = self.worker
-            if self._abort_task is not None:
-                self._abort_task.cancel()
-            if self._read_worker_task is not None:
-                self._read_worker_task.cancel()
-                try:
-                    await self._read_worker_task
-                except asyncio.CancelledError:
-                    pass
-                self._read_worker_task = None
-            await old.stop()  # Reaps the process before the slot is released.
             await self._status('interrupted', 'Worker did not confirm stopping')
-            if isinstance(old, PiRunner):
-                self.worker = PiRunner(old.cmd, old.role, strip_ansi=old.strip_ansi,
-                    read_only_tools=old.read_only_tools, system_prompt=old.system_prompt,
-                    auto_restart=old.auto_restart, max_restarts=old.max_restarts, env=old.env)
-            await self.worker.start()
-            self._read_worker_task = asyncio.create_task(self._read_worker_loop())
-            self._cancel_requested = False
-            self._worker_blocked = False
+            if not isinstance(self.worker, PiRunner) and self._runner_factory is None:
+                # Preserve the legacy in-memory test-runner cancellation path.
+                if self._abort_task:
+                    self._abort_task.cancel()
+                if self._read_worker_task:
+                    self._read_worker_task.cancel()
+                    try:
+                        await self._read_worker_task
+                    except asyncio.CancelledError:
+                        pass
+                await self.worker.stop()
+                if not self._stopping:
+                    await self.worker.start()
+                    self._read_worker_task = asyncio.create_task(self._read_worker_loop())
+                    self._cancel_requested = self._worker_blocked = False
+                return
+            self._schedule_recovery('worker')
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -900,6 +916,7 @@ class Orchestrator:
         await self._emit_outcome('backend')
         await self._broadcast({'type': 'role_health', 'role': 'middleman', 'status': 'unavailable'})
         await self._broadcast({'type': 'error', 'message': 'Middleman unavailable'})
+        self._schedule_recovery('middleman')
 
     async def _send_dispatch_to_worker(self, dispatch: dict) -> None:
         if self._active or self._worker_blocked:
@@ -1029,11 +1046,114 @@ class Orchestrator:
         except Exception as exc:
             log.exception("worker read loop crashed: %r", exc)
         self._ready = False
+        self._worker_blocked = True
         await self._broadcast({'type': 'role_health', 'role': 'worker', 'status': 'unavailable'})
         if self._active:
             await self._status("cancelled" if self._cancel_requested else "failed", None if self._cancel_requested else "Worker exited")
             if not self._cancel_requested:
                 await self._report_to_middleman("Worker exited before completing the task")
+        self._schedule_recovery('worker')
+
+    def _schedule_recovery(self, role: str) -> None:
+        if role == 'middleman':
+            self._middleman_unavailable = True
+        else:
+            self._worker_blocked = True
+        self._ready = False
+        if self._stopping or (not isinstance(getattr(self, role), PiRunner) and self._runner_factory is None):
+            return
+        task = self._recovery_tasks.get(role)
+        if task is None or task.done():
+            self._recovery_tasks[role] = asyncio.create_task(self._recover_role(role), name=f'recover-{role}')
+
+    def _replacement(self, role: str, old):
+        if self._runner_factory is not None:
+            return self._runner_factory(role, old)
+        return PiRunner(old.cmd, old.role, strip_ansi=old.strip_ansi,
+                        read_only_tools=old.read_only_tools, system_prompt=old.system_prompt,
+                        auto_restart=old.auto_restart, max_restarts=old.max_restarts, env=old.env)
+
+    async def _recover_role(self, role: str) -> None:
+        async with self._role_locks[role]:
+            slot = f'_read_{role}_task'
+            reader = getattr(self, slot)
+            if reader is not None:
+                if not reader.done():
+                    reader.cancel()
+                try:
+                    await reader
+                except (asyncio.CancelledError, Exception):
+                    pass
+                setattr(self, slot, None)
+            old = getattr(self, role)
+            try:
+                await old.stop()  # No replacement exists before the old child is reaped.
+                while not self._stopping and self._recoveries[role] < len(self._RECOVERY_BACKOFF):
+                    attempt = self._recoveries[role]
+                    self._recoveries[role] += 1
+                    await self._broadcast({'type': 'role_health', 'role': role, 'status': 'restarting'})
+                    await asyncio.sleep(self._RECOVERY_BACKOFF[attempt])
+                    if self._stopping:
+                        return
+                    new = self._replacement(role, old)
+                    setattr(self, role, new)  # Shutdown owns startup even before a PID exists.
+                    try:
+                        async def startup():
+                            await new.start()
+                            response = await new.rpc_request({'type': 'get_state'}, timeout=self._STARTUP_RPC_TIMEOUT)
+                            if (response.get('type') != 'response' or response.get('command') != 'get_state'
+                                    or response.get('success') is not True):
+                                raise RuntimeError('replacement get_state probe failed')
+                            if isinstance(new, PiRunner) and not new.ready:
+                                raise RuntimeError('replacement not ready')
+                        await asyncio.wait_for(startup(), self._STARTUP_RPC_TIMEOUT)
+                        if self._stopping:
+                            return
+                    except Exception:
+                        log.exception('%s replacement startup failed', role)
+                        await new.stop()
+                        old = new
+                        continue
+                    # All event state is generation-local; never resume a failed prompt/task.
+                    if role == 'middleman':
+                        self._middleman_unavailable = False
+                        self._report_tag = None
+                        self._report_seen = False
+                    else:
+                        self._worker_blocked = False
+                        self._cancel_requested = False
+                        self._worker_report = self._worker_text = self._last_agent_text = ''
+                        self._last_agent_error = self._agent_ended = self._worker_retry_pending = False
+                        if self._cancel_timeout_task:
+                            self._cancel_timeout_task.cancel()
+                        if self._abort_task:
+                            self._abort_task.cancel()
+                    loop = self._read_middleman_loop if role == 'middleman' else self._read_worker_loop
+                    setattr(self, slot, asyncio.create_task(loop(), name=f'orchestrator-read-{role}'))
+                    self._ready = not self._middleman_unavailable and not self._worker_blocked
+                    await self._broadcast({'type': 'role_health', 'role': role, 'status': 'ready'})
+                    return
+                await self._broadcast({'type': 'role_health', 'role': role, 'status': 'unavailable'})
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception('%s recovery failed closed', role)
+                self._ready = False
+                if role == 'middleman':
+                    self._middleman_unavailable = True
+                else:
+                    self._worker_blocked = True
+                reader = getattr(self, slot)
+                if reader is not None:
+                    reader.cancel()
+                    try:
+                        await reader
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    setattr(self, slot, None)
+            finally:
+                if self._stopping or (self._middleman_unavailable if role == 'middleman' else self._worker_blocked):
+                    await getattr(self, role).stop()
 
     async def _finalize_worker_turn(self) -> None:
         if not self._active:

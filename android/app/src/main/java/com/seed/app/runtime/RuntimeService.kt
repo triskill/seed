@@ -73,6 +73,9 @@ class RuntimeService : Service() {
             startProcess = {
                 val nativeProot = NativeProot.resolve(applicationInfo.nativeLibraryDir)
                 val runtimeDir = File(filesDir, LINUX_DIRECTORY)
+                BackendPatchInstaller.install(File(runtimeDir, ROOTFS_DIRECTORY)) { module ->
+                    assets.open("backend-patches/$module").use { it.readBytes() }
+                }
                 AgentPromptInstaller.install(File(runtimeDir, ROOTFS_DIRECTORY)) { role ->
                     assets.open("agent-prompts/$role").use { it.readBytes() }
                 }
