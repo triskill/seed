@@ -20,14 +20,18 @@ Preserve existing `window.seed` helpers (for example `seed.fetch`). No script im
 | `camera.capture` | `{}` | `{dataUrl,width,height,mimeType:"image/jpeg",preview:true}`; consent + external camera UI; JPEG preview, not full-resolution/video/lens control |
 | `sensor.list` | `{}` | `{sensors:[...]}`; Android sensor types/names depend on hardware |
 | `sensor.read` | `{type:<positive integer>,timeoutMs:3000}` | `{type,values,timestampNs,accuracy}`; consent + one measurement; timeoutMs optional integer 100..10000 |
+| `sensor.subscribe` | `{type:<positive integer>,rateHz:30}` | `{subscriptionId,type,rateHz}` acknowledgment followed by samples; rateHz optional integer 1..60, maximum four active subscriptions |
+| `sensor.unsubscribe` | `{subscriptionId}` | Idempotent stop for a subscription owned by this document; does not require fresh consent |
 | `location.current` | `{accuracy:"coarse",timeoutMs:15000}` | `{latitude,longitude,accuracyMeters,timestampMs,precision,ageMs}`; foreground one-shot, Android location permission; optional accuracy coarse/fine and timeoutMs integer 1000..60000 |
 
-Sensor types come from `sensor.list`; the same native reader covers different sensors. Units depend on the Android sensor type; timestamps are monotonic nanoseconds, not dates. Restricted sensors can be denied. Streaming subscriptions are not implemented. Location/GPS uses location.current, not SensorManager.
+Sensor types come from `sensor.list`; the same native reader covers different sensors. Units depend on the Android sensor type; timestamps are monotonic nanoseconds, not dates. Restricted sensors can be denied. For responsive displays, use sensor.subscribe rather than polling sensor.read.
+Only continuous/on-change sensors support streaming; one-shot/special-trigger
+sensors are rejected. Location/GPS uses location.current, not SensorManager.
 
 Native consent offers **Allow once / Allow / Deny**. Allow once covers one call;
 Allow remembers the exact origin and capability until revoked in **Settings >
 Device access**. Camera and Location are separate from Sensors; a Sensors grant covers both
-sensor.list and sensor.read across sub-app pages. Grants survive host/activity
+sensor.list, sensor.read and sensor.subscribe across sub-app pages. Grants survive host/activity
 recreation and are stored separately from provider settings/credentials. Android
 permissions remain independent; remembered native consent cannot bypass them.
 Denial, dismissal, canceled requests and stale confirmations do not grant access.
@@ -57,6 +61,37 @@ async function takePhoto() {
   }
 }
 ```
+
+## Sensor streams
+
+```js
+const stream = await seed.android.subscribe({
+  method: "sensor.subscribe", params: {type: 1, rateHz: 30}
+}, sample => updateDisplay(sample.values));
+// Cleanup when the component closes, even if another native request is pending:
+await stream.stop();
+stream.closed.then(reason => showStreamStopped(reason));
+```
+
+The SDK returns an id, an idempotent stop Promise and a closed Promise resolving
+the termination reason. Hardware may run slower than the requested rate. Native
+listeners remain registered between samples; no repeated permission prompt or
+one-shot setup overhead. Allow once covers one subscription lifetime; Allow
+remembers the Sensors grant.
+
+End-to-end backpressure permits one unacknowledged sample and the latest pending
+sample per stream, not an unbounded native/renderer queue. The SDK acknowledges
+after the callback settles (including async callbacks); callbacks must finish
+promptly. No acknowledgment within 10 seconds ends the stream and unregisters
+its listener. Thrown/rejected callbacks stop their stream. Sample timestamps and
+accuracy have the same semantics as sensor.read.
+
+Streams end on explicit stop, page navigation/disposal, backgrounding, revoked
+permission/grant or errors. Returning to the app/cached page does not automatically
+resubscribe. App code should stop when replacing UI components and use closed to
+reset controls; a route change inside a same-document SPA is not a new document.
+Stopping works while another normal camera/location call is pending. Subscription
+IDs/acks are document-owned; stale/foreign IDs cannot control another stream.
 
 ## Protocol and safety
 

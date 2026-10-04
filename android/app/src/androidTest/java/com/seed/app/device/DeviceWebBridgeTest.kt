@@ -38,13 +38,13 @@ class DeviceWebBridgeTest {
         }
         override fun close() { socket.close(); worker.join(4000) }
     }
-    private class Host(val action: suspend () -> Map<String, Any?>) : DeviceCapabilityHost {
+    private open class Host(val action: suspend () -> Map<String, Any?>) : DeviceCapabilityHost {
         val calls = AtomicInteger()
         var closed = false
         override suspend fun invoke(method: String, params: Map<String, Any?>): Map<String, Any?> { calls.incrementAndGet(); return action() }
         override fun close() { closed = true }
     }
-    private fun fixture(server: LocalServer, host: Host, action: (WebView, DeviceWebBridge) -> Unit) {
+    private fun fixture(server: LocalServer, host: DeviceCapabilityHost, action: (WebView, DeviceWebBridge) -> Unit) {
         lateinit var view: WebView
         lateinit var bridge: DeviceWebBridge
         main {
@@ -57,7 +57,7 @@ class DeviceWebBridgeTest {
         }
         try { assumeTrue(bridge.supported); action(view, bridge) }
         finally { main { bridge.close(); view.destroy() } }
-        assertTrue(host.closed)
+        if (host is Host) assertTrue(host.closed)
     }
     private fun title(view: WebView): String {
         val latch = CountDownLatch(1)
@@ -72,12 +72,102 @@ class DeviceWebBridgeTest {
         assertEquals(expected, title(view))
     }
     private fun html(js: String) = "<!doctype html><title>loading</title><script>$js</script>"
+    @Test fun documentSubscriptionLimitPreventsFifthNativeCall() {
+        val subscriptions = AtomicInteger()
+        val host = object : Host({ emptyMap() }), DeviceStreamHost {
+            override suspend fun subscribe(params: Map<String, Any?>, emit: (Map<String, Any?>) -> Unit): Map<String, Any?> = mapOf("subscriptionId" to "native-${subscriptions.incrementAndGet()}", "type" to 1, "rateHz" to 30)
+            override fun acknowledge(subscriptionId: String, sequence: Long) = Unit
+            override fun unsubscribe(subscriptionId: String): Map<String, Any?> = mapOf("stopped" to true)
+            override fun stopStreams(code: String, message: String) = Unit
+        }
+        LocalServer { html("""
+            (async()=>{
+              for(var i=0;i<4;i++) await seed.android.subscribe({method:'sensor.subscribe',params:{type:1}},()=>{});
+              try { await seed.android.subscribe({method:'sensor.subscribe',params:{type:1}},()=>{});document.title='bad'; }
+              catch(e){document.title=e.code;}
+            })().catch(e=>document.title=e.code);
+        """.trimIndent()) }.use { server ->
+            fixture(server, host) { view, _ -> main { view.loadUrl(server.url) }; waitTitle(view, "BUSY"); assertEquals(4, subscriptions.get()) }
+        }
+    }
+    @Test fun streamAckControlOwnershipAndNavigation() {
+        val acks = AtomicInteger()
+        val stops = AtomicInteger()
+        val host = object : Host({ awaitCancellation() }), DeviceStreamHost {
+            override suspend fun subscribe(params: Map<String, Any?>, emit: (Map<String, Any?>) -> Unit): Map<String, Any?> {
+                emit(mapOf("subscriptionId" to "native-id", "event" to "sample", "sequence" to 1L, "sample" to mapOf("type" to 1, "values" to listOf(1), "timestampNs" to 1L, "accuracy" to 3)))
+                return mapOf("subscriptionId" to "native-id", "type" to 1, "rateHz" to 30)
+            }
+            override fun acknowledge(subscriptionId: String, sequence: Long) { assertEquals("native-id", subscriptionId); assertEquals(1L, sequence); acks.incrementAndGet() }
+            override fun unsubscribe(subscriptionId: String): Map<String, Any?> { assertEquals("native-id", subscriptionId); stops.incrementAndGet(); return mapOf("stopped" to true) }
+            override fun stopStreams(code: String, message: String) = Unit
+        }
+        LocalServer { html("""
+            (async()=>{
+              var h=await seed.android.subscribe({method:'sensor.subscribe',params:{type:1}},()=>{});
+              await new Promise(r=>setTimeout(r,30));
+              seed.android.call({method:'location.current',params:{}}).catch(()=>{});
+              try { await seed.android.call({method:'sensor.unsubscribe',params:{subscriptionId:'foreign'}}); document.title='bad'; return; } catch(e) { if(e.code!=='PERMISSION_DENIED') {document.title=e.code;return;} }
+              await h.stop();
+              var repeated=await seed.android.call({method:'sensor.unsubscribe',params:{subscriptionId:h.id}});
+              document.title=repeated.stopped===false?'ok':'bad';
+            })().catch(e=>document.title=e.code);
+        """.trimIndent()) }.use { server ->
+            fixture(server, host) { view, bridge ->
+                main { view.loadUrl(server.url) }; waitTitle(view, "ok")
+                assertEquals(1, acks.get()); assertEquals(1, stops.get())
+                main { bridge.onNavigation() }
+                main { view.evaluateJavascript("seed.android.call({method:'sensor.unsubscribe',params:{subscriptionId:'native-id'}}).catch(e=>document.title=e.code)", null) }
+                waitTitle(view, "PERMISSION_DENIED")
+            }
+        }
+    }
+    @Test fun realSensorStreamRunsThroughSdkAndAcknowledgments() {
+        val context = instrumentation.targetContext
+        val manager = context.getSystemService(android.hardware.SensorManager::class.java)
+        assumeTrue(manager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) != null)
+        LocalServer { html("""
+            var count=0;
+            seed.android.subscribe({method:'sensor.subscribe',params:{type:1,rateHz:30}},sample=>{count++;})
+              .then(async stream=>{await new Promise(r=>setTimeout(r,1500));await stream.stop();document.title=count>=10?'stream-ok-'+count:'too-slow-'+count;})
+              .catch(e=>document.title=e.code);
+        """.trimIndent()) }.use { server ->
+            val store = MemoryDeviceConsentStore().apply {
+                grant(canonicalDeviceOrigin(server.url), DeviceConsentGroup.SENSORS)
+            }
+            lateinit var host: AndroidDeviceCapabilities
+            main { host = AndroidDeviceCapabilities(context, store, server.url) }
+            fixture(server, host) { view, _ ->
+                main { view.loadUrl(server.url) }
+                val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(8)
+                while (System.nanoTime() < end) {
+                    val current = title(view)
+                    if (current.isNotEmpty() && current != "loading") break
+                    Thread.sleep(30)
+                }
+                val result = title(view)
+                assertTrue("Real stream did not deliver responsive samples: $result", result.startsWith("stream-ok-"))
+                println("SDK_REAL_STREAM_SAMPLES_IN_1500MS=" + result.substringAfterLast('-'))
+            }
+        }
+    }
+
     @Test fun sdkGetsVersionedNativeResult() {
         LocalServer { html("seed.android.call({method:'sensor.list',params:{}}).then(r=>document.title=r.sensors.length===0?'ok':'bad',e=>document.title=e.code)") }.use { server ->
             val host = Host { mapOf("sensors" to emptyList<Any>()) }
             fixture(server, host) { view, _ -> main { view.loadUrl(server.url) }; waitTitle(view, "ok"); assertEquals(1, host.calls.get()) }
         }
     }
+    @Test fun nativeCancellationRepliesWhileDocumentStillAlive() {
+        LocalServer { html("seed.android.call({method:'sensor.list',params:{}}).then(()=>document.title='unexpected',e=>document.title=e.code)") }.use { server ->
+            val host = Host { throw kotlinx.coroutines.CancellationException("native operation stopped") }
+            fixture(server, host) { view, _ ->
+                main { view.loadUrl(server.url) }
+                waitTitle(view, "CANCELLED")
+            }
+        }
+    }
+
     @Test fun sdkRepliesAndSanitizesRuntimeFailure() {
         LocalServer { html("seed.android.call({method:'sensor.list',params:{}}).then(()=>document.title='unexpected',e=>document.title=e.code+':'+e.message)") }.use { server ->
             val host = Host { throw IllegalStateException("private runtime secret") }

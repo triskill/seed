@@ -14,6 +14,28 @@ class DeviceProtocolTest {
         }
         assertFalse(DeviceProtocol.isTrusted(url, url, url, false))
     }
+    @Test fun streamAcknowledgementsAreBoundedAndExact() {
+        assertEquals("native" to 1L, DeviceProtocol.streamAck("""{"v":1,"type":"stream_ack","subscriptionId":"native","sequence":1}"""))
+        for (sequence in listOf("0", "-1", "1.5", "9007199254740992", "null", "\"1\"")) {
+            assertNull(DeviceProtocol.streamAck("""{"v":1,"type":"stream_ack","subscriptionId":"native","sequence":$sequence}"""))
+        }
+        assertNull(DeviceProtocol.streamAck("""{"v":1,"type":"stream_ack","subscriptionId":"native","sequence":1,"id":"rpc"}"""))
+        assertNull(DeviceProtocol.streamAck("""{"v":1,"type":"stream_ack","subscriptionId":"${"a".repeat(65)}","sequence":1}"""))
+    }
+    @Test fun streamingParameters() {
+        fun parse(params: String) = DeviceProtocol.parse("""{"v":1,"id":"s","method":"sensor.subscribe","params":$params}""")
+        assertEquals(30, parse("""{"type":1}""").params["rateHz"])
+        assertEquals(60, parse("""{"type":1,"rateHz":60}""").params["rateHz"])
+        for (rate in listOf("0", "61", "1.5", "null", "\"30\"")) {
+            try { parse("""{"type":1,"rateHz":$rate}"""); fail(rate) } catch (e: DeviceCapabilityError) { assertEquals("INVALID_REQUEST", e.code) }
+        }
+        assertEquals(4, (DeviceProtocol.capabilities()["limits"] as Map<*, *>)["maxSensorSubscriptions"])
+        val uuid = "12345678-1234-1234-1234-123456789abc"
+        assertEquals(uuid, DeviceProtocol.parse("""{"v":1,"id":"u","method":"sensor.unsubscribe","params":{"subscriptionId":"$uuid"}}""").params["subscriptionId"])
+        for (params in listOf("{}", """{"subscriptionId":""}""", """{"subscriptionId":"${"a".repeat(65)}"}""", """{"subscriptionId":"$uuid","extra":1}""")) {
+            try { DeviceProtocol.parse("""{"v":1,"id":"u","method":"sensor.unsubscribe","params":$params}"""); fail(params) } catch (e: DeviceCapabilityError) { assertEquals("INVALID_REQUEST", e.code) }
+        }
+    }
     @Test fun strictRequestsAndDefaults() {
         val r = DeviceProtocol.parse("""{"v":1,"id":"1","method":"sensor.read","params":{"type":5}}""")
         assertEquals(3000, r.params["timeoutMs"])
@@ -42,7 +64,7 @@ class DeviceProtocolTest {
                 try { DeviceProtocol.parse(request(method, params)); fail(params) } catch (e: DeviceCapabilityError) { assertEquals("INVALID_REQUEST", e.code) }
             }
         }
-        try { DeviceProtocol.parse(request("sensor.subscribe")); fail() } catch (e: DeviceCapabilityError) { assertEquals("UNKNOWN_METHOD", e.code) }
+        try { DeviceProtocol.parse(request("sensor.subscribe")); fail() } catch (e: DeviceCapabilityError) { assertEquals("INVALID_REQUEST", e.code) }
         for (id in listOf("a".repeat(65), "has space", "../", "")) {
             try { DeviceProtocol.parse(request("sensor.list", id = id)); fail(id) } catch (_: DeviceCapabilityError) { }
         }
@@ -66,12 +88,12 @@ class DeviceProtocolTest {
         assertEquals(listOf("Allow once", "Allow", "Deny"), consent["choices"])
         assertEquals("origin+capability", consent["scope"])
         val groups = consent["groups"] as Map<*, *>
-        assertEquals(listOf("sensor.list", "sensor.read"), groups["sensors"])
+        assertEquals(listOf("sensor.list", "sensor.read", "sensor.subscribe"), groups["sensors"])
         assertEquals(listOf("camera.capture"), groups["camera"])
         assertEquals(8192, (manifest["limits"] as Map<*, *>)["requestMaxBytes"])
         val capabilities = manifest["capabilities"] as List<*>
         assertEquals(listOf("location.current"), groups["location"])
-        assertEquals(5, capabilities.size)
+        assertEquals(7, capabilities.size)
         capabilities.forEach { assertTrue((it as Map<*, *>)["resultSchema"] is Map<*, *>) }
     }
 }

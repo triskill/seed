@@ -58,7 +58,7 @@ Initial supported methods:
 - `sensor.read`, `params: {type: <positive integer>, timeoutMs: 3000}`: native
   user consent, one measurement; optional timeoutMs integer 100..10000. Returns
   `{type, values, timestampNs, accuracy}`; units depend on type and timestampNs
-  is monotonic. No streaming subscriptions.
+  is monotonic. For live displays prefer sensor.subscribe below instead of polling.
 - `location.current`, `params: {accuracy: "coarse", timeoutMs: 15000}`: foreground
   one-shot GPS/location with a separate Location grant and Android permissions.
   Params optional: accuracy "coarse" (default) or "fine"; integer timeoutMs
@@ -75,9 +75,27 @@ Initial supported methods:
 Native consent choices are **Allow once / Allow / Deny**. Allow once covers one
 request; Allow remembers access for the exact app origin and capability across
 sub-app pages until revoked in **Settings > Device access**. A shared Sensors grant
-covers sensor.list and sensor.read; Camera and Location are separate. Remembered native consent
+covers sensor.list, sensor.read and sensor.subscribe; Camera and Location are separate. Remembered native consent
 never bypasses Android permissions or grants access to other origins. The next
 request after revocation asks again; generated JS cannot edit native grants.
+
+Live sensor API: `seed.android.subscribe({method: "sensor.subscribe", params:
+{type: chosenType, rateHz: 30}}, onSample)` resolves a stream with `id`,
+`stream.stop()` (idempotent) and `stream.closed` (Promise resolving termination
+reason). rateHz is optional integer 1..60, default30; actual hardware rates are
+not guaranteed. At most four subscriptions; only continuous/on-change sensors,
+not one-shot/special-trigger types. `sensor.unsubscribe` takes `{subscriptionId}`;
+the worker should prefer stream.stop(), including while another native call is
+pending. Samples expose type, values, timestampNs and accuracy.
+
+Allow once covers one subscription lifetime; Allow remembers Sensors access.
+Require cleanup when changing a component; native streams also end on navigation,
+tab disposal, backgrounding, revoked access and errors, with no automatic restart.
+Specs must cover stream.closed/stop/error UX. Slow callbacks receive only the
+latest pending sample, not a stale queue; acknowledgments follow callback completion.
+Callbacks must finish promptly: 10 seconds without acknowledgment terminates a
+stream; thrown/rejected callbacks also stop it. Use streaming for responsive
+charts/motion displays rather than repeated sensor.read or raw bridge posts.
 
 Calls resolve a Promise with the result or reject with `code` and `message`.
 Specs must cover refusal/cancellation, absent hardware/API, `UNAVAILABLE`,

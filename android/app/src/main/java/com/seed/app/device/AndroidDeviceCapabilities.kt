@@ -71,7 +71,7 @@ internal fun DeviceConsentDialog(host: AndroidDeviceCapabilities) {
                 Text(stringResource(when (deviceConsentGroup(method)) {
                     DeviceConsentGroup.CAMERA -> R.string.device_camera_confirmation
                     DeviceConsentGroup.LOCATION -> R.string.device_location_confirmation
-                    else -> R.string.device_sensor_confirmation
+                    else -> if (method == "sensor.subscribe") R.string.device_sensor_stream_confirmation else R.string.device_sensor_confirmation
                 }))
                 Text(stringResource(R.string.device_remember_explanation, host.origin))
             } },
@@ -91,7 +91,7 @@ internal class AndroidDeviceCapabilities(
     locationPermission: LocationPermission = AndroidLocationPermission(context),
     locationProvider: LocationProvider = AndroidLocationProvider(context),
     private val locationForeground: LocationForeground = AlwaysLocationForeground,
-) : DeviceCapabilityHost {
+) : DeviceStreamHost {
     val origin = canonicalDeviceOrigin(origin)
     var confirmationToken: Long = 0
         private set
@@ -107,8 +107,42 @@ internal class AndroidDeviceCapabilities(
         set(value) { location.launchPermissions = value }
     fun locationPermissionResult(result: Map<String, Boolean>) { onMain { location.permissionResult(result) } }
     private var operation: Job? = null
+    private var streamOperation: Job? = null
     private var closed = false
     private val manager = context.getSystemService(SensorManager::class.java)
+    private val streams = NativeSensorStreams(manager, locationForeground) { sensorPermissionAvailable(context, it) }
+
+    override suspend fun subscribe(params: Map<String, Any?>, emit: (Map<String, Any?>) -> Unit): Map<String, Any?> {
+        var created: String? = null
+        try {
+            return withContext(Dispatchers.Main.immediate) {
+                if (closed) throw DeviceCapabilityError("CANCELLED", "Device access closed")
+                if (!locationForeground.isVisible()) throw DeviceCapabilityError("UNAVAILABLE", "Sensors require a visible app")
+                if (operation != null || camera.isBusy() || location.isPermissionBusy()) throw DeviceCapabilityError("BUSY", "Device operation in progress")
+                operation = currentCoroutineContext()[Job]
+                streamOperation = operation
+                val removeStop = locationForeground.onStop { streamOperation?.cancel() }
+                try {
+                    consent("sensor.subscribe")
+                    currentCoroutineContext().ensureActive()
+                    val remembered = consentStore.isGranted(origin, DeviceConsentGroup.SENSORS)
+                    streams.start(params, { !remembered || consentStore.isGranted(origin, DeviceConsentGroup.SENSORS) }, emit).also {
+                        created = it["subscriptionId"] as String
+                    }
+                } finally {
+                    removeStop()
+                    streamOperation = null
+                    consentApproval?.cancel(); consentApproval = null; approval = null; confirmation = null; operation = null
+                }
+            }
+        } catch (error: CancellationException) {
+            withContext(NonCancellable + Dispatchers.Main.immediate) { created?.let { streams.stop(it) } }
+            throw error
+        }
+    }
+    override fun acknowledge(subscriptionId: String, sequence: Long) { streams.acknowledge(subscriptionId, sequence) }
+    override fun unsubscribe(subscriptionId: String): Map<String, Any?> = streams.stop(subscriptionId)
+    override fun stopStreams(code: String, message: String) { onMain { streamOperation?.cancel(); streams.stopAll(code, message) } }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override suspend fun invoke(method: String, params: Map<String, Any?>): Map<String, Any?> = withContext(Dispatchers.Main.immediate) {
@@ -155,12 +189,7 @@ internal class AndroidDeviceCapabilities(
                         !timeout.isFinite() || timeout !in 100.0..10000.0 || timeout % 1 != 0.0)
                         throw DeviceCapabilityError("INVALID_PARAMS", "Invalid sensor parameters")
                     consent(method)
-                    val permission = when (type.toInt()) {
-                        Sensor.TYPE_HEART_RATE, Sensor.TYPE_HEART_BEAT -> android.Manifest.permission.BODY_SENSORS
-                        Sensor.TYPE_STEP_COUNTER, Sensor.TYPE_STEP_DETECTOR -> if (android.os.Build.VERSION.SDK_INT >= 29) android.Manifest.permission.ACTIVITY_RECOGNITION else null
-                        else -> null
-                    }
-                    if (permission != null && context.checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    if (!sensorPermissionAvailable(context, type.toInt()))
                         throw DeviceCapabilityError("PERMISSION_DENIED", "Sensor permission unavailable")
                     readSensorOnce(manager, type.toInt(), timeout.toLong())
                 }
@@ -210,6 +239,7 @@ internal class AndroidDeviceCapabilities(
     override fun close() {
         onMain {
             closed = true
+            streams.close()
             consentApproval?.cancel()
             confirmation = null
             approval?.cancel()

@@ -50,6 +50,6 @@ fun canonicalDeviceOrigin(url: String): String {
 fun deviceConsentGroup(method: String): DeviceConsentGroup? = when (method) {
     "camera.capture" -> DeviceConsentGroup.CAMERA
     "location.current" -> DeviceConsentGroup.LOCATION
-    "sensor.list", "sensor.read" -> DeviceConsentGroup.SENSORS
+    "sensor.list", "sensor.read", "sensor.subscribe" -> DeviceConsentGroup.SENSORS
     else -> null
 }

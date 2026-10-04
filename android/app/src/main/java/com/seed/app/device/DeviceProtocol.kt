@@ -8,6 +8,13 @@ interface DeviceCapabilityHost {
     fun close()
 }
 
+interface DeviceStreamHost : DeviceCapabilityHost {
+    suspend fun subscribe(params: Map<String, Any?>, emit: (Map<String, Any?>) -> Unit): Map<String, Any?>
+    fun unsubscribe(subscriptionId: String): Map<String, Any?>
+    fun acknowledge(subscriptionId: String, sequence: Long)
+    fun stopStreams(code: String, message: String)
+}
+
 class DeviceCapabilityError(val code: String, message: String) : Exception(message)
 data class DeviceRequest(val id: String, val method: String, val params: Map<String, Any?>)
 
@@ -44,6 +51,16 @@ object DeviceProtocol {
                 val timeout = if (raw.containsKey("timeoutMs")) integer(raw["timeoutMs"], 1000, 60000) else 15000
                 mapOf("accuracy" to accuracy, "timeoutMs" to timeout)
             }
+            "sensor.subscribe" -> {
+                if (!raw.containsKey("type") || raw.keys.any { it !in setOf("type", "rateHz") }) invalid()
+                mapOf("type" to integer(raw["type"], 1, Int.MAX_VALUE), "rateHz" to if (raw.containsKey("rateHz")) integer(raw["rateHz"], 1, 60) else 30)
+            }
+            "sensor.unsubscribe" -> {
+                if (raw.keys != setOf("subscriptionId")) invalid()
+                val subscriptionId = raw["subscriptionId"] as? String ?: invalid()
+                if (subscriptionId.isEmpty() || subscriptionId.length > 64) invalid()
+                mapOf("subscriptionId" to subscriptionId)
+            }
             "sensor.read" -> {
                 if (!raw.containsKey("type") || raw.keys.any { it !in setOf("type", "timeoutMs") }) invalid()
                 val type = integer(raw["type"], 1, Int.MAX_VALUE)
@@ -60,12 +77,23 @@ object DeviceProtocol {
         return n.toInt()
     }
     private fun invalid(): Nothing = throw DeviceCapabilityError("INVALID_REQUEST", "Invalid device capability request")
+    fun streamAck(input: String): Pair<String, Long>? = try {
+        if (input.toByteArray(Charsets.UTF_8).size > 8192) null else {
+            val obj = json.fromJson(input) as? Map<*, *>
+            val id = obj?.get("subscriptionId") as? String
+            val sequence = obj?.get("sequence") as? Double
+            if (obj?.keys != setOf("v", "type", "subscriptionId", "sequence") || obj["v"] != 1.0 || obj["type"] != "stream_ack" || id.isNullOrEmpty() || id.length > 64 || sequence == null || !sequence.isFinite() || sequence < 1 || sequence > 9007199254740991.0 || sequence % 1 != 0.0) null
+            else id to sequence.toLong()
+        }
+    } catch (_: Exception) { null }
     fun requestId(input: String): String? = try {
         if (input.toByteArray().size > 8192) null else ((json.fromJson(input) as? Map<*, *>)?.get("id") as? String)?.takeIf(::validId)
     } catch (_: Exception) { null }
     fun capabilities(): Map<String, Any?> {
         val emptySchema = mapOf("type" to "object", "properties" to emptyMap<String, Any>(), "additionalProperties" to false)
         val resultSchemas = mapOf(
+            "sensor.subscribe" to mapOf("type" to "object", "required" to listOf("subscriptionId", "type", "rateHz"), "properties" to mapOf("subscriptionId" to mapOf("type" to "string", "maxLength" to 64), "type" to mapOf("type" to "integer"), "rateHz" to mapOf("type" to "integer", "minimum" to 1, "maximum" to 60))),
+            "sensor.unsubscribe" to mapOf("type" to "object", "required" to listOf("stopped"), "properties" to mapOf("stopped" to mapOf("type" to "boolean"))),
             "location.current" to mapOf("type" to "object", "required" to listOf("latitude", "longitude", "accuracyMeters", "timestampMs", "precision", "ageMs"), "properties" to mapOf(
                 "latitude" to mapOf("type" to "number", "minimum" to -90, "maximum" to 90),
                 "longitude" to mapOf("type" to "number", "minimum" to -180, "maximum" to 180),
@@ -80,10 +108,10 @@ object DeviceProtocol {
         fun entry(method: String, description: String, schema: Map<String, Any>, limitations: List<String>) = mapOf("method" to method, "description" to description, "paramsSchema" to schema, "resultSchema" to resultSchemas.getValue(method), "limitations" to limitations)
         return mapOf("protocolVersion" to 1,
             "consent" to mapOf("scope" to "origin+capability", "choices" to listOf("Allow once", "Allow", "Deny"),
-                "groups" to mapOf("camera" to listOf("camera.capture"), "sensors" to listOf("sensor.list", "sensor.read"), "location" to listOf("location.current")),
+                "groups" to mapOf("camera" to listOf("camera.capture"), "sensors" to listOf("sensor.list", "sensor.read", "sensor.subscribe"), "location" to listOf("location.current")),
                 "revocation" to "Settings > Device access", "androidPermissions" to "Still required independently"),
-            "limits" to mapOf("requestMaxBytes" to 8192, "requestIdPattern" to "[A-Za-z0-9_-]{1,64}", "maxConcurrentOperations" to 1, "hostTimeoutMs" to 120000),
-            "reply" to mapOf("success" to "{v:1,id,ok:true,result}", "failure" to "{v:1,id,ok:false,error:{code,message}}", "errorCodes" to listOf("INVALID_REQUEST", "UNKNOWN_METHOD", "BUSY", "PERMISSION_DENIED", "UNAVAILABLE", "TIMEOUT", "CANCELLED", "INTERNAL_ERROR")),
+            "limits" to mapOf("requestMaxBytes" to 8192, "requestIdPattern" to "[A-Za-z0-9_-]{1,64}", "maxConcurrentOperations" to 1, "maxSensorSubscriptions" to 4, "hostTimeoutMs" to 120000),
+            "reply" to mapOf("stream" to "{v:1,type:'stream',id,subscriptionId,event:'sample',sequence,sample:{type,values,timestampNs,accuracy}} or {v:1,type:'stream',id,subscriptionId,event:'closed',error:{code,message}}", "streamAck" to "{v:1,type:'stream_ack',subscriptionId,sequence}; ACK after callback settles; one unacknowledged sample plus latest; 10 second ACK timeout", "success" to "{v:1,id,ok:true,result}", "failure" to "{v:1,id,ok:false,error:{code,message}}", "errorCodes" to listOf("INVALID_REQUEST", "UNKNOWN_METHOD", "BUSY", "PERMISSION_DENIED", "UNAVAILABLE", "TIMEOUT", "CANCELLED", "INTERNAL_ERROR")),
             "capabilities" to listOf(
             entry("capabilities.list", "Describe approved Android capabilities", emptySchema, emptyList()),
             entry("location.current", "Obtain one foreground location fix with approved Location access", mapOf("type" to "object", "additionalProperties" to false, "properties" to mapOf(
@@ -92,7 +120,9 @@ object DeviceProtocol {
                 listOf("Consent and Android foreground permission required independently", "One-shot only; no background tracking or subscriptions", "Fix age at most 10000ms; timeout removes listeners", "Coarse is quantized to a 0.01 degree grid with accuracy at least 1500m", "Fine preference falls back to coarse when Android grants approximate access; no upgrade prompt")),
             entry("camera.capture", "Open system camera with approved Camera access", emptySchema, listOf("Consent required unless Allow grant is remembered",  "Bounded JPEG preview/data URL only; no full resolution or video")),
             entry("sensor.list", "List available Android sensors with approved Sensors access", emptySchema, listOf("Consent required unless Allow grant is remembered",  "Availability depends on device and platform restrictions")),
-            entry("sensor.read", "Obtain one sensor measurement with approved Sensors access", mapOf("type" to "object", "required" to listOf("type"), "additionalProperties" to false, "properties" to mapOf("type" to mapOf("type" to "integer", "minimum" to 1, "maximum" to Int.MAX_VALUE), "timeoutMs" to mapOf("type" to "integer", "minimum" to 100, "maximum" to 10000, "default" to 3000))), listOf("Consent required unless Allow grant is remembered", "One-shot only, no subscriptions; unsupported or restricted sensors fail"))
+            entry("sensor.subscribe", "Stream foreground sensor samples", mapOf("type" to "object", "required" to listOf("type"), "additionalProperties" to false, "properties" to mapOf("type" to mapOf("type" to "integer", "minimum" to 1, "maximum" to Int.MAX_VALUE), "rateHz" to mapOf("type" to "integer", "minimum" to 1, "maximum" to 60, "default" to 30))), listOf("Sensors consent required", "Maximum four subscriptions; latest samples only", "Continuous/on-change sensors only; hardware rates are hints", "Navigation, background and revocation terminate streams")),
+            entry("sensor.unsubscribe", "Stop a document-owned sensor subscription", mapOf("type" to "object", "required" to listOf("subscriptionId"), "additionalProperties" to false, "properties" to mapOf("subscriptionId" to mapOf("type" to "string", "minLength" to 1, "maxLength" to 64))), listOf("Idempotent document-owned cleanup; no consent required")),
+            entry("sensor.read", "Obtain one sensor measurement with approved Sensors access", mapOf("type" to "object", "required" to listOf("type"), "additionalProperties" to false, "properties" to mapOf("type" to mapOf("type" to "integer", "minimum" to 1, "maximum" to Int.MAX_VALUE), "timeoutMs" to mapOf("type" to "integer", "minimum" to 100, "maximum" to 10000, "default" to 3000))), listOf("Consent required unless Allow grant is remembered", "One-shot measurement; unsupported or restricted sensors fail"))
         ), "limitations" to listOf("One active operation", "Android app main frame only", "120 second host timeout"))
     }
 }

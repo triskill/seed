@@ -42,5 +42,38 @@ Local logs: /tmp/seed-recovery-full-tests.log, /tmp/seed-recovery-android-verify
 
 ## Sensor streaming
 
-Next, after the separate recovery commit. Approved: 30Hz default, cap60Hz, latest
-sample coalescing and automatic lifecycle/document cleanup with Sensors consent.
+Implemented after recovery commit f48957d: generic SDK subscribe/stop/closed,
+30Hz default / 60Hz cap / four subscriptions, persistent continuous/on-change
+sensor listeners, document-owned IDs, remembered Sensors consent and live-reading
+consent text. Stops on navigation, disposal, backgrounding, revocation and errors;
+no automatic resume. Control calls bypass ordinary busy slots.
+
+End-to-end ACKs follow callback completion (including asynchronous callbacks): one
+unacknowledged sample plus one latest pending sample, exact sequence validation,
+10-second timeout and listener cleanup. Callback failure stops the stream.
+Review found no additional important blockers. Parent regressions caught timer
+rounding that could halve delivery rate and cancellation leaving a live document's
+Promise pending. Both were verified failing then passing. Native test return types
+were corrected after JUnit rejected two inferred non-void test methods.
+
+Verification:
+- **333 JVM / 16 SDK / 308 backend tests passed**; existing backend deprecation warning.
+- Debug lint, application APK and instrumentation APK builds passed.
+- APKs installed with -r, no data clear. Final Moto G32 suite: **44/44 passed**,
+  141.59 seconds; includes earlier consent, location and rotation regressions.
+- Real accelerometer → native host → WebView bridge → SDK → ACK → stop:
+  **38 samples in 1500ms** in final suite (37 in isolated run). Requested 30Hz,
+  measured approximately 25Hz; hardware/renderer rates are not guaranteed.
+- Native stream tests cover multiple samples, four-stream limit, revocation,
+  callback failure, background/close, Allow once/canceled approval and ACK timeout.
+- Settings/auth hashes (2 files) and generated-app hashes (28 files, excluding
+  bytecode) match the pre-recovery baseline. Browser-local contents not inspected
+  or reset. No photograph taken or live location coordinates logged.
+- Production backend healthy after startup; both installed prompt hashes match
+  source. Temporary ADB health forward removed.
+
+Manual real-camera, Android location-dialog/live-GPS, process-restart consent and
+user-generated-page rotation acceptance remain separate from instrumentation.
+Shared-UID/PRoot filesystem isolation remains unresolved.
+Logs: /tmp/seed-stream-final-build.log, /tmp/seed-stream-backend-tests.log,
+/tmp/seed-stream-final-all-device-tests.log, /tmp/seed-stream-real-e2e.log.

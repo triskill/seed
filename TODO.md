@@ -71,12 +71,24 @@ verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
   source; isolated Moto G32 fake-role tool-violation/EOF recovery passes. Settings,
   auth and app-file hashes unchanged. No runtime corruption found in inspected
   files; PRoot/shared Android UID filesystem isolation remains unresolved.
-- **Next: sensor streaming**, 30Hz default/cap60Hz with latest-sample coalescing,
-  lifecycle cleanup and existing Sensors consent, not repeated one-shot polling.
+- **Sensor streaming implemented:** generic subscribe/stop/closed, 30Hz default /
+  60Hz cap / four subscriptions, persistent listeners and end-to-end ACK/latest
+  backpressure, lifecycle/document/revocation cleanup and Sensors consent.
+  Final 333 JVM / 16 SDK / 308 backend tests, lint and APK builds pass; **44/44
+  Moto G32 instrumentation tests pass**, including earlier consent/location/rotation
+  regressions. Real SDK accelerometer stream delivered 38 samples in 1500ms at
+  requested 30Hz. Settings/auth/generated-app hashes unchanged; installed prompts
+  match source and backend healthy. Real camera/live GPS/manual acceptance and
+  enforceable worker filesystem isolation remain pending.
 
 See `docs/plans/2026-10-04-agent-recovery-and-sensor-streaming.md` and its report.
 
 ### Urgent device fixes (user-reported)
+
+Update: the previously unrun instrumentation regressions below now pass in the
+44-method streaming suite. Historical implementation counts/blockers are retained;
+manual process-restart consent, real Android location dialogs/GPS and rotation in
+the user's generated page remain separate acceptance work.
 
 1. **Remembered consent implemented:** buttons **Allow once / Allow / Deny**.
    Allow persists exact-origin Camera/Sensors grants across sub-app pages;
@@ -128,7 +140,7 @@ found in review was fixed with a red/green SDK regression.
 
 **Next:** user-operated real camera capture/return/cancel acceptance. Fake camera
 tests do not prove the system camera flow; no photograph was taken automatically.
-Full-resolution/video and sensor streams remain follow-ups. GPS/location is now
+Full-resolution/video remain follow-ups; sensor streams are implemented above. GPS/location is now
 implemented in the urgent fixes above, pending device acceptance; Stop/wipe UI
 remains deferred. Never expose unrestricted Android operations or backend
 control-plane secrets. The user's generated app was not modified for this work.

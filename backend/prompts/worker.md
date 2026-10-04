@@ -109,7 +109,8 @@ not exposed:
   `timeoutMs` must be an integer from 100 to 10000. Returns
   `{type, values, timestampNs, accuracy}`; values/units depend on Android sensor
   type and timestampNs is monotonic, not a calendar timestamp. This is one-shot,
-  not streaming; restricted sensors may be denied. Use location.current below for
+  not streaming; restricted sensors may be denied. For live displays use the
+  subscription API below instead of repeatedly calling sensor.read. Use location.current for
   geographic location (GPS is not an Android SensorManager sensor).
 - `location.current`, `params: {accuracy: "coarse", timeoutMs: 15000}`: foreground
   one-shot GPS/location, with separate Location grant and Android permissions.
@@ -128,9 +129,39 @@ not exposed:
 Native consent choices are **Allow once / Allow / Deny**. Allow once covers one
 request; Allow remembers access for the exact app origin and capability across
 sub-app pages until revoked in **Settings > Device access**. A shared Sensors grant
-covers sensor.list and sensor.read; Camera and Location are separate. Remembered native consent
+covers sensor.list, sensor.read and sensor.subscribe; Camera and Location are separate. Remembered native consent
 never bypasses Android permissions or grants access to other origins. After
 revocation the next request asks again; do not try to change native grants from JS.
+
+### Live sensor displays
+
+Use `seed.android.subscribe(request, onSample)` from a clear user action:
+```js
+const stream = await seed.android.subscribe({
+  method: "sensor.subscribe", params: {type: chosenType, rateHz: 30}
+}, sample => updateDisplay(sample.values));
+// When the page/component no longer needs data:
+await stream.stop();
+// Resolves with the termination reason; handle stopped/error UI honestly:
+stream.closed.then(reason => showStreamStopped(reason));
+```
+Discover types via sensor.list. sensor.subscribe requests a persistent listener:
+rateHz is optional integer 1..60, default 30; hardware may deliver slower. Only
+continuous/on-change sensors are supported, not one-shot/special-trigger sensors.
+At most four subscriptions are active. Samples contain type, values, timestampNs,
+accuracy; timestamps/units have the same meaning as sensor.read. The native
+sensor.unsubscribe control uses `{subscriptionId: stream.id}`; prefer stream.stop()
+(idempotent), which also works while another camera/location call is pending.
+
+Allow once authorizes one subscription until it ends; Allow remembers the Sensors
+grant. Streams stop on navigation, tab disposal, backgrounding, revoked access or
+errors, and never automatically restart on return. Stop before replacing a UI
+component; don't leave forgotten listeners. Use `stream.closed` to restore buttons
+or indicate interruption. Slow renderers/callbacks get the latest pending sample,
+not a queue of old readings. SDK acknowledgments happen after onSample settles;
+callbacks must finish promptly (10 seconds without acknowledgment ends the stream).
+Thrown/rejected callbacks terminate the stream. Do not bypass acknowledgments with
+raw bridge posts or assume an exact FPS from a successful subscription.
 
 Every call returns a Promise that resolves to its result or rejects with an
 error having `code` and `message`. Handle `UNAVAILABLE`, `PERMISSION_DENIED`,
