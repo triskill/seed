@@ -178,9 +178,42 @@ internal class OwnedRuntimeProcessFactory(
 ) : ProcessFactory {
     // Keep even superseded launches owned until Java observes their exit.
     private var previousLaunch: Process? = null
+    private var launchesFrozen = false
+
+    /** Blocking IO-thread operation, serialized with the entire launch handshake.
+     * Even a failed launcher remains owned until Java confirms direct-child exit.
+     * A timeout leaves launch admission frozen; callers must not mutate the rootfs.
+     */
+    @Synchronized
+    fun freezeAndStopConfirmed(timeoutMs: Long = 10_000): Boolean {
+        require(timeoutMs > 0)
+        launchesFrozen = true
+        val previous = previousLaunch ?: return true
+        if (previous.isAlive) {
+            if (previous is OwnedRuntimeProcess) previous.destroy() else {
+                // Raw handles here have never received the acknowledgment permitting exec.
+                if (!cleanupSchedule { runCatching { previous.destroy() }.onFailure(onFailure) }) return false
+            }
+        }
+        val exited = try {
+            previous.waitFor(timeoutMs, TimeUnit.MILLISECONDS) && !previous.isAlive
+        } catch (failure: Exception) {
+            onFailure(failure)
+            false
+        }
+        if (exited) previousLaunch = null
+        return exited
+    }
+
+    @Synchronized
+    fun resumeLaunches() {
+        check(previousLaunch == null) { "Runtime exit has not been confirmed" }
+        launchesFrozen = false
+    }
 
     @Synchronized
     override fun start(command: List<String>, workingDir: File?, environment: Map<String, String>): Process {
+        check(!launchesFrozen) { "Runtime launches are frozen for maintenance" }
         previousLaunch?.takeIf { it.isAlive }?.let { previous ->
             // Failed startup returns no handle to the supervisor. Retry must still
             // be able to re-attempt its cleanup, never bypass its ownership gate.

@@ -27,6 +27,7 @@ internal class RuntimeSupervisor(
     private val lifecycleLock = Any()
     private var generation = 0L
     private var handle: ProotHandle? = null
+    private val retiredHandles = mutableListOf<ProotHandle>()
     private var restartPending = false
     private val commandJob = scope.launch { processCommands() }
 
@@ -64,9 +65,31 @@ internal class RuntimeSupervisor(
             generation += 1
             commands.close()
             commandJob.cancel()
-            handle.also { handle = null }
+            handle
         }
         activeHandle?.destroy()
+    }
+
+    /** Permanently excludes commands and joins even a cancellation-resistant launch.
+     * The factory must ALSO be frozen/stopped: a failed launch may return no handle.
+     * Keep the installed handle on timeout so a later proof can retry cleanup.
+     */
+    suspend fun quiesce(timeoutMs: Long = 10_000): Boolean {
+        require(timeoutMs > 0)
+        stop()
+        if (kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { commandJob.cancelAndJoin(); true } != true) return false
+        val owned = synchronized(lifecycleLock) { (listOfNotNull(handle) + retiredHandles).distinct() }
+        var allExited = true
+        for (previous in owned) {
+            previous.destroy()
+            if (!previous.awaitExit(timeoutMs)) {
+                allExited = false
+            } else synchronized(lifecycleLock) {
+                if (handle === previous) handle = null
+                retiredHandles.remove(previous)
+            }
+        }
+        return allExited
     }
 
     private suspend fun processCommands() = coroutineScope {
@@ -178,6 +201,7 @@ internal class RuntimeSupervisor(
             }
         }
         if (!installed) {
+            synchronized(lifecycleLock) { retiredHandles += replacement }
             replacement.destroy()
             return null
         }

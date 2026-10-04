@@ -39,7 +39,7 @@ class BootController(
         RuntimeExtractor(source)::extract,
     private val onFailure: (Throwable) -> Unit = {},
 ) {
-    private val targetDir = targetDir.canonicalFile
+    private val targetDir = trustedRuntimePath(targetDir)
     private val installationMutex = RuntimeInstallationCoordinator.mutexFor(this.targetDir)
     private val extractionJobMonitor = Any()
     private var extractionJob: Job? = null
@@ -47,8 +47,13 @@ class BootController(
     private val _states = MutableStateFlow<BootState>(initialState())
     val states: StateFlow<BootState> = _states.asStateFlow()
 
-    private fun initialState(): BootState =
+    private fun initialState(): BootState = try {
+        RuntimeMaintenanceGate.withWriter { recoverRuntimeRestore(targetDir) }
         if (isUpToDate()) BootState.Ready else BootState.NeedsExtraction
+    } catch (failure: Exception) {
+        onFailure(failure)
+        BootState.Failed
+    }
 
     private fun isUpToDate(): Boolean {
         val file = File(targetDir, VERSION_FILE)
@@ -74,12 +79,20 @@ class BootController(
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     installationMutex.withLock {
+                      RuntimeMaintenanceGate.exclusive {
+                        recoverRuntimeRestore(targetDir)
                         // Another controller may have completed while this one waited.
                         if (isUpToDate()) {
                             _states.value = BootState.Ready
-                            return@withLock
+                            return@exclusive
                         }
 
+                        // The ordinary extractor replaces rootfs destructively. An APK
+                        // upgrade over known user data must use preserving Restore instead.
+                        check(!java.nio.file.Files.exists(File(targetDir, "rootfs/home/seed/app").toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+                            !java.nio.file.Files.exists(File(targetDir, "rootfs/home/seed/backend/config.json").toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                            "Runtime bundle upgrade requires preserving Restore; app/config data will not be overwritten"
+                        }
                         var finished = false
                         extractionFlow(targetDir).collect { progress ->
                             _states.value = BootState.Extracting(progress)
@@ -89,6 +102,7 @@ class BootController(
                         // Do not publish readiness or the marker before upstream cleanup ends.
                         writeVersionFile()
                         _states.value = BootState.Ready
+                      }
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -106,6 +120,10 @@ class BootController(
             // Register before starting: even an undispatched caller cannot launch a duplicate.
             job.start()
         }
+    }
+
+    fun refreshAfterRestore() {
+        _states.value = initialState()
     }
 
     private fun writeVersionFile() {

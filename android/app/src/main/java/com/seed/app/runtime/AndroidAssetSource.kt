@@ -27,7 +27,10 @@ class AndroidAssetSource(
 ) : AssetSource {
 
     override fun entries(): List<AssetEntry> {
-        val names = assets.list(assetsDir) ?: return emptyList()
+        val names = assets.list(assetsDir) ?: throw java.io.IOException("Packaged Linux assets are missing")
+        if (!names.toSet().containsAll(RUNTIME_DATA_ASSET_NAMES)) {
+            throw java.io.IOException("Packaged rootfs.tar or seed_version.json is missing")
+        }
         return names
             .filter { it in RUNTIME_DATA_ASSET_NAMES }
             .sorted()

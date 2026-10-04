@@ -2,6 +2,8 @@ package com.seed.app.runtime
 
 import android.os.Binder
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 /**
  * Bound-service surface consumed by the activity during runtime startup.
@@ -19,19 +21,35 @@ import kotlinx.coroutines.flow.StateFlow
  *   changes — it is owned by the service.
  */
 class RuntimeBinder internal constructor(
-    private val supervisor: RuntimeSupervisor,
+    private var supervisor: RuntimeSupervisor,
     val terminalManager: SeedTerminalManager,
     private val stopService: () -> Unit,
+    val restoreState: StateFlow<RestoreState> = kotlinx.coroutines.flow.MutableStateFlow(RestoreState.Idle),
+    private val restoreRuntime: () -> Unit = {},
+    private val launchAllowed: () -> Boolean = { true },
 ) : Binder() {
-    val health: StateFlow<HealthState> = supervisor.health
+    private val mutableHealth = kotlinx.coroutines.flow.MutableStateFlow(supervisor.health.value)
+    private val mirrorScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+    private var mirrorJob: kotlinx.coroutines.Job? = null
+    val health: StateFlow<HealthState> = mutableHealth
+    init { replaceSupervisor(supervisor) }
+    internal fun replaceSupervisor(replacement: RuntimeSupervisor) {
+        supervisor = replacement
+        mirrorJob?.cancel()
+        mirrorJob = mirrorScope.launch { replacement.health.collect { mutableHealth.value = it } }
+    }
+    fun restore() = restoreRuntime()
+    internal fun close() { mirrorScope.cancel() }
     val isRuntimeAlive: Boolean get() = supervisor.isRuntimeAlive
 
-    fun retry() = supervisor.startOrRetry()
+    fun retry() { if (launchAllowed()) supervisor.startOrRetry() }
 
-    fun restart() = restartRuntimeWithFreshTerminal(
+    fun restart() { if (!launchAllowed()) return
+        restartRuntimeWithFreshTerminal(
         closeTerminal = terminalManager::close,
         restartRuntime = supervisor::restart,
-    )
+        )
+    }
 
     fun stop() = stopService()
 }

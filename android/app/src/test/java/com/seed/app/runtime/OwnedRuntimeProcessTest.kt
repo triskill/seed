@@ -17,6 +17,39 @@ class OwnedRuntimeProcessTest {
     private val identity = OwnedProcessIdentity(42, 99, 1000)
     private fun matching() = ProcessInspection.Present(identity, parentPid = 7, state = 'S')
 
+    @Test fun confirmedStopRetainsFailedLaunchUntilExitAndBlocksNewLaunchWhileFrozen() {
+        val root = temporary.newFolder()
+        var alive = true
+        var launches = 0
+        val raw = object : Process() {
+            override fun isAlive() = alive
+            override fun destroy() {}
+            override fun waitFor() = if (!alive) 0 else error("alive")
+            override fun waitFor(timeout: Long, unit: TimeUnit) = !alive
+            override fun exitValue() = if (!alive) 0 else throw IllegalThreadStateException()
+            override fun getInputStream() = ByteArrayInputStream(byteArrayOf())
+            override fun getErrorStream() = ByteArrayInputStream(byteArrayOf())
+            override fun getOutputStream() = ByteArrayOutputStream()
+        }
+        val factory = OwnedRuntimeProcessFactory(root, 7, 1000, { matching() }, { _, _ -> },
+            factory = object : ProcessFactory {
+                override fun start(command: List<String>, workingDir: File?, environment: Map<String, String>): Process {
+                    launches++
+                    return raw
+                }
+            }, timeoutMs = 1, cleanupSchedule = { it(); true })
+        assertThrows(IllegalStateException::class.java) { factory.start(listOf("/proot"), root, emptyMap()) }
+        assertFalse(factory.freezeAndStopConfirmed(1))
+        assertThrows(IllegalStateException::class.java) { factory.resumeLaunches() }
+        assertThrows(IllegalStateException::class.java) { factory.start(listOf("/proot"), root, emptyMap()) }
+        assertEquals(1, launches)
+        alive = false
+        assertTrue(factory.freezeAndStopConfirmed(1))
+        // A confirmed stop is not itself authorization to launch into a changing tree.
+        assertThrows(IllegalStateException::class.java) { factory.start(listOf("/proot"), root, emptyMap()) }
+        factory.resumeLaunches()
+    }
+
     @Test fun procStatParserHandlesNamesContainingParentheses() {
         val parsed = parseProcIdentity(stat(), "Name:\tx\nUid:\t1000\t1000\t1000\t1000\n")
         assertEquals(matching(), parsed)

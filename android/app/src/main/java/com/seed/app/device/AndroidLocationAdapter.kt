@@ -34,6 +34,7 @@ internal class AndroidLocationProvider(context: Context) : LocationProvider {
             override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
         }
         try { manager.requestLocationUpdates(provider, 0L, 0f, listener, Looper.getMainLooper()) }
+        catch (error: SecurityException) { manager.removeUpdates(listener); throw error }
         catch (error: Exception) { manager.removeUpdates(listener); throw error }
         return { manager.removeUpdates(listener) }
     }

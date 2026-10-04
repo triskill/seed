@@ -5,6 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
@@ -25,6 +26,64 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RuntimeSupervisorTest {
+
+    @Test
+    fun quiesceRetainsOwnershipAcrossStopTimeoutAndRetriesExitProof() = runTest {
+        val handle = FakeProotHandle(exitOnDestroy = false)
+        val supervisor = RuntimeSupervisor(backgroundScope, { handle }, { emptyFlow() })
+        supervisor.startOrRetry()
+        runCurrent()
+        supervisor.stop()
+        assertFalse(supervisor.quiesce(1))
+        assertTrue(handle.destroyCalls >= 2)
+        handle.alive = false
+        assertTrue(supervisor.quiesce(1))
+        supervisor.startOrRetry()
+        runCurrent()
+        assertFalse(supervisor.isRuntimeAlive)
+    }
+
+    @Test
+    fun quiesceJoinsAnOutstandingCancellationResistantLaunch() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val handle = FakeProotHandle()
+        val supervisor = RuntimeSupervisor(backgroundScope, {
+            withContext(NonCancellable) {
+                started.complete(Unit)
+                release.await()
+                handle
+            }
+        }, { emptyFlow() })
+        supervisor.startOrRetry()
+        runCurrent()
+        assertTrue(started.isCompleted)
+        val stopped = backgroundScope.async { supervisor.quiesce(1) }
+        runCurrent()
+        assertFalse(stopped.isCompleted)
+        release.complete(Unit)
+        runCurrent()
+        assertTrue(stopped.await())
+        assertFalse(handle.isAlive)
+    }
+
+    @Test
+    fun quiesceDoesNotLoseLateLaunchWhoseCleanupHasNotExited() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val handle = FakeProotHandle(exitOnDestroy = false)
+        val supervisor = RuntimeSupervisor(backgroundScope, {
+            withContext(NonCancellable) { release.await(); handle }
+        }, { emptyFlow() })
+        supervisor.startOrRetry()
+        runCurrent()
+        val stopped = backgroundScope.async { supervisor.quiesce(1) }
+        runCurrent()
+        release.complete(Unit)
+        runCurrent()
+        assertFalse(stopped.await())
+        handle.alive = false
+        assertTrue(supervisor.quiesce(1))
+    }
 
     @Test
     fun firstStartStartsOneProcessAndRepublishesHealth() = runTest {

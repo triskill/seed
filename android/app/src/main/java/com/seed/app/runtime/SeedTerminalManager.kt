@@ -5,6 +5,11 @@ import android.util.Log
 import java.io.File
 import com.termux.terminal.TerminalSession
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.*
+import android.system.Os
+import android.system.OsConstants
+import java.lang.ref.WeakReference
+import com.termux.terminal.TerminalSessionClient
 
 /**
  * Owns the lifecycle of the interactive shell [TerminalSession].
@@ -66,6 +71,107 @@ class SeedTerminalManager(
      * terminal visit, destroyed by [close].
      */
     private var session: TerminalSession? = null
+    private var ownership: TerminalOwnership? = null
+    private var handshake: Deferred<Unit>? = null
+    private var frozen = false
+    private var closing = false
+    private var attachedView = WeakReference<com.termux.view.TerminalView>(null)
+    // Never cancelled before owned cleanup/reaping completes.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private fun requireMain() {
+        check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            "Terminal lifecycle must run on the main thread"
+        }
+    }
+
+    /** Freeze admission AND disconnect lazy views before they can initialize a PID-0 session. */
+    @Synchronized
+    fun freeze() {
+        requireMain()
+        frozen = true
+        disconnectView()
+    }
+
+    @Synchronized
+    fun unfreeze() {
+        requireMain()
+        check(session == null) { "Terminal exit has not been confirmed" }
+        frozen = false
+        closing = false
+    }
+
+    private fun disconnectView() {
+        attachedView.get()?.let { view ->
+            terminalClient.detachView(view)
+            // Pinned Termux exposes these fields. Clearing them prevents delayed updateSize
+            // from starting a previously attached, still PID-0 session.
+            view.mTermSession = null
+            view.mEmulator = null
+        }
+        attachedView.clear()
+    }
+
+    /** No blocking wait on main: Termux's main handler must consume its waitpid result. */
+    suspend fun stopAndAwaitExit(timeoutMillis: Long = 10_000): Boolean {
+        require(timeoutMillis > 0)
+        val target = withContext(Dispatchers.Main.immediate) {
+            synchronized(this@SeedTerminalManager) {
+                closing = session != null
+                disconnectView()
+                session
+            }
+        } ?: return true
+        return withTimeoutOrNull(timeoutMillis) {
+            val pending = withContext(Dispatchers.Main.immediate) { handshake }
+            pending?.await()
+            withContext(Dispatchers.Main.immediate) {
+                if (target.pid == 0) {
+                    // Never initialized and disconnected: no subprocess can exist.
+                    releaseConfirmed(target, unstarted = true)
+                } else ownership?.destroyOwned()
+            }
+            while (withContext(Dispatchers.Main.immediate) { target.pid != 0 && target.isRunning }) {
+                delay(20)
+            }
+            withContext(Dispatchers.Main.immediate) { releaseConfirmed(target) }
+            true
+        } ?: false
+    }
+
+    @Synchronized
+    private fun releaseConfirmed(target: TerminalSession, unstarted: Boolean = false) {
+        if (session !== target) return
+        check(unstarted && target.pid == 0 || !target.isRunning)
+        if (unstarted) ownership?.discardUnstarted() else {
+            // This is Termux's existing main-handler completion facility, not a
+            // second waitpid. Pinned JNI does not expose waitpid errors separately.
+            target.exitStatus
+        }
+        disconnectView()
+        session = null
+        ownership = null
+        handshake = null
+        closing = false
+    }
+
+    private fun beginOwnershipWhenStarted(target: TerminalSession) {
+        if (handshake != null) return
+        val owner = checkNotNull(ownership)
+        handshake = scope.async {
+            while (target.pid == 0 && !frozen && !closing) delay(10)
+            if (target.pid <= 0) return@async
+            val pid = target.pid
+            withContext(Dispatchers.IO) { owner.establish(TerminalSessionProcess(target), pid) }
+        }
+        scope.launch {
+            while (session === target && target.isRunning) delay(50)
+            if (session === target && !target.isRunning) {
+                handshake?.await()
+                releaseConfirmed(target)
+            }
+        }
+    }
 
     /**
      * Terminal client with clipboard input/output.
@@ -94,7 +200,18 @@ class SeedTerminalManager(
      *   created (missing rootfs, missing proot files, etc.).
      */
     @Synchronized
-    fun getOrCreateSession(): TerminalSession {
+    fun getOrCreateSession(): TerminalSession = RuntimeMaintenanceGate.withWriter {
+        getOrCreateAdmittedSession()
+    }
+
+    /** Caller already holds writer admission; never nest the non-reentrant gate. */
+    private fun getOrCreateAdmittedSession(): TerminalSession {
+        requireMain()
+        check(!frozen && !closing) { "Terminal launches are frozen for maintenance" }
+        session?.takeIf { !it.isRunning }?.let { target ->
+            check(handshake?.isCompleted != false) { "Terminal ownership handshake is pending" }
+            releaseConfirmed(target)
+        }
         return session ?: createSession().also { s -> session = s }
     }
 
@@ -114,10 +231,15 @@ class SeedTerminalManager(
      * [TerminalView.attachSession] is called.
      */
     @Synchronized
-    fun attachView(view: com.termux.view.TerminalView) {
+    fun attachView(view: com.termux.view.TerminalView) = RuntimeMaintenanceGate.withWriter {
+        requireMain()
+        check(!frozen && !closing) { "Terminal attachment is frozen for maintenance" }
+        val target = getOrCreateAdmittedSession()
         terminalClient.attachView(view)
+        attachedView = WeakReference(view)
         view.setTerminalViewClient(terminalClient)
-        view.attachSession(getOrCreateSession())
+        view.attachSession(target)
+        beginOwnershipWhenStarted(target)
     }
 
     /**
@@ -132,23 +254,24 @@ class SeedTerminalManager(
      */
     @Synchronized
     fun detachView(view: com.termux.view.TerminalView) {
+        requireMain()
         terminalClient.detachView(view)
-        view.setTerminalViewClient(null)
+        view.mTermSession = null
+        view.mEmulator = null
+        if (attachedView.get() === view) attachedView.clear()
     }
 
     /**
-     * Stop the current terminal session and release it. A later getOrCreateSession
-     * creates a fresh session. Used by runtime restart and service destruction.
+     * Request asynchronous owned cleanup, retaining the session until confirmed exit.
+     * Maintenance callers must use freeze() then stopAndAwaitExit() instead.
      */
     @Synchronized
     fun close() {
-        session?.let { s ->
-            try {
-                s.finishIfRunning()
-            } catch (e: Exception) {
-                Log.w(TAG, "Error finishing terminal session", e)
-            }
-            session = null
+        requireMain()
+        closing = true
+        disconnectView()
+        scope.launch {
+            if (!stopAndAwaitExit()) Log.w(TAG, "Terminal exit could not be confirmed; ownership retained")
         }
     }
 
@@ -175,6 +298,8 @@ class SeedTerminalManager(
      */
     @Synchronized
     private fun createSession(): TerminalSession {
+        requireMain()
+        check(!frozen && !closing) { "Terminal rootfs writes are frozen" }
         GuestDns.sync(applicationContext, rootfsDir)
         // Resolve native proot installation
         val installation = NativeProot.resolve(nativeLibraryDir.absolutePath)
@@ -206,18 +331,42 @@ class SeedTerminalManager(
         )
         val envArray = environment.map { (k, v) -> "$k=$v" }.toTypedArray()
 
+        val owner = TerminalOwnership(
+            File(applicationContext.cacheDir, "terminal-ownership"),
+            installation.executable.absolutePath,
+            android.os.Process.myPid(), android.os.Process.myUid(),
+            inspect = { inspectProcIdentity(it) },
+            signal = { pid, signal ->
+                Os.kill(pid, when (signal) {
+                    OwnedProcessSignal.QUIT -> OsConstants.SIGQUIT
+                    OwnedProcessSignal.CONTINUE -> OsConstants.SIGCONT
+                })
+            },
+            onFailure = { Log.w(TAG, "Terminal ownership/cleanup failed", it) },
+        )
+        ownership = owner
+        val sessionClient = object : TerminalSessionClient by terminalClient {
+            override fun onSessionFinished(finishedSession: TerminalSession) {
+                terminalClient.onSessionFinished(finishedSession)
+                scope.launch {
+                    handshake?.await()
+                    if (!finishedSession.isRunning) releaseConfirmed(finishedSession)
+                }
+            }
+        }
         return TerminalSession(
-            installation.executable.absolutePath,  // shellPath (proot executable)
+            "/system/bin/sh",                      // fixed host wrapper, not the tracer
             "/",                                  // host cwd → guest root under PRoot
-            args,                                  // args
+            owner.argv(args.toList()),              // fixed positional argv; no interpolation
             envArray,                              // env
             10_000,                                // transcriptRows (max buffer history)
-            terminalClient,                        // client
+            sessionClient,                         // preserves clipboard/UI callbacks
         )
     }
 
     /** Install the no-fork interactive command bridge inside the writable rootfs. */
     private fun installTerminalRepl(): File {
+        check(!frozen && !closing) { "Terminal rootfs writes are frozen" }
         val script = File(rootfsDir, "home/seed/.seed-terminal-repl.py")
         val parent = script.parentFile
             ?: throw IllegalStateException("Terminal REPL has no parent directory")

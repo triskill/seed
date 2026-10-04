@@ -9,7 +9,7 @@ import java.io.File
 internal fun androidOwnedRuntimeProcessFactory(
     receiptRoot: File,
     onFailure: (Throwable) -> Unit,
-): ProcessFactory = synchronized(AndroidRuntimeOwnership.factories) {
+): OwnedRuntimeProcessFactory = synchronized(AndroidRuntimeOwnership.factories) {
     AndroidRuntimeOwnership.factories.getOrPut(receiptRoot.canonicalPath) {
         OwnedRuntimeProcessFactory(
             receiptRoot = receiptRoot,
@@ -31,5 +31,5 @@ internal fun androidOwnedRuntimeProcessFactory(
 
 /** Preserve outstanding launch ownership across service recreation in the same app process. */
 private object AndroidRuntimeOwnership {
-    val factories = mutableMapOf<String, ProcessFactory>()
+    val factories = mutableMapOf<String, OwnedRuntimeProcessFactory>()
 }

@@ -66,6 +66,11 @@ fun ShellScreen(
     terminalManager: SeedTerminalManager,
     modifier: Modifier = Modifier,
 ) {
+    val maintenanceActive by com.seed.app.runtime.RuntimeMaintenanceGate.active.collectAsState()
+    if (maintenanceActive) {
+        Text("Shell unavailable while runtime Restore is active. Return to Settings to retry.")
+        return
+    }
     // The terminal is an Android View, so keep its reference only while this
     // composable owns it. The manager retains the session, not the activity view.
     val terminalSurface = remember(terminalManager) { mutableStateOf<TerminalSurface?>(null) }
@@ -192,14 +197,25 @@ private fun TerminalViewConnection(
     onSurfaceAvailable: (TerminalSurface) -> Unit,
     onSurfaceReleased: (TerminalSurface) -> Unit,
 ) {
+    val attachmentFailed = remember(terminalManager) { mutableStateOf(false) }
+    if (attachmentFailed.value) {
+        Text("Shell is stopped for Restore. Return to Settings to retry.", modifier = modifier)
+        return
+    }
     AndroidView(
         factory = { context ->
             TerminalSurface(context).apply {
                 // Connect the input-owning Termux child to its session. The
                 // surface renders that child's emulator after Compose lays it out.
-                terminalManager.attachView(terminalView)
-                onSurfaceAvailable(this)
-                requestKeyboard()
+                try {
+                    terminalManager.attachView(terminalView)
+                    onSurfaceAvailable(this)
+                    requestKeyboard()
+                } catch (_: IllegalStateException) {
+                    // Admission may close between composition and AndroidView creation.
+                    // Never turn a maintenance race into an Activity crash.
+                    attachmentFailed.value = true
+                }
             }
         },
         modifier = modifier,

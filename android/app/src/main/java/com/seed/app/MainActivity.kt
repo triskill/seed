@@ -53,6 +53,10 @@ import kotlinx.coroutines.launch
  */
 class MainActivity : ComponentActivity() {
     private val runtimeHealth = MutableStateFlow<HealthState>(HealthState.Unknown)
+    private val restoreState = MutableStateFlow<com.seed.app.runtime.RestoreState>(com.seed.app.runtime.RestoreState.Idle)
+    private var restoreJob: Job? = null
+    private var restoreAfterBinding = false
+    private lateinit var bootController: BootController
     private var runtimeBinder: RuntimeBinder? = null
     private var terminalManager: SeedTerminalManager? = null
     private var binderHealthJob: Job? = null
@@ -93,6 +97,11 @@ class MainActivity : ComponentActivity() {
             clearRuntimeBinder()
             runtimeBinder = binder
             terminalManager = binder.terminalManager
+            restoreJob = lifecycleScope.launch { binder.restoreState.collect {
+                restoreState.value = it
+                if (it is com.seed.app.runtime.RestoreState.Finished) bootController.refreshAfterRestore()
+            } }
+            if (restoreAfterBinding) { restoreAfterBinding = false; binder.restore() }
             binderHealthJob = lifecycleScope.launch {
                 binder.health.collect { health ->
                     if (!activityDestroyed && runtimeBinder === binder) {
@@ -128,7 +137,7 @@ class MainActivity : ComponentActivity() {
         !activityDestroyed && frameworkBindingRegistered && acceptedBinding &&
             runtimeConnection === connection
 
-    private val runtimeStartupGate = RuntimeStartupGate(::startAndBindRuntime)
+    private val runtimeStartupGate = RuntimeStartupGate { startAndBindRuntime() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -141,7 +150,7 @@ class MainActivity : ComponentActivity() {
         val assetSource = AndroidAssetSource(assets)
         val assetVersion = assets.open("linux/seed_version.json").bufferedReader()
             .use { RootfsVersion.parse(it.readText()) }
-        val bootController = BootController(
+        bootController = BootController(
             targetDir = targetDir,
             source = assetSource,
             assetVersion = assetVersion,
@@ -149,6 +158,15 @@ class MainActivity : ComponentActivity() {
             onFailure = { failure -> Log.e(TAG, "Runtime preparation failed", failure) },
         )
 
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                com.seed.app.runtime.RuntimeMaintenanceGate.active.collect { active ->
+                    if (com.seed.app.runtime.shouldBindMaintenance(bootController.states.value, active)) {
+                        startAndBindRuntime(maintenance = true)
+                    }
+                }
+            }
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 bootController.states.collect { state ->
@@ -164,25 +182,35 @@ class MainActivity : ComponentActivity() {
             SeedTheme {
                 val bootState by bootController.states.collectAsState()
                 val healthState by runtimeHealth.collectAsState()
+                val restoration by restoreState.collectAsState()
+                val maintenanceActive by com.seed.app.runtime.RuntimeMaintenanceGate.active.collectAsState()
                 val destination = resolveStartupDestination(bootState, healthState)
                 RetainedAppNavigation(
-                    ready = destination is StartupDestination.Seed,
+                    ready = destination is StartupDestination.Seed && com.seed.app.runtime.rootScreensAllowed(restoration, maintenanceActive),
                     waiting = {
-                        when (destination) {
-                            is StartupDestination.Extraction -> ExtractionScreen(
-                                state = destination.state,
-                                onRetry = bootController::runExtraction,
-                            )
-                            is StartupDestination.Runtime -> StartRuntimeScreen(
-                                health = destination.health,
-                                onRetry = ::retryRuntime,
-                                onRestart = if (runtimeBinder?.isBinderAlive == true) ::restartRuntime else null,
-                            )
-                            is StartupDestination.Seed -> Unit
+                        if (!com.seed.app.runtime.rootScreensAllowed(restoration, maintenanceActive)) {
+                            androidx.activity.compose.BackHandler { }
+                            com.seed.app.ui.settings.RuntimeRestoreSettings(restoration, ::restoreRuntime)
+                        } else when (destination) {
+                            is StartupDestination.Extraction -> androidx.compose.foundation.layout.Column {
+                                com.seed.app.ui.settings.RuntimeRestoreSettings(restoration, ::restoreRuntime)
+                                ExtractionScreen(state = destination.state, onRetry = bootController::runExtraction)
+                            }
+                            is StartupDestination.Runtime -> androidx.compose.foundation.layout.Column {
+                                com.seed.app.ui.settings.RuntimeRestoreSettings(restoration, ::restoreRuntime)
+                                StartRuntimeScreen(
+                                    health = destination.health,
+                                    onRetry = ::retryRuntime,
+                                    onRestart = if (runtimeBinder?.isBinderAlive == true) ::restartRuntime else null,
+                                )
+                            }
+                            is StartupDestination.Seed -> com.seed.app.ui.settings.RuntimeRestoreSettings(restoration, ::restoreRuntime)
                         }
                     },
                 ) {
                     SeedNav(
+                        restoration = restoration,
+                        onRestore = ::restoreRuntime,
                         terminalManager = terminalManager
                             ?: throw IllegalStateException("Terminal manager not bound when navigating to Seed"),
                     )
@@ -198,7 +226,14 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun startAndBindRuntime() {
+    private fun restoreRuntime() {
+        val binder = runtimeBinder
+        if (binder?.isBinderAlive == true) { binder.restore(); return }
+        restoreAfterBinding = true
+        startAndBindRuntime(maintenance = true)
+    }
+
+    private fun startAndBindRuntime(maintenance: Boolean = false) {
         if (
             activityDestroyed ||
             !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) ||
@@ -211,6 +246,7 @@ class MainActivity : ComponentActivity() {
         clearRuntimeBinder()
         runtimeHealth.value = HealthState.Unknown
         val serviceIntent = Intent(this, RuntimeService::class.java)
+        if (maintenance) serviceIntent.action = RuntimeService.ACTION_MAINTENANCE
 
         try {
             try {
@@ -278,6 +314,8 @@ class MainActivity : ComponentActivity() {
         terminalManager = null
         binderHealthJob?.cancel()
         binderHealthJob = null
+        restoreJob?.cancel()
+        restoreJob = null
     }
 
     private fun releaseFrameworkBinding() {

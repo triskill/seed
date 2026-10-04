@@ -16,7 +16,7 @@ settings or other files accessible under Seed's Android UID. Generated Python ha
 similar authority. PRoot and shared-UID mode bits do not isolate these processes.
 This is not appropriate protection against hostile code or untrusted agents.
 
-## Recovery direction (not yet implemented)
+## Recovery direction
 
 Prefer an explicit native Android Settings action to restore the known-good
 runtime/backend from the installed APK. It must work without a healthy Python
@@ -29,17 +29,27 @@ re-extraction that silently overwrites these. Inventory storage boundaries and
 bundle availability before implementation; no preservation guarantee is established
 by this decision alone. Any destructive reset must be separate and confirmed.
 
+The user explicitly declined a permanent backup of the broken runtime. Restoration
+preserves the documented generated-app workspace and existing Android/Pi data;
+arbitrary files elsewhere inside Linux are not guaranteed and may be discarded,
+with an explicit warning before restore. Temporary journal/staging/old-tree storage
+is only for interrupted-transaction safety and is cleaned after completion.
+
 A damaged generated app needs a separate explicit rollback/backup path; preserving
-its files while restoring Python does not repair bad Python app code. Backups under
+its files while restoring Python does not repair bad Python app code. Broader
+backups, server-backed recovery, sharing and a possible paid extension are future
+ideas only: see [future product ideas](../future-product-ideas.md). Backups under
 the same UID are not tamper-proof. Runtime restoration cannot recover missing data
 without a backup or undo credential disclosure; exposed secrets require rotation.
 
 ## Current implementation versus decision
 
 Bounded role recovery and owned-process Runtime Restart are implemented. APK startup
-also deploys selected backend modules and role prompts. None of these is a complete
-Settings-based runtime restore. Logging this decision adds no restore implementation
-or new sandbox guarantees. Restoration design/implementation requires its own task.
+also deploys selected backend modules and role prompts. Those actions alone are not
+full restoration. Native Settings Restore was subsequently implemented separately,
+with explicit preservation boundaries, confirmed shutdown and transactional packaged
+replacement. See `../reports/settings-runtime-restore-final-review.md` for local and
+isolated device verification. No new sandbox guarantees are introduced.
 
 ## Revisit
 

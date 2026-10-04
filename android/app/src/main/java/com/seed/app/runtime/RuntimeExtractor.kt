@@ -34,6 +34,7 @@ import java.nio.file.Paths
  */
 class RuntimeExtractor(
     private val source: AssetSource,
+    private val checkSpace: () -> Unit = {},
 ) {
     fun extract(targetDir: File): Flow<ExtractionProgress> = flow {
         if (!targetDir.exists() && !targetDir.mkdirs()) {
@@ -229,6 +230,7 @@ class RuntimeExtractor(
         val buffer = ByteArray(BUFFER_SIZE)
         while (true) {
             currentCoroutineContext().ensureActive()
+            checkSpace()
             val count = input.read(buffer)
             if (count < 0) return
             output.write(buffer, 0, count)

@@ -78,6 +78,8 @@ import com.seed.app.data.ProviderCatalog
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
+    restoreState: com.seed.app.runtime.RestoreState = com.seed.app.runtime.RestoreState.Idle,
+    onRestore: () -> Unit = {},
     viewModel: SettingsViewModel = viewModel(
         factory = SettingsViewModel.Factory,
     ),
@@ -105,6 +107,7 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         SettingsHeader(isSaved = isSaved)
+        RuntimeRestoreSettings(restoreState, onRestore)
 
         HorizontalDivider()
         DeviceAccessSettings()

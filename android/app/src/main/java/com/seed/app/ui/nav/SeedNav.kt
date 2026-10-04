@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -59,7 +60,15 @@ import com.seed.app.ui.shell.ShellScreen
 @Composable
 fun SeedNav(
     terminalManager: SeedTerminalManager,
+    restoration: com.seed.app.runtime.RestoreState = com.seed.app.runtime.RestoreState.Idle,
+    onRestore: () -> Unit = {},
 ) {
+    val maintenanceActive by com.seed.app.runtime.RuntimeMaintenanceGate.active.collectAsState()
+    if (!com.seed.app.runtime.rootScreensAllowed(restoration, maintenanceActive)) {
+        androidx.activity.compose.BackHandler { }
+        com.seed.app.ui.settings.RuntimeRestoreSettings(restoration, onRestore)
+        return
+    }
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -111,7 +120,7 @@ fun SeedNav(
             composable(Routes.APP) { AppScreen() }
             composable(Routes.CHAT) { ChatScreen() }
             composable(Routes.SHELL) { ShellScreen(terminalManager = terminalManager) }
-            composable(Routes.SETTINGS) { SettingsScreen() }
+            composable(Routes.SETTINGS) { SettingsScreen(restoreState = restoration, onRestore = onRestore) }
         }
     }
 }

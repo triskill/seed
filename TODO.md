@@ -80,18 +80,42 @@ verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
   regressions. Real SDK accelerometer stream delivered 38 samples in 1500ms at
   requested 30Hz. Settings/auth/generated-app hashes unchanged; installed prompts
   match source and backend healthy. Real camera/live GPS/manual acceptance and
-  Settings-based runtime restoration remain pending. Worker isolation is declined
+  manual GPS precision acceptance remain pending; Settings Restore is implemented
+  and isolated device acceptance is recorded below. Worker isolation is declined
   by explicit decision; see below.
 
 **Accepted execution policy:** keep agents unrestricted for flexibility; accept
 that model mistakes/generated Python can damage the same-UID environment. Do not
 track isolation as technical debt. Prefer native Settings-based known-good runtime
-restoration, preserving user data by default; this restore is not implemented and
-cannot undo leaked credentials or recover lost data without backups. Existing
+restoration, preserving user data by default; native Restore is now wired with
+confirmed stop and transactional replacement, verified on isolated device data. It cannot
+undo leaked credentials or recover lost data without backups. Existing
 Restart is not full restoration. See
 [`docs/decisions/agent-freedom-and-runtime-recovery.md`](docs/decisions/agent-freedom-and-runtime-recovery.md).
 
 See `docs/plans/2026-10-04-agent-recovery-and-sensor-streaming.md` and its report.
+
+**Settings Restore implemented; isolated device acceptance passed:** native Settings and
+startup failure expose confirmation/progress/error/retry without backend HTTP.
+The foreground service freezes launches/writers, confirms supervisor/factory and
+owned terminal exit, then stages packaged assets and transactionally replaces
+rootfs. It preserves the complete generated app and regular backend config,
+leaves outside-rootfs storage untouched, rolls back before commit, republishes
+trusted metadata on committed recovery and removes temporary old trees. Failed
+stop remains frozen and retryable; it never authorizes rootfs replacement.
+Legacy guest Pi data currently fails closed rather than being silently deleted.
+367 debug + 367 release JVM tests, both lint variants and APK builds pass.
+Moto G32 full suite **52/52 passed** (304.596s), including real packaged isolated
+Restore, native confirmation/progress/retry and paused PTY tracer/guest cleanup
+with fresh terminal recreation. Installed with -r; settings/auth (2 files) and app
+(30 files) hashes match, backend healthy. The real user workspace was not restored
+or deliberately corrupted; browser data was not cleared or inspected. See
+[`docs/reports/settings-runtime-restore-final-review.md`](docs/reports/settings-runtime-restore-final-review.md) and
+[`docs/plans/2026-10-07-settings-runtime-restore.md`](docs/plans/2026-10-07-settings-runtime-restore.md).
+No permanent backup is requested: arbitrary runtime files outside the approved
+preservation boundary are discarded and must be explicitly warned about in the UI.
+Future optional paid server backups/sharing are only ideas, not commitments or the
+current restore mechanism: [`docs/future-product-ideas.md`](docs/future-product-ideas.md).
 
 ### Urgent device fixes (user-reported)
 
@@ -105,8 +129,9 @@ the user's generated page remain separate acceptance work.
    Settings > Device access revokes them. Native permissions remain independent.
    307 JVM tests, lint and APK builds passed; prompt tests 12/12. New native/UI
    regressions compile but are unrun because ADB reports unauthorized. Review
-   found no blocking/important issue; real process-restart persistence remains
-   device acceptance work.
+   found no blocking/important issue. User manual acceptance now confirms
+   remembered-consent persistence and Settings revocation; this is separate
+   from the historical automated counts above.
 2. **Live rotation implemented:** MainActivity handles orientation/screenSize/
    screenLayout without recreation, retaining the SAME WebView, DOM/JS heap,
    unsaved form/scroll and active sensor host while UI resizes. Existing saved
@@ -115,7 +140,7 @@ the user's generated page remain separate acceptance work.
    and debug/app-test APK builds pass. **46/46 Moto G32 tests pass**, including
    live identity/state/resize and sensor continuity/background cleanup across
    actual requestedOrientation changes. Installed with -r; backend healthy.
-   Manual rotation acceptance in the user's generated page remains pending. Four existing
+   User manual rotation acceptance in the generated page is now recorded. Four existing
    explicit recreation/disposal tests retained. No heap persistence across death.
 3. **Foreground GPS/location implemented:** `location.current` with Android
    coarse/fine permission, remembered Location grant/revocation, bounded one-shot
@@ -124,7 +149,9 @@ the user's generated page remain separate acceptance work.
    Both agent prompts/API docs updated. Final 323 JVM / 12 SDK / 298 backend
    tests, lint and APK builds pass; 35 instrumentation methods compile but are
    unrun. Actual Android permission/GPS/rotation/remembered-consent acceptance
-   awaits USB debugging authorization. No background tracking or data clear.
+   was historically blocked on USB authorization. User manual location access-control
+   acceptance is now recorded; actual coordinate precision remains pending.
+   No background tracking or data clear.
 
 See `docs/plans/2026-10-02-device-priority-fixes.md` and its verification report.
 No generated-app/provider/browser data is cleared to implement these fixes.
