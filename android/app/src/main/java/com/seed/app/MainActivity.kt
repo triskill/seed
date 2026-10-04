@@ -35,6 +35,7 @@ import com.seed.app.runtime.StartRuntimeScreen
 import com.seed.app.runtime.StartupDestination
 import com.seed.app.runtime.resolveStartupDestination
 import com.seed.app.runtime.shouldRequestRuntimeNotificationPermission
+import com.seed.app.ui.app.RetainedAppNavigation
 import com.seed.app.ui.nav.SeedNav
 import com.seed.app.ui.theme.SeedTheme
 import java.io.File
@@ -163,18 +164,25 @@ class MainActivity : ComponentActivity() {
             SeedTheme {
                 val bootState by bootController.states.collectAsState()
                 val healthState by runtimeHealth.collectAsState()
-                when (val destination = resolveStartupDestination(bootState, healthState)) {
-                    is StartupDestination.Extraction -> ExtractionScreen(
-                        state = destination.state,
-                        onRetry = bootController::runExtraction,
-                    )
-                    is StartupDestination.Runtime -> StartRuntimeScreen(
-                        health = destination.health,
-                        onRetry = ::retryRuntime,
-                        onRestart = if (runtimeBinder?.isBinderAlive == true) ::restartRuntime else null,
-                    )
-
-                    is StartupDestination.Seed -> SeedNav(
+                val destination = resolveStartupDestination(bootState, healthState)
+                RetainedAppNavigation(
+                    ready = destination is StartupDestination.Seed,
+                    waiting = {
+                        when (destination) {
+                            is StartupDestination.Extraction -> ExtractionScreen(
+                                state = destination.state,
+                                onRetry = bootController::runExtraction,
+                            )
+                            is StartupDestination.Runtime -> StartRuntimeScreen(
+                                health = destination.health,
+                                onRetry = ::retryRuntime,
+                                onRestart = if (runtimeBinder?.isBinderAlive == true) ::restartRuntime else null,
+                            )
+                            is StartupDestination.Seed -> Unit
+                        }
+                    },
+                ) {
+                    SeedNav(
                         terminalManager = terminalManager
                             ?: throw IllegalStateException("Terminal manager not bound when navigating to Seed"),
                     )

@@ -71,8 +71,12 @@ verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
    regressions compile but are unrun because ADB reports unauthorized. Review
    found no blocking/important issue; real process-restart persistence remains
    device acceptance work.
-2. **Rotation returning sub-apps to index:** next implementation; save/restore
-   current browsing state rather than unconditionally loading the root URL.
+2. **Rotation route/history restoration implemented:** save live WebView state
+   before disposal, restore trusted history/route before index fallback, and
+   retain navigation state while runtime binding delays composition. 310 JVM
+   tests, lint and APK builds passed; four new recreation/history tests compile
+   but are unrun (phone unauthorized). Actual rotation acceptance pending; no
+   arbitrary JS-heap/DOM-state retention claim.
 3. **Missing GPS:** next after rotation; permission-aware foreground
    location.current through the same JSON protocol, not background tracking.
 

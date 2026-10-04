@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.seed.app.BuildConfig
+import com.seed.app.device.DeviceConsentStore
 import com.seed.app.device.DeviceWebBridge
 import com.seed.app.device.rememberDeviceCapabilityHost
 
@@ -57,7 +58,10 @@ import com.seed.app.device.rememberDeviceCapabilityHost
  *     recomposition. Without this, every recompose
  *     would tear down the WebView and lose scroll
  *     position, form state, etc.
- *   - `DisposableEffect` calls `destroy()` on the
+ *   - A saveable Bundle captures browsing history during Activity state saving
+ *     and before tab disposal. Restoration precedes any fallback load. This
+ *     preserves trusted URLs/history, not arbitrary JavaScript heap or DOM state.
+ *   - `DisposableEffect` closes the bridge and calls `destroy()` on the
  *     WebView when the composable leaves the
  *     composition. This is essential — the WebView
  *     holds a reference to the Activity Context
@@ -77,25 +81,27 @@ import com.seed.app.device.rememberDeviceCapabilityHost
  */
 @SuppressLint("SetJavaScriptEnabled") // Safe — the webapp is trusted (we serve it)
 @Composable
-fun AppScreen(modifier: Modifier = Modifier) {
+fun AppScreen(
+    modifier: Modifier = Modifier,
+    expectedUrl: String = BuildConfig.WEBAPP_DEV_URL,
+    consentStore: DeviceConsentStore? = null,
+) {
     val context = LocalContext.current
-    // Stable across recompositions. `remember` (not
-    // `rememberSaveable`) — the WebView saves its
-    // own state via the parent Activity's
-    // onSaveInstanceState.
-    val host = rememberDeviceCapabilityHost()
+    val browsingState = rememberWebViewBrowsingState()
+    val host = rememberDeviceCapabilityHost(consentStore = consentStore, origin = expectedUrl)
     val webView = remember(context) { WebView(context) }
-    // Install the origin-bound document-start bridge before the first load.
-    val bridge = remember(webView, host) { DeviceWebBridge(webView, host, BuildConfig.WEBAPP_DEV_URL) }
+    // Install the exact-origin document-start bridge before restoring or loading.
+    val bridge = remember(webView, host, expectedUrl) { DeviceWebBridge(webView, host, expectedUrl) }
 
     // Tear the WebView down when the composable
-    // leaves the composition (tab change, app
-    // background, process death). The factory only
+    // leaves the composition (tab change or Activity destruction). The factory only
     // runs once per AndroidView entry, so the
     // `remember`-ed WebView is the same instance
     // the factory wired up.
-    DisposableEffect(webView, bridge) {
+    DisposableEffect(webView, bridge, browsingState) {
+        browsingState.attach(webView)
         onDispose {
+            browsingState.release(webView)
             bridge.close()
             (webView.parent as? ViewGroup)?.removeView(webView)
             webView.destroy()
@@ -123,6 +129,7 @@ fun AppScreen(modifier: Modifier = Modifier) {
 
                             override fun onPageFinished(view: WebView, url: String?) {
                                 refreshLayout.isRefreshing = false
+                                browsingState.onPageFinished(view)
                                 super.onPageFinished(view, url)
                             }
 
@@ -150,7 +157,7 @@ fun AppScreen(modifier: Modifier = Modifier) {
                                 return !WebViewConfig.isAllowedUrl(url)
                             }
                         }
-                        loadUrl(BuildConfig.WEBAPP_DEV_URL)
+                        browsingState.restoreOrLoad(this, expectedUrl)
                     },
                 )
             }

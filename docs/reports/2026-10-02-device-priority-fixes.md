@@ -25,7 +25,24 @@ provider data and the pre-existing seed_version.json change are untouched.
 
 ## 2. Rotation
 
-Pending implementation after consent commit.
+Root cause: a recreated AppScreen always loaded the configured index and had no
+explicit browsing-state capture/restore. Implemented a saveable state holder
+that captures the live WebView during Activity state saving (before disposal),
+restores trusted route/history before any fallback load, and clears the live
+Activity/view reference during disposal. A stable root navigation-state boundary
+retains unconsumed child state while runtime binding delays composition, including
+another recreation during that delay. Query/fragment and Back history are kept;
+unsafe history falls back to a safe current URL or configured index. Native
+requests/dialogs are canceled, not restored. No manifest configChanges workaround,
+Activity leak or generated-app/localStorage reset.
+
+**310 JVM tests**, lint and both APK builds passed. Three browsing-policy
+regressions failed before implementation and passed afterward. Four isolated
+production-AppScreen recreation/history/gating instrumentation tests compile but
+are unrun; expanded connected suite currently contains 27 methods. Review found
+no blocker/important actual bug. Phone remains ADB unauthorized. Actual rotation
+and full MainActivity runtime acceptance are pending; no claim that arbitrary
+JavaScript heap, DOM form state or process-death state survives.
 
 ## 3. Foreground location/GPS
 
