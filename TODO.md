@@ -70,7 +70,8 @@ verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
   326 JVM tests, lint and APK builds pass. Installed backend patch hashes match
   source; isolated Moto G32 fake-role tool-violation/EOF recovery passes. Settings,
   auth and app-file hashes unchanged. No runtime corruption found in inspected
-  files; PRoot/shared Android UID filesystem isolation remains unresolved.
+  files; unrestricted shared-UID execution is now an explicitly accepted risk
+  (see the decision below), not a pending isolation task.
 - **Sensor streaming implemented:** generic subscribe/stop/closed, 30Hz default /
   60Hz cap / four subscriptions, persistent listeners and end-to-end ACK/latest
   backpressure, lifecycle/document/revocation cleanup and Sensors consent.
@@ -79,7 +80,16 @@ verified exactly-once execution, openai-codex acceptance, or x86_64 acceptance.
   regressions. Real SDK accelerometer stream delivered 38 samples in 1500ms at
   requested 30Hz. Settings/auth/generated-app hashes unchanged; installed prompts
   match source and backend healthy. Real camera/live GPS/manual acceptance and
-  enforceable worker filesystem isolation remain pending.
+  Settings-based runtime restoration remain pending. Worker isolation is declined
+  by explicit decision; see below.
+
+**Accepted execution policy:** keep agents unrestricted for flexibility; accept
+that model mistakes/generated Python can damage the same-UID environment. Do not
+track isolation as technical debt. Prefer native Settings-based known-good runtime
+restoration, preserving user data by default; this restore is not implemented and
+cannot undo leaked credentials or recover lost data without backups. Existing
+Restart is not full restoration. See
+[`docs/decisions/agent-freedom-and-runtime-recovery.md`](docs/decisions/agent-freedom-and-runtime-recovery.md).
 
 See `docs/plans/2026-10-04-agent-recovery-and-sensor-streaming.md` and its report.
 
@@ -734,7 +744,8 @@ fresh verification.
   top-level navigation; they are not authentication and do not comprehensively
   block HTTPS subresources. The middle-man now has both pi's read-only tool
   allowlist and the matching runtime event filter, but prompt/tool rules are not
-  a complete sandbox and the worker boundary still needs enforcement.
+  a complete sandbox; unrestricted worker authority is an explicitly accepted
+  development risk (see the execution-policy decision above).
 - **Settings agent apply exists; endpoint configuration is deferred.** Save
   validates and applies agents without restarting the runtime; Update models
   explicitly refreshes catalogs. Pi 0.84.2 delivery/authenticated device
