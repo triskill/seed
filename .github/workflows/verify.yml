@@ -1,8 +1,9 @@
 name: Verify
 
+# Verification is a pre-merge check, not a check on every development push.
 on:
-  push:
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

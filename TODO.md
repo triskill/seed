@@ -812,8 +812,10 @@ fresh verification.
 - **Existing native ARM64 connected suite is accepted; broader coverage remains.**
   The latest run above passed all seven current methods. The following
   September verification/QEMU results are historical, not the current suite status.
-  GitHub Actions now runs Python suites, scoped static checks, Android JVM tests,
-  debug lint and a tracked-HEAD secret scan; `make verify` runs the same code
+  GitHub Actions runs Python suites, scoped static checks, Android JVM tests,
+  debug lint and a tracked-HEAD secret scan on PRs targeting main or manual dispatch,
+  not ordinary pushes. See `docs/verification-policy.md`; remote failures are not
+  fixed merely by changing triggers. `make verify` runs the same code
   checks locally. On 2026-09-29, `make verify` passed (276 Python tests plus
   Android JVM/lint); the static checks and pinned HEAD secret scan passed.
   This is not device acceptance.
