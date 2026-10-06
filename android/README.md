@@ -19,6 +19,21 @@ development, but changing active clients at runtime is deferred to Phase 10.
 > it as production-ready. Authenticated transport and server identity checks are
 > required before release.
 
+## Package identity and data safety
+
+Both namespace and application ID are `cz.trety.seed`; the launcher component
+is `cz.trety.seed/cz.trety.seed.MainActivity`. Debug and release use this same
+identity; the instrumentation APK is `cz.trety.seed.test`.
+
+This is a new app, **not an upgrade or data migration** from `com.seed.app`.
+Keep the old installation and all its data intact; do not uninstall or clear
+it. The new app starts with separate private storage and cannot recover old
+settings, generated apps, WebView browser data, credentials, or Keystore keys.
+Runtime Restore remains unchanged and is not an automatic or cross-package
+migration. Installation/run commands below target the new package; do not run
+them expecting old browser state or keys. This rename was verified with builds
+only, without installation or device/data operations.
+
 ## Building
 
 The Android SDK and generated runtime binaries are not committed.

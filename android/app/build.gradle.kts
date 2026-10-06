@@ -13,11 +13,11 @@ plugins {
 }
 
 android {
-    namespace = "com.seed.app"
+    namespace = "cz.trety.seed"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.seed.app"
+        applicationId = "cz.trety.seed"
         // 26 = Android 8.0 Oreo. Aligns with the plan's
         // minSdk (also lets us rely on adaptive icons,
         // notification channels, and the modern JobScheduler

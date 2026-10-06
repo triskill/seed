@@ -27,6 +27,18 @@ First launch starts the regular embedded app with its packaged Pi defaults.
 Provider login and model/thinking selection are optional, separate controls in
 Settings; saved credentials remain in Android Keystore-backed storage.
 
+## Android identity and existing data
+
+The Android namespace and application ID are **`cz.trety.seed`** (launcher
+`cz.trety.seed/cz.trety.seed.MainActivity`). This is a **new Android app**, not
+an upgrade of `com.seed.app`. Existing `com.seed.app` installations remain
+separate: preserve their data and do not uninstall or clear them. No migration
+is provided for generated apps, settings, credentials/Keystore keys, or WebView
+browser data. The new package cannot access those old private files or keys;
+Runtime Restore is not a cross-package migration mechanism.
+
+See [namespace verification](docs/reports/android-namespace-identity.md).
+
 ## Quick start (host dev)
 
 Requires Python 3.11+ (3.12 is what we test on) and the

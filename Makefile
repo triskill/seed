@@ -72,8 +72,8 @@ ADB        := $(ANDROID_HOME)/platform-tools/adb
 
 # App identity (mirrors build.gradle.kts).
 APK          := android/app/build/outputs/apk/debug/app-debug.apk
-APP_ID       := com.seed.app
-APP_ACTIVITY := com.seed.app.MainActivity
+APP_ID       := cz.trety.seed
+APP_ACTIVITY := cz.trety.seed.MainActivity
 
 # Process bookkeeping.
 BACKEND_LOG  := backend.log
