@@ -21,11 +21,19 @@ end of day 1, the user has the web app they asked for.
 
 The pipe-backed `PiRunner` and both real pi RPC processes were accepted inside
 the native ARM64 Android PRoot runtime on 2026-08-14. Saved Android provider/model/key
-settings are loaded from DataStore/Keystore storage and injected on embedded
-runtime startup without copying the key to loopback HTTP or plaintext config.
-First launch starts the regular embedded app with its packaged Pi defaults.
-Provider login and model/thinking selection are optional, separate controls in
-Settings; saved credentials remain in Android Keystore-backed storage.
+preferences are stored in Android DataStore; provider credentials are owned by the
+backend/Pi runtime in private app storage. The old encrypted Android credential
+store is migration-only, not the credential store for new installs. First launch
+starts the regular embedded app with its packaged Pi defaults. Provider login and
+model/thinking selection are optional, separate controls in Settings. Private app
+storage is not a guarantee of encryption or isolation from agent execution.
+
+### Google Play beta preparation
+
+Work is tracked in the [execution plan](docs/plans/2026-10-07-app-store-preparation.md)
+and [readiness audit](docs/release/google-play-readiness.md). Licensing, signing,
+policy eligibility, privacy and actual release-device acceptance remain gates;
+unsigned bundle builds and draft listing materials are not publication approval.
 
 ## Android identity and existing data
 

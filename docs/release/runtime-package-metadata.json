@@ -1,0 +1,2497 @@
+{
+  "scope": "Installed package metadata only; not a complete SBOM or license clearance. Vendored files/binaries and exact license texts require additional review. Includes manifests in examples where versioned.",
+  "source": "android/app/src/main/assets/linux/rootfs.tar.gz",
+  "source_sha256": "e343c38b3a9f001d65930d7e7b3fa746cd57c09c53eb63286df7d960a67ff491",
+  "source_size_bytes": 133990913,
+  "alpine": [
+    {
+      "name": "ada-libs",
+      "version": "2.9.2-r4",
+      "declared_license": "( Apache-2.0 OR MIT ) AND MPL-2.0"
+    },
+    {
+      "name": "alpine-baselayout",
+      "version": "3.7.0-r0",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "alpine-baselayout-data",
+      "version": "3.7.0-r0",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "alpine-keys",
+      "version": "2.5-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "alpine-release",
+      "version": "3.22.5-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "apk-tools",
+      "version": "2.14.10-r0",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "brotli-libs",
+      "version": "1.1.0-r2",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "busybox",
+      "version": "1.37.0-r20",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "busybox-binsh",
+      "version": "1.37.0-r20",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "c-ares",
+      "version": "1.34.8-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "ca-certificates",
+      "version": "20260611-r0",
+      "declared_license": "MPL-2.0 AND MIT"
+    },
+    {
+      "name": "ca-certificates-bundle",
+      "version": "20260611-r0",
+      "declared_license": "MPL-2.0 AND MIT"
+    },
+    {
+      "name": "gdbm",
+      "version": "1.24-r0",
+      "declared_license": "GPL-3.0-or-later"
+    },
+    {
+      "name": "git",
+      "version": "2.49.1-r0",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "git-init-template",
+      "version": "2.49.1-r0",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "icu-data-en",
+      "version": "76.1-r1",
+      "declared_license": "ICU"
+    },
+    {
+      "name": "icu-libs",
+      "version": "76.1-r1",
+      "declared_license": "ICU"
+    },
+    {
+      "name": "libapk2",
+      "version": "2.14.10-r0",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "libbz2",
+      "version": "1.0.8-r6",
+      "declared_license": "bzip2-1.0.6"
+    },
+    {
+      "name": "libcrypto3",
+      "version": "3.5.7-r0",
+      "declared_license": "Apache-2.0"
+    },
+    {
+      "name": "libcurl",
+      "version": "8.14.1-r3",
+      "declared_license": "curl"
+    },
+    {
+      "name": "libevent",
+      "version": "2.1.13-r0",
+      "declared_license": "BSD-3-Clause"
+    },
+    {
+      "name": "libexpat",
+      "version": "2.8.4-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "libffi",
+      "version": "3.4.8-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "libgcc",
+      "version": "14.2.0-r6",
+      "declared_license": "GPL-2.0-or-later AND LGPL-2.1-or-later"
+    },
+    {
+      "name": "libidn2",
+      "version": "2.3.7-r0",
+      "declared_license": "GPL-2.0-or-later OR LGPL-3.0-or-later"
+    },
+    {
+      "name": "libncursesw",
+      "version": "6.5_p20250503-r0",
+      "declared_license": "X11"
+    },
+    {
+      "name": "libpanelw",
+      "version": "6.5_p20250503-r0",
+      "declared_license": "X11"
+    },
+    {
+      "name": "libpsl",
+      "version": "0.21.5-r3",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "libssl3",
+      "version": "3.5.7-r0",
+      "declared_license": "Apache-2.0"
+    },
+    {
+      "name": "libstdc++",
+      "version": "14.2.0-r6",
+      "declared_license": "GPL-2.0-or-later AND LGPL-2.1-or-later"
+    },
+    {
+      "name": "libunistring",
+      "version": "1.3-r0",
+      "declared_license": "GPL-2.0-or-later OR LGPL-3.0-or-later"
+    },
+    {
+      "name": "mpdecimal",
+      "version": "4.0.1-r0",
+      "declared_license": "BSD-2-Clause"
+    },
+    {
+      "name": "musl",
+      "version": "1.2.5-r12",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "musl-utils",
+      "version": "1.2.5-r12",
+      "declared_license": "MIT AND BSD-2-Clause AND GPL-2.0-or-later"
+    },
+    {
+      "name": "ncurses-terminfo-base",
+      "version": "6.5_p20250503-r0",
+      "declared_license": "X11"
+    },
+    {
+      "name": "nghttp2-libs",
+      "version": "1.69.0-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "nodejs",
+      "version": "22.23.2-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "npm",
+      "version": "11.6.4-r0",
+      "declared_license": "Artistic-2.0"
+    },
+    {
+      "name": "pcre2",
+      "version": "10.46-r0",
+      "declared_license": "BSD-3-Clause"
+    },
+    {
+      "name": "py3-packaging",
+      "version": "25.0-r0",
+      "declared_license": "Apache-2.0 AND BSD-2-Clause"
+    },
+    {
+      "name": "py3-packaging-pyc",
+      "version": "25.0-r0",
+      "declared_license": "Apache-2.0 AND BSD-2-Clause"
+    },
+    {
+      "name": "py3-parsing",
+      "version": "3.2.5-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "py3-parsing-pyc",
+      "version": "3.2.5-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "py3-pip",
+      "version": "25.1.1-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "py3-pip-pyc",
+      "version": "25.1.1-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "py3-setuptools",
+      "version": "80.9.0-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "py3-setuptools-pyc",
+      "version": "80.9.0-r0",
+      "declared_license": "MIT"
+    },
+    {
+      "name": "pyc",
+      "version": "3.12.14-r0",
+      "declared_license": "PSF-2.0"
+    },
+    {
+      "name": "python3",
+      "version": "3.12.14-r0",
+      "declared_license": "PSF-2.0"
+    },
+    {
+      "name": "python3-pyc",
+      "version": "3.12.14-r0",
+      "declared_license": "PSF-2.0"
+    },
+    {
+      "name": "python3-pycache-pyc0",
+      "version": "3.12.14-r0",
+      "declared_license": "PSF-2.0"
+    },
+    {
+      "name": "readline",
+      "version": "8.2.13-r1",
+      "declared_license": "GPL-3.0-or-later"
+    },
+    {
+      "name": "scanelf",
+      "version": "1.3.8-r1",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "simdjson",
+      "version": "3.12.0-r0",
+      "declared_license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "simdutf",
+      "version": "7.2.1-r0",
+      "declared_license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "sqlite-libs",
+      "version": "3.49.2-r1",
+      "declared_license": "blessing"
+    },
+    {
+      "name": "ssl_client",
+      "version": "1.37.0-r20",
+      "declared_license": "GPL-2.0-only"
+    },
+    {
+      "name": "tmux",
+      "version": "3.5a-r1",
+      "declared_license": "ISC"
+    },
+    {
+      "name": "vim",
+      "version": "9.1.1566-r0",
+      "declared_license": "Vim"
+    },
+    {
+      "name": "vim-common",
+      "version": "9.1.1566-r0",
+      "declared_license": "Vim"
+    },
+    {
+      "name": "xxd",
+      "version": "9.1.1566-r0",
+      "declared_license": "Vim"
+    },
+    {
+      "name": "xz-libs",
+      "version": "5.8.4-r0",
+      "declared_license": "GPL-2.0-or-later AND 0BSD AND Public-Domain AND LGPL-2.1-or-later"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.2-r0",
+      "declared_license": "Zlib"
+    },
+    {
+      "name": "zstd-libs",
+      "version": "1.5.7-r0",
+      "declared_license": "BSD-3-Clause OR GPL-2.0-or-later"
+    }
+  ],
+  "python": [
+    {
+      "name": "Flask",
+      "version": "3.1.3",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/flask-3.1.3.dist-info/METADATA"
+    },
+    {
+      "name": "Jinja2",
+      "version": "3.1.6",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/jinja2-3.1.6.dist-info/METADATA"
+    },
+    {
+      "name": "MarkupSafe",
+      "version": "3.0.4",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/markupsafe-3.0.4.dist-info/METADATA"
+    },
+    {
+      "name": "PyYAML",
+      "version": "6.0.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/pyyaml-6.0.3.dist-info/METADATA"
+    },
+    {
+      "name": "Werkzeug",
+      "version": "3.1.9",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/werkzeug-3.1.9.dist-info/METADATA"
+    },
+    {
+      "name": "annotated-doc",
+      "version": "0.0.5",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/annotated_doc-0.0.5.dist-info/METADATA"
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/annotated_types-0.8.0.dist-info/METADATA"
+    },
+    {
+      "name": "anyio",
+      "version": "4.15.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/anyio-4.15.1.dist-info/METADATA"
+    },
+    {
+      "name": "autocommand",
+      "version": "2.2.2",
+      "declared_license": "LGPLv3",
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/autocommand-2.2.2.dist-info/METADATA"
+    },
+    {
+      "name": "backports.tarfile",
+      "version": "1.2.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/backports.tarfile-1.2.0.dist-info/METADATA"
+    },
+    {
+      "name": "blinker",
+      "version": "1.9.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/blinker-1.9.0.dist-info/METADATA"
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "declared_license": "MPL-2.0",
+      "metadata_path": "usr/lib/python3.12/site-packages/certifi-2026.7.22.dist-info/METADATA"
+    },
+    {
+      "name": "click",
+      "version": "8.5.0",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/click-8.5.0.dist-info/METADATA"
+    },
+    {
+      "name": "fastapi",
+      "version": "0.142.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/fastapi-0.142.2.dist-info/METADATA"
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/h11-0.16.0.dist-info/METADATA"
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/httpcore-1.0.9.dist-info/METADATA"
+    },
+    {
+      "name": "httptools",
+      "version": "0.8.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/httptools-0.8.0.dist-info/METADATA"
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/httpx-0.28.1.dist-info/METADATA"
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/idna-3.20.dist-info/METADATA"
+    },
+    {
+      "name": "importlib_metadata",
+      "version": "8.0.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/importlib_metadata-8.0.0.dist-info/METADATA"
+    },
+    {
+      "name": "inflect",
+      "version": "7.3.1",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/inflect-7.3.1.dist-info/METADATA"
+    },
+    {
+      "name": "itsdangerous",
+      "version": "2.2.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/itsdangerous-2.2.0.dist-info/METADATA"
+    },
+    {
+      "name": "jaraco.collections",
+      "version": "5.1.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/jaraco.collections-5.1.0.dist-info/METADATA"
+    },
+    {
+      "name": "jaraco.context",
+      "version": "5.3.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/jaraco.context-5.3.0.dist-info/METADATA"
+    },
+    {
+      "name": "jaraco.functools",
+      "version": "4.0.1",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/jaraco.functools-4.0.1.dist-info/METADATA"
+    },
+    {
+      "name": "jaraco.text",
+      "version": "3.12.1",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/jaraco.text-3.12.1.dist-info/METADATA"
+    },
+    {
+      "name": "more-itertools",
+      "version": "10.3.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/more_itertools-10.3.0.dist-info/METADATA"
+    },
+    {
+      "name": "opentelemetry-api",
+      "version": "1.45.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/python3.12/site-packages/opentelemetry_api-1.45.0.dist-info/METADATA"
+    },
+    {
+      "name": "packaging",
+      "version": "25.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/packaging-25.0.dist-info/METADATA"
+    },
+    {
+      "name": "packaging",
+      "version": "24.2",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/packaging-24.2.dist-info/METADATA"
+    },
+    {
+      "name": "pip",
+      "version": "25.1.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/pip-25.1.1.dist-info/METADATA"
+    },
+    {
+      "name": "platformdirs",
+      "version": "4.2.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/platformdirs-4.2.2.dist-info/METADATA"
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.5",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/pydantic-2.13.5.dist-info/METADATA"
+    },
+    {
+      "name": "pydantic_core",
+      "version": "2.46.5",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/pydantic_core-2.46.5.dist-info/METADATA"
+    },
+    {
+      "name": "pyparsing",
+      "version": "3.2.5",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/pyparsing-3.2.5.dist-info/METADATA"
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.4",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/python_dotenv-1.2.4.dist-info/METADATA"
+    },
+    {
+      "name": "seed-app",
+      "version": "0.0.1",
+      "declared_license": "TBD",
+      "metadata_path": "usr/lib/python3.12/site-packages/seed_app-0.0.1.dist-info/METADATA"
+    },
+    {
+      "name": "starlette",
+      "version": "1.7.0",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/starlette-1.7.0.dist-info/METADATA"
+    },
+    {
+      "name": "tomli",
+      "version": "2.0.1",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/tomli-2.0.1.dist-info/METADATA"
+    },
+    {
+      "name": "typeguard",
+      "version": "4.3.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/typeguard-4.3.0.dist-info/METADATA"
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/typing_inspection-0.4.4.dist-info/METADATA"
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.12.2",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/typing_extensions-4.12.2.dist-info/METADATA"
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "declared_license": "PSF-2.0",
+      "metadata_path": "usr/lib/python3.12/site-packages/typing_extensions-4.16.0.dist-info/METADATA"
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.54.0",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/uvicorn-0.54.0.dist-info/METADATA"
+    },
+    {
+      "name": "uvloop",
+      "version": "0.23.0",
+      "declared_license": "MIT License",
+      "metadata_path": "usr/lib/python3.12/site-packages/uvloop-0.23.0.dist-info/METADATA"
+    },
+    {
+      "name": "watchfiles",
+      "version": "1.3.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/python3.12/site-packages/watchfiles-1.3.0.dist-info/METADATA"
+    },
+    {
+      "name": "websockets",
+      "version": "17.2",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/python3.12/site-packages/websockets-17.2.dist-info/METADATA"
+    },
+    {
+      "name": "wheel",
+      "version": "0.45.1",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/wheel-0.45.1.dist-info/METADATA"
+    },
+    {
+      "name": "zipp",
+      "version": "3.19.2",
+      "declared_license": null,
+      "metadata_path": "usr/lib/python3.12/site-packages/setuptools/_vendor/zipp-3.19.2.dist-info/METADATA"
+    }
+  ],
+  "npm": [
+    {
+      "name": "@anthropic-ai/sdk",
+      "version": "0.91.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@anthropic-ai/sdk/package.json"
+    },
+    {
+      "name": "@aws-crypto/crc32",
+      "version": "5.2.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-crypto/crc32/package.json"
+    },
+    {
+      "name": "@aws-crypto/sha256-browser",
+      "version": "5.2.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-crypto/sha256-browser/package.json"
+    },
+    {
+      "name": "@aws-crypto/sha256-js",
+      "version": "5.2.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-crypto/sha256-js/package.json"
+    },
+    {
+      "name": "@aws-crypto/supports-web-crypto",
+      "version": "5.2.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-crypto/supports-web-crypto/package.json"
+    },
+    {
+      "name": "@aws-crypto/util",
+      "version": "5.2.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-crypto/util/package.json"
+    },
+    {
+      "name": "@aws-sdk/client-bedrock-runtime",
+      "version": "3.1048.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/client-bedrock-runtime/package.json"
+    },
+    {
+      "name": "@aws-sdk/core",
+      "version": "3.974.11",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/core/package.json"
+    },
+    {
+      "name": "@aws-sdk/credential-provider-env",
+      "version": "3.972.37",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/credential-provider-env/package.json"
+    },
+    {
+      "name": "@aws-sdk/credential-provider-http",
+      "version": "3.972.39",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/credential-provider-http/package.json"
+    },
+    {
+      "name": "@aws-sdk/credential-provider-ini",
+      "version": "3.972.41",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/credential-provider-ini/package.json"
+    },
+    {
+      "name": "@aws-sdk/credential-provider-login",
+      "version": "3.972.41",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/credential-provider-login/package.json"
+    },
+    {
+      "name": "@aws-sdk/credential-provider-node",
+      "version": "3.972.42",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/credential-provider-node/package.json"
+    },
+    {
+      "name": "@aws-sdk/credential-provider-process",
+      "version": "3.972.37",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/credential-provider-process/package.json"
+    },
+    {
+      "name": "@aws-sdk/credential-provider-sso",
+      "version": "3.972.41",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/credential-provider-sso/package.json"
+    },
+    {
+      "name": "@aws-sdk/credential-provider-web-identity",
+      "version": "3.972.41",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/credential-provider-web-identity/package.json"
+    },
+    {
+      "name": "@aws-sdk/eventstream-handler-node",
+      "version": "3.972.16",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/eventstream-handler-node/package.json"
+    },
+    {
+      "name": "@aws-sdk/middleware-eventstream",
+      "version": "3.972.12",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/middleware-eventstream/package.json"
+    },
+    {
+      "name": "@aws-sdk/middleware-websocket",
+      "version": "3.972.19",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/middleware-websocket/package.json"
+    },
+    {
+      "name": "@aws-sdk/nested-clients",
+      "version": "3.997.9",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/nested-clients/package.json"
+    },
+    {
+      "name": "@aws-sdk/signature-v4-multi-region",
+      "version": "3.996.27",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/signature-v4-multi-region/package.json"
+    },
+    {
+      "name": "@aws-sdk/token-providers",
+      "version": "3.1048.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/token-providers/package.json"
+    },
+    {
+      "name": "@aws-sdk/types",
+      "version": "3.973.8",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/types/package.json"
+    },
+    {
+      "name": "@aws-sdk/util-locate-window",
+      "version": "3.965.5",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/util-locate-window/package.json"
+    },
+    {
+      "name": "@aws-sdk/xml-builder",
+      "version": "3.972.24",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws-sdk/xml-builder/package.json"
+    },
+    {
+      "name": "@aws/lambda-invoke-store",
+      "version": "0.2.4",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@aws/lambda-invoke-store/package.json"
+    },
+    {
+      "name": "@babel/runtime",
+      "version": "7.29.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@babel/runtime/package.json"
+    },
+    {
+      "name": "@earendil-works/pi-agent-core",
+      "version": "0.84.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core/package.json"
+    },
+    {
+      "name": "@earendil-works/pi-ai",
+      "version": "0.84.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/package.json"
+    },
+    {
+      "name": "@earendil-works/pi-client",
+      "version": "0.84.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-client/package.json"
+    },
+    {
+      "name": "@earendil-works/pi-coding-agent",
+      "version": "0.84.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/package.json"
+    },
+    {
+      "name": "@earendil-works/pi-protocol",
+      "version": "0.84.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-protocol/package.json"
+    },
+    {
+      "name": "@earendil-works/pi-telemetry",
+      "version": "0.84.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-telemetry/package.json"
+    },
+    {
+      "name": "@earendil-works/pi-tui",
+      "version": "0.84.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/package.json"
+    },
+    {
+      "name": "@google/genai",
+      "version": "1.52.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@google/genai/package.json"
+    },
+    {
+      "name": "@isaacs/balanced-match",
+      "version": "4.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@isaacs/balanced-match/package.json"
+    },
+    {
+      "name": "@isaacs/brace-expansion",
+      "version": "5.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@isaacs/brace-expansion/package.json"
+    },
+    {
+      "name": "@isaacs/fs-minipass",
+      "version": "4.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@isaacs/fs-minipass/package.json"
+    },
+    {
+      "name": "@isaacs/string-locale-compare",
+      "version": "1.1.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@isaacs/string-locale-compare/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-darwin-arm64",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-darwin-arm64/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-darwin-universal",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-darwin-universal/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-darwin-x64",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-darwin-x64/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-linux-arm64-gnu",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-linux-arm64-gnu/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-linux-arm64-musl",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-linux-arm64-musl/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-linux-riscv64-gnu",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-linux-riscv64-gnu/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-linux-x64-gnu",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-linux-x64-gnu/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-linux-x64-musl",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-linux-x64-musl/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-win32-arm64-msvc",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-win32-arm64-msvc/package.json"
+    },
+    {
+      "name": "@mariozechner/clipboard-win32-x64-msvc",
+      "version": "0.3.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-win32-x64-msvc/package.json"
+    },
+    {
+      "name": "@nodable/entities",
+      "version": "2.1.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@nodable/entities/package.json"
+    },
+    {
+      "name": "@npmcli/agent",
+      "version": "4.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/agent/package.json"
+    },
+    {
+      "name": "@npmcli/arborist",
+      "version": "9.1.8",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/arborist/package.json"
+    },
+    {
+      "name": "@npmcli/config",
+      "version": "10.4.4",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/config/package.json"
+    },
+    {
+      "name": "@npmcli/fs",
+      "version": "5.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/fs/package.json"
+    },
+    {
+      "name": "@npmcli/git",
+      "version": "7.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/git/package.json"
+    },
+    {
+      "name": "@npmcli/installed-package-contents",
+      "version": "4.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/installed-package-contents/package.json"
+    },
+    {
+      "name": "@npmcli/map-workspaces",
+      "version": "5.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/map-workspaces/package.json"
+    },
+    {
+      "name": "@npmcli/metavuln-calculator",
+      "version": "9.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/metavuln-calculator/package.json"
+    },
+    {
+      "name": "@npmcli/name-from-folder",
+      "version": "4.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/name-from-folder/package.json"
+    },
+    {
+      "name": "@npmcli/node-gyp",
+      "version": "5.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/node-gyp/package.json"
+    },
+    {
+      "name": "@npmcli/package-json",
+      "version": "7.0.4",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/package-json/package.json"
+    },
+    {
+      "name": "@npmcli/promise-spawn",
+      "version": "9.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/promise-spawn/package.json"
+    },
+    {
+      "name": "@npmcli/query",
+      "version": "5.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/query/package.json"
+    },
+    {
+      "name": "@npmcli/redact",
+      "version": "4.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/redact/package.json"
+    },
+    {
+      "name": "@npmcli/run-script",
+      "version": "10.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@npmcli/run-script/package.json"
+    },
+    {
+      "name": "@opentelemetry/api",
+      "version": "1.9.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@opentelemetry/api/package.json"
+    },
+    {
+      "name": "@protobufjs/aspromise",
+      "version": "1.1.2",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/aspromise/package.json"
+    },
+    {
+      "name": "@protobufjs/base64",
+      "version": "1.1.2",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/base64/package.json"
+    },
+    {
+      "name": "@protobufjs/codegen",
+      "version": "2.0.5",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/codegen/package.json"
+    },
+    {
+      "name": "@protobufjs/eventemitter",
+      "version": "1.1.1",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/eventemitter/package.json"
+    },
+    {
+      "name": "@protobufjs/fetch",
+      "version": "1.1.1",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/fetch/package.json"
+    },
+    {
+      "name": "@protobufjs/float",
+      "version": "1.0.2",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/float/package.json"
+    },
+    {
+      "name": "@protobufjs/path",
+      "version": "1.1.2",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/path/package.json"
+    },
+    {
+      "name": "@protobufjs/pool",
+      "version": "1.1.0",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/pool/package.json"
+    },
+    {
+      "name": "@protobufjs/utf8",
+      "version": "1.1.1",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@protobufjs/utf8/package.json"
+    },
+    {
+      "name": "@sigstore/bundle",
+      "version": "4.0.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@sigstore/bundle/package.json"
+    },
+    {
+      "name": "@sigstore/core",
+      "version": "3.0.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@sigstore/core/package.json"
+    },
+    {
+      "name": "@sigstore/protobuf-specs",
+      "version": "0.5.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@sigstore/protobuf-specs/package.json"
+    },
+    {
+      "name": "@sigstore/sign",
+      "version": "4.0.1",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@sigstore/sign/package.json"
+    },
+    {
+      "name": "@sigstore/tuf",
+      "version": "4.0.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@sigstore/tuf/package.json"
+    },
+    {
+      "name": "@sigstore/verify",
+      "version": "3.0.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@sigstore/verify/package.json"
+    },
+    {
+      "name": "@silvia-odwyer/photon-node",
+      "version": "0.3.4",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@silvia-odwyer/photon-node/package.json"
+    },
+    {
+      "name": "@smithy/core",
+      "version": "3.24.3",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/core/package.json"
+    },
+    {
+      "name": "@smithy/credential-provider-imds",
+      "version": "4.3.3",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/credential-provider-imds/package.json"
+    },
+    {
+      "name": "@smithy/fetch-http-handler",
+      "version": "5.4.3",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/fetch-http-handler/package.json"
+    },
+    {
+      "name": "@smithy/is-array-buffer",
+      "version": "2.2.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/is-array-buffer/package.json"
+    },
+    {
+      "name": "@smithy/node-http-handler",
+      "version": "4.7.3",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/node-http-handler/package.json"
+    },
+    {
+      "name": "@smithy/signature-v4",
+      "version": "5.4.3",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/signature-v4/package.json"
+    },
+    {
+      "name": "@smithy/types",
+      "version": "4.14.2",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/types/package.json"
+    },
+    {
+      "name": "@smithy/util-buffer-from",
+      "version": "2.2.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/util-buffer-from/package.json"
+    },
+    {
+      "name": "@smithy/util-utf8",
+      "version": "2.3.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@smithy/util-utf8/package.json"
+    },
+    {
+      "name": "@tufjs/canonical-json",
+      "version": "2.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@tufjs/canonical-json/package.json"
+    },
+    {
+      "name": "@tufjs/models",
+      "version": "4.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@tufjs/models/package.json"
+    },
+    {
+      "name": "@types/node",
+      "version": "22.19.19",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@types/node/package.json"
+    },
+    {
+      "name": "@types/retry",
+      "version": "0.12.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/p-retry/node_modules/@types/retry/package.json"
+    },
+    {
+      "name": "abbrev",
+      "version": "4.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/abbrev/package.json"
+    },
+    {
+      "name": "agent-base",
+      "version": "7.1.4",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/agent-base/package.json"
+    },
+    {
+      "name": "agent-base",
+      "version": "7.1.4",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/agent-base/package.json"
+    },
+    {
+      "name": "ansi-regex",
+      "version": "5.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/ansi-regex/package.json"
+    },
+    {
+      "name": "aproba",
+      "version": "2.1.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/aproba/package.json"
+    },
+    {
+      "name": "archy",
+      "version": "1.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/archy/package.json"
+    },
+    {
+      "name": "balanced-match",
+      "version": "1.0.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/balanced-match/package.json"
+    },
+    {
+      "name": "balanced-match",
+      "version": "4.0.4",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/balanced-match/package.json"
+    },
+    {
+      "name": "base64-js",
+      "version": "1.5.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/base64-js/package.json"
+    },
+    {
+      "name": "bignumber.js",
+      "version": "9.3.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/bignumber.js/package.json"
+    },
+    {
+      "name": "bin-links",
+      "version": "6.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/bin-links/package.json"
+    },
+    {
+      "name": "binary-extensions",
+      "version": "3.1.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/binary-extensions/package.json"
+    },
+    {
+      "name": "bowser",
+      "version": "2.14.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/bowser/package.json"
+    },
+    {
+      "name": "brace-expansion",
+      "version": "2.0.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+    },
+    {
+      "name": "brace-expansion",
+      "version": "5.0.9",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion/package.json"
+    },
+    {
+      "name": "buffer-equal-constant-time",
+      "version": "1.0.1",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/buffer-equal-constant-time/package.json"
+    },
+    {
+      "name": "cacache",
+      "version": "20.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/cacache/package.json"
+    },
+    {
+      "name": "chalk",
+      "version": "5.6.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/chalk/package.json"
+    },
+    {
+      "name": "chalk",
+      "version": "5.6.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/chalk/package.json"
+    },
+    {
+      "name": "chownr",
+      "version": "3.0.0",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/chownr/package.json"
+    },
+    {
+      "name": "ci-info",
+      "version": "4.3.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/ci-info/package.json"
+    },
+    {
+      "name": "cidr-regex",
+      "version": "5.0.1",
+      "declared_license": "BSD-2-Clause",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/cidr-regex/package.json"
+    },
+    {
+      "name": "cli-columns",
+      "version": "4.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/cli-columns/package.json"
+    },
+    {
+      "name": "cmd-shim",
+      "version": "8.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/cmd-shim/package.json"
+    },
+    {
+      "name": "common-ancestor-path",
+      "version": "1.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/common-ancestor-path/package.json"
+    },
+    {
+      "name": "cross-spawn",
+      "version": "7.0.6",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/cross-spawn/package.json"
+    },
+    {
+      "name": "cssesc",
+      "version": "3.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/cssesc/package.json"
+    },
+    {
+      "name": "data-uri-to-buffer",
+      "version": "4.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/data-uri-to-buffer/package.json"
+    },
+    {
+      "name": "debug",
+      "version": "4.4.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/debug/package.json"
+    },
+    {
+      "name": "debug",
+      "version": "4.4.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/debug/package.json"
+    },
+    {
+      "name": "diff",
+      "version": "8.0.2",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/diff/package.json"
+    },
+    {
+      "name": "diff",
+      "version": "8.0.4",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/diff/package.json"
+    },
+    {
+      "name": "ecdsa-sig-formatter",
+      "version": "1.0.11",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/ecdsa-sig-formatter/package.json"
+    },
+    {
+      "name": "emoji-regex",
+      "version": "8.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/emoji-regex/package.json"
+    },
+    {
+      "name": "encoding",
+      "version": "0.1.13",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/encoding/package.json"
+    },
+    {
+      "name": "env-paths",
+      "version": "2.2.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/env-paths/package.json"
+    },
+    {
+      "name": "err-code",
+      "version": "2.0.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/err-code/package.json"
+    },
+    {
+      "name": "exponential-backoff",
+      "version": "3.1.3",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/exponential-backoff/package.json"
+    },
+    {
+      "name": "extend",
+      "version": "3.0.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/extend/package.json"
+    },
+    {
+      "name": "fast-xml-builder",
+      "version": "1.2.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/fast-xml-builder/package.json"
+    },
+    {
+      "name": "fast-xml-parser",
+      "version": "5.7.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/fast-xml-parser/package.json"
+    },
+    {
+      "name": "fastest-levenshtein",
+      "version": "1.0.16",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/fastest-levenshtein/package.json"
+    },
+    {
+      "name": "fdir",
+      "version": "6.5.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/tinyglobby/node_modules/fdir/package.json"
+    },
+    {
+      "name": "fetch-blob",
+      "version": "3.2.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/fetch-blob/package.json"
+    },
+    {
+      "name": "formdata-polyfill",
+      "version": "4.0.10",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/formdata-polyfill/package.json"
+    },
+    {
+      "name": "fs-minipass",
+      "version": "3.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/fs-minipass/package.json"
+    },
+    {
+      "name": "gaxios",
+      "version": "7.1.4",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/gaxios/package.json"
+    },
+    {
+      "name": "gcp-metadata",
+      "version": "8.1.2",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/gcp-metadata/package.json"
+    },
+    {
+      "name": "get-east-asian-width",
+      "version": "1.6.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/get-east-asian-width/package.json"
+    },
+    {
+      "name": "glob",
+      "version": "13.0.0",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/glob/package.json"
+    },
+    {
+      "name": "glob",
+      "version": "13.0.6",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/glob/package.json"
+    },
+    {
+      "name": "google-auth-library",
+      "version": "10.6.2",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/google-auth-library/package.json"
+    },
+    {
+      "name": "google-logging-utils",
+      "version": "1.1.3",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/google-logging-utils/package.json"
+    },
+    {
+      "name": "graceful-fs",
+      "version": "4.2.11",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/graceful-fs/package.json"
+    },
+    {
+      "name": "graceful-fs",
+      "version": "4.2.11",
+      "declared_license": "ISC",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/graceful-fs/package.json"
+    },
+    {
+      "name": "grok-mermaid",
+      "version": "0.2.2",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/grok-mermaid/package.json"
+    },
+    {
+      "name": "highlight.js",
+      "version": "10.7.3",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/highlight.js/package.json"
+    },
+    {
+      "name": "hosted-git-info",
+      "version": "9.0.2",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/hosted-git-info/package.json"
+    },
+    {
+      "name": "hosted-git-info",
+      "version": "9.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/hosted-git-info/package.json"
+    },
+    {
+      "name": "http-cache-semantics",
+      "version": "4.2.0",
+      "declared_license": "BSD-2-Clause",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/http-cache-semantics/package.json"
+    },
+    {
+      "name": "http-proxy-agent",
+      "version": "7.0.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/http-proxy-agent/package.json"
+    },
+    {
+      "name": "http-proxy-agent",
+      "version": "7.0.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/http-proxy-agent/package.json"
+    },
+    {
+      "name": "https-proxy-agent",
+      "version": "7.0.6",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/https-proxy-agent/package.json"
+    },
+    {
+      "name": "https-proxy-agent",
+      "version": "7.0.6",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/https-proxy-agent/package.json"
+    },
+    {
+      "name": "iconv-lite",
+      "version": "0.6.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/iconv-lite/package.json"
+    },
+    {
+      "name": "ignore",
+      "version": "7.0.5",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/ignore/package.json"
+    },
+    {
+      "name": "ignore-walk",
+      "version": "8.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/ignore-walk/package.json"
+    },
+    {
+      "name": "imurmurhash",
+      "version": "0.1.4",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/imurmurhash/package.json"
+    },
+    {
+      "name": "ini",
+      "version": "6.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/ini/package.json"
+    },
+    {
+      "name": "init-package-json",
+      "version": "8.2.4",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/init-package-json/package.json"
+    },
+    {
+      "name": "ip-address",
+      "version": "10.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/ip-address/package.json"
+    },
+    {
+      "name": "ip-regex",
+      "version": "5.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/ip-regex/package.json"
+    },
+    {
+      "name": "is-cidr",
+      "version": "6.0.1",
+      "declared_license": "BSD-2-Clause",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/is-cidr/package.json"
+    },
+    {
+      "name": "is-fullwidth-code-point",
+      "version": "3.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/is-fullwidth-code-point/package.json"
+    },
+    {
+      "name": "isexe",
+      "version": "3.1.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/isexe/package.json"
+    },
+    {
+      "name": "isexe",
+      "version": "2.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/isexe/package.json"
+    },
+    {
+      "name": "jiti",
+      "version": "2.7.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/package.json"
+    },
+    {
+      "name": "json-bigint",
+      "version": "1.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/json-bigint/package.json"
+    },
+    {
+      "name": "json-parse-even-better-errors",
+      "version": "5.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/json-parse-even-better-errors/package.json"
+    },
+    {
+      "name": "json-schema-to-ts",
+      "version": "3.1.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/json-schema-to-ts/package.json"
+    },
+    {
+      "name": "json-stringify-nice",
+      "version": "1.1.4",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/json-stringify-nice/package.json"
+    },
+    {
+      "name": "jsonparse",
+      "version": "1.3.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/jsonparse/package.json"
+    },
+    {
+      "name": "just-diff",
+      "version": "6.0.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/just-diff/package.json"
+    },
+    {
+      "name": "just-diff-apply",
+      "version": "5.5.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/just-diff-apply/package.json"
+    },
+    {
+      "name": "jwa",
+      "version": "2.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jwa/package.json"
+    },
+    {
+      "name": "jws",
+      "version": "4.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jws/package.json"
+    },
+    {
+      "name": "libnpmaccess",
+      "version": "10.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmaccess/package.json"
+    },
+    {
+      "name": "libnpmdiff",
+      "version": "8.0.11",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmdiff/package.json"
+    },
+    {
+      "name": "libnpmexec",
+      "version": "10.1.10",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmexec/package.json"
+    },
+    {
+      "name": "libnpmfund",
+      "version": "7.0.11",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmfund/package.json"
+    },
+    {
+      "name": "libnpmorg",
+      "version": "8.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmorg/package.json"
+    },
+    {
+      "name": "libnpmpack",
+      "version": "9.0.11",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmpack/package.json"
+    },
+    {
+      "name": "libnpmpublish",
+      "version": "11.1.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmpublish/package.json"
+    },
+    {
+      "name": "libnpmsearch",
+      "version": "9.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmsearch/package.json"
+    },
+    {
+      "name": "libnpmteam",
+      "version": "8.0.2",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmteam/package.json"
+    },
+    {
+      "name": "libnpmversion",
+      "version": "8.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/libnpmversion/package.json"
+    },
+    {
+      "name": "long",
+      "version": "5.3.2",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/long/package.json"
+    },
+    {
+      "name": "lru-cache",
+      "version": "11.2.2",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/lru-cache/package.json"
+    },
+    {
+      "name": "lru-cache",
+      "version": "11.4.0",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/lru-cache/package.json"
+    },
+    {
+      "name": "make-fetch-happen",
+      "version": "15.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/make-fetch-happen/package.json"
+    },
+    {
+      "name": "marked",
+      "version": "18.0.5",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/marked/package.json"
+    },
+    {
+      "name": "minimatch",
+      "version": "9.0.5",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@tufjs/models/node_modules/minimatch/package.json"
+    },
+    {
+      "name": "minimatch",
+      "version": "10.1.1",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minimatch/package.json"
+    },
+    {
+      "name": "minimatch",
+      "version": "10.2.5",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/minimatch/package.json"
+    },
+    {
+      "name": "minipass",
+      "version": "3.3.6",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass-flush/node_modules/minipass/package.json"
+    },
+    {
+      "name": "minipass",
+      "version": "3.3.6",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass-pipeline/node_modules/minipass/package.json"
+    },
+    {
+      "name": "minipass",
+      "version": "3.3.6",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass-sized/node_modules/minipass/package.json"
+    },
+    {
+      "name": "minipass",
+      "version": "7.1.2",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass/package.json"
+    },
+    {
+      "name": "minipass",
+      "version": "7.1.3",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/minipass/package.json"
+    },
+    {
+      "name": "minipass-collect",
+      "version": "2.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass-collect/package.json"
+    },
+    {
+      "name": "minipass-fetch",
+      "version": "5.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass-fetch/package.json"
+    },
+    {
+      "name": "minipass-flush",
+      "version": "1.0.5",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass-flush/package.json"
+    },
+    {
+      "name": "minipass-pipeline",
+      "version": "1.2.4",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass-pipeline/package.json"
+    },
+    {
+      "name": "minipass-sized",
+      "version": "1.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minipass-sized/package.json"
+    },
+    {
+      "name": "minizlib",
+      "version": "3.1.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/minizlib/package.json"
+    },
+    {
+      "name": "ms",
+      "version": "2.1.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/ms/package.json"
+    },
+    {
+      "name": "ms",
+      "version": "2.1.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/ms/package.json"
+    },
+    {
+      "name": "mute-stream",
+      "version": "3.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/mute-stream/package.json"
+    },
+    {
+      "name": "negotiator",
+      "version": "1.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/negotiator/package.json"
+    },
+    {
+      "name": "node-domexception",
+      "version": "1.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/node-domexception/package.json"
+    },
+    {
+      "name": "node-fetch",
+      "version": "3.3.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/node-fetch/package.json"
+    },
+    {
+      "name": "node-gyp",
+      "version": "12.1.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/node-gyp/package.json"
+    },
+    {
+      "name": "nopt",
+      "version": "9.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/nopt/package.json"
+    },
+    {
+      "name": "npm",
+      "version": "11.6.4",
+      "declared_license": "Artistic-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/package.json"
+    },
+    {
+      "name": "npm-audit-report",
+      "version": "7.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-audit-report/package.json"
+    },
+    {
+      "name": "npm-bundled",
+      "version": "5.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-bundled/package.json"
+    },
+    {
+      "name": "npm-install-checks",
+      "version": "8.0.0",
+      "declared_license": "BSD-2-Clause",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-install-checks/package.json"
+    },
+    {
+      "name": "npm-normalize-package-bin",
+      "version": "5.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-normalize-package-bin/package.json"
+    },
+    {
+      "name": "npm-package-arg",
+      "version": "13.0.2",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-package-arg/package.json"
+    },
+    {
+      "name": "npm-packlist",
+      "version": "10.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-packlist/package.json"
+    },
+    {
+      "name": "npm-pick-manifest",
+      "version": "11.0.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-pick-manifest/package.json"
+    },
+    {
+      "name": "npm-profile",
+      "version": "12.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-profile/package.json"
+    },
+    {
+      "name": "npm-registry-fetch",
+      "version": "19.1.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-registry-fetch/package.json"
+    },
+    {
+      "name": "npm-user-validate",
+      "version": "4.0.0",
+      "declared_license": "BSD-2-Clause",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/npm-user-validate/package.json"
+    },
+    {
+      "name": "openai",
+      "version": "6.40.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/openai/package.json"
+    },
+    {
+      "name": "p-map",
+      "version": "7.0.4",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/p-map/package.json"
+    },
+    {
+      "name": "p-retry",
+      "version": "4.6.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/p-retry/package.json"
+    },
+    {
+      "name": "pacote",
+      "version": "21.0.4",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/pacote/package.json"
+    },
+    {
+      "name": "parse-conflict-json",
+      "version": "5.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/parse-conflict-json/package.json"
+    },
+    {
+      "name": "partial-json",
+      "version": "0.1.7",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/partial-json/package.json"
+    },
+    {
+      "name": "path-expression-matcher",
+      "version": "1.5.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/path-expression-matcher/package.json"
+    },
+    {
+      "name": "path-key",
+      "version": "3.1.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/path-key/package.json"
+    },
+    {
+      "name": "path-scurry",
+      "version": "2.0.0",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/path-scurry/package.json"
+    },
+    {
+      "name": "path-scurry",
+      "version": "2.0.2",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/path-scurry/package.json"
+    },
+    {
+      "name": "pi-extension-custom-provider-anthropic",
+      "version": "0.84.2",
+      "declared_license": null,
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/examples/extensions/custom-provider-anthropic/package.json"
+    },
+    {
+      "name": "pi-extension-custom-provider-gitlab-duo",
+      "version": "0.84.2",
+      "declared_license": null,
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/examples/extensions/custom-provider-gitlab-duo/package.json"
+    },
+    {
+      "name": "pi-extension-gondolin",
+      "version": "0.84.2",
+      "declared_license": null,
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/examples/extensions/gondolin/package.json"
+    },
+    {
+      "name": "pi-extension-sandbox",
+      "version": "1.14.2",
+      "declared_license": null,
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/examples/extensions/sandbox/package.json"
+    },
+    {
+      "name": "pi-extension-with-deps",
+      "version": "0.84.2",
+      "declared_license": null,
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/examples/extensions/with-deps/package.json"
+    },
+    {
+      "name": "picomatch",
+      "version": "4.0.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/tinyglobby/node_modules/picomatch/package.json"
+    },
+    {
+      "name": "postcss-selector-parser",
+      "version": "7.1.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/postcss-selector-parser/package.json"
+    },
+    {
+      "name": "proc-log",
+      "version": "5.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/@sigstore/sign/node_modules/proc-log/package.json"
+    },
+    {
+      "name": "proc-log",
+      "version": "6.1.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/proc-log/package.json"
+    },
+    {
+      "name": "proggy",
+      "version": "4.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/proggy/package.json"
+    },
+    {
+      "name": "promise-all-reject-late",
+      "version": "1.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/promise-all-reject-late/package.json"
+    },
+    {
+      "name": "promise-call-limit",
+      "version": "3.0.2",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/promise-call-limit/package.json"
+    },
+    {
+      "name": "promise-retry",
+      "version": "2.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/promise-retry/package.json"
+    },
+    {
+      "name": "promzard",
+      "version": "3.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/promzard/package.json"
+    },
+    {
+      "name": "proper-lockfile",
+      "version": "4.1.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/proper-lockfile/package.json"
+    },
+    {
+      "name": "protobufjs",
+      "version": "7.6.5",
+      "declared_license": "BSD-3-Clause",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/protobufjs/package.json"
+    },
+    {
+      "name": "qrcode-terminal",
+      "version": "0.12.0",
+      "declared_license": null,
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/qrcode-terminal/package.json"
+    },
+    {
+      "name": "read",
+      "version": "5.0.1",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/read/package.json"
+    },
+    {
+      "name": "read-cmd-shim",
+      "version": "6.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/read-cmd-shim/package.json"
+    },
+    {
+      "name": "retry",
+      "version": "0.12.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/retry/package.json"
+    },
+    {
+      "name": "retry",
+      "version": "0.12.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/proper-lockfile/node_modules/retry/package.json"
+    },
+    {
+      "name": "retry",
+      "version": "0.13.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/retry/package.json"
+    },
+    {
+      "name": "safe-buffer",
+      "version": "5.2.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/safe-buffer/package.json"
+    },
+    {
+      "name": "safer-buffer",
+      "version": "2.1.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/safer-buffer/package.json"
+    },
+    {
+      "name": "semver",
+      "version": "7.7.3",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/semver/package.json"
+    },
+    {
+      "name": "semver",
+      "version": "7.8.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/semver/package.json"
+    },
+    {
+      "name": "shebang-command",
+      "version": "2.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/shebang-command/package.json"
+    },
+    {
+      "name": "shebang-regex",
+      "version": "3.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/shebang-regex/package.json"
+    },
+    {
+      "name": "signal-exit",
+      "version": "4.1.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/signal-exit/package.json"
+    },
+    {
+      "name": "signal-exit",
+      "version": "3.0.7",
+      "declared_license": "ISC",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/signal-exit/package.json"
+    },
+    {
+      "name": "sigstore",
+      "version": "4.0.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/sigstore/package.json"
+    },
+    {
+      "name": "smart-buffer",
+      "version": "4.2.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/smart-buffer/package.json"
+    },
+    {
+      "name": "socks",
+      "version": "2.8.7",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/socks/package.json"
+    },
+    {
+      "name": "socks-proxy-agent",
+      "version": "8.0.5",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/socks-proxy-agent/package.json"
+    },
+    {
+      "name": "spdx-correct",
+      "version": "3.2.0",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/spdx-correct/package.json"
+    },
+    {
+      "name": "spdx-exceptions",
+      "version": "2.5.0",
+      "declared_license": "CC-BY-3.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/spdx-exceptions/package.json"
+    },
+    {
+      "name": "spdx-expression-parse",
+      "version": "3.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/spdx-correct/node_modules/spdx-expression-parse/package.json"
+    },
+    {
+      "name": "spdx-expression-parse",
+      "version": "4.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/spdx-expression-parse/package.json"
+    },
+    {
+      "name": "spdx-expression-parse",
+      "version": "3.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/validate-npm-package-license/node_modules/spdx-expression-parse/package.json"
+    },
+    {
+      "name": "spdx-license-ids",
+      "version": "3.0.22",
+      "declared_license": "CC0-1.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/spdx-license-ids/package.json"
+    },
+    {
+      "name": "ssri",
+      "version": "13.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/ssri/package.json"
+    },
+    {
+      "name": "string-width",
+      "version": "4.2.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/string-width/package.json"
+    },
+    {
+      "name": "strip-ansi",
+      "version": "6.0.1",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/strip-ansi/package.json"
+    },
+    {
+      "name": "strnum",
+      "version": "2.3.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/strnum/package.json"
+    },
+    {
+      "name": "supports-color",
+      "version": "10.2.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/supports-color/package.json"
+    },
+    {
+      "name": "tar",
+      "version": "7.5.2",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/tar/package.json"
+    },
+    {
+      "name": "text-table",
+      "version": "0.2.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/text-table/package.json"
+    },
+    {
+      "name": "tiny-relative-date",
+      "version": "2.0.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/tiny-relative-date/package.json"
+    },
+    {
+      "name": "tinyglobby",
+      "version": "0.2.15",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/tinyglobby/package.json"
+    },
+    {
+      "name": "treeverse",
+      "version": "3.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/treeverse/package.json"
+    },
+    {
+      "name": "ts-algebra",
+      "version": "2.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/ts-algebra/package.json"
+    },
+    {
+      "name": "tslib",
+      "version": "2.8.1",
+      "declared_license": "0BSD",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/tslib/package.json"
+    },
+    {
+      "name": "tuf-js",
+      "version": "4.0.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/tuf-js/package.json"
+    },
+    {
+      "name": "typebox",
+      "version": "1.3.7",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/package.json"
+    },
+    {
+      "name": "undici",
+      "version": "8.9.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici/package.json"
+    },
+    {
+      "name": "undici-types",
+      "version": "6.21.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici-types/package.json"
+    },
+    {
+      "name": "unique-filename",
+      "version": "5.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/unique-filename/package.json"
+    },
+    {
+      "name": "unique-slug",
+      "version": "6.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/unique-slug/package.json"
+    },
+    {
+      "name": "util-deprecate",
+      "version": "1.0.2",
+      "declared_license": "MIT",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/util-deprecate/package.json"
+    },
+    {
+      "name": "validate-npm-package-license",
+      "version": "3.0.4",
+      "declared_license": "Apache-2.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/validate-npm-package-license/package.json"
+    },
+    {
+      "name": "validate-npm-package-name",
+      "version": "7.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/validate-npm-package-name/package.json"
+    },
+    {
+      "name": "walk-up-path",
+      "version": "4.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/walk-up-path/package.json"
+    },
+    {
+      "name": "web-streams-polyfill",
+      "version": "3.3.3",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/web-streams-polyfill/package.json"
+    },
+    {
+      "name": "which",
+      "version": "6.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/which/package.json"
+    },
+    {
+      "name": "which",
+      "version": "2.0.2",
+      "declared_license": "ISC",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/which/package.json"
+    },
+    {
+      "name": "write-file-atomic",
+      "version": "7.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/write-file-atomic/package.json"
+    },
+    {
+      "name": "ws",
+      "version": "8.21.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/ws/package.json"
+    },
+    {
+      "name": "xml-naming",
+      "version": "0.1.0",
+      "declared_license": "MIT",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/xml-naming/package.json"
+    },
+    {
+      "name": "yallist",
+      "version": "5.0.0",
+      "declared_license": "BlueOak-1.0.0",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/tar/node_modules/yallist/package.json"
+    },
+    {
+      "name": "yallist",
+      "version": "4.0.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/lib/node_modules/npm/node_modules/yallist/package.json"
+    },
+    {
+      "name": "yaml",
+      "version": "2.9.0",
+      "declared_license": "ISC",
+      "metadata_path": "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/yaml/package.json"
+    }
+  ]
+}
