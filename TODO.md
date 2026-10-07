@@ -18,6 +18,27 @@ release blockers below remain.
 
 ---
 
+## Google Play public beta preparation
+
+Preparation branch: `app-store-preparation`; see
+[`execution report`](docs/reports/google-play-preparation.md) and
+[`readiness audit`](docs/release/google-play-readiness.md).
+
+- [x] API 36 / compatible pinned tooling; unsigned AAB build and source-metadata ABI filtering.
+- [x] 25 artifact fixtures, 373 JVM tests per variant, both lint/build variants,
+  instrumentation compilation, 310 Python tests and scoped static checks.
+- [x] bundletool validation/delivered asset storage and representative ARM64
+  compressed download estimate (147,384,690 bytes); no Google approval implied.
+- [x] License/provenance inventory and owner-review privacy/Data Safety/listing drafts.
+- [ ] Termux JNI 16 KB alignment (actual inspector fails), then full 16 KB runtime acceptance.
+- [ ] Resolve unrestricted execution versus Play executable-code policy; no silent isolation.
+- [ ] AI safeguards/in-app reporting and foreground-service suitability/timeout handling.
+- [ ] Owner licensing/source obligations, public/in-app privacy, provider/telemetry/deletion review.
+- [ ] Signing/account/testing/publication decisions and signed new-package API 35/36 device acceptance.
+
+No upload or phone/data change performed. These are release gates, not optional
+polish; completing local preparation does not make the beta publishable.
+
 ## Android namespace identity
 
 - [x] User-approved namespace and application ID: `cz.trety.seed`; source trees

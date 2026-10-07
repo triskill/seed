@@ -31,9 +31,18 @@ storage is not a guarantee of encryption or isolation from agent execution.
 ### Google Play beta preparation
 
 Work is tracked in the [execution plan](docs/plans/2026-10-07-app-store-preparation.md)
-and [readiness audit](docs/release/google-play-readiness.md). Licensing, signing,
-policy eligibility, privacy and actual release-device acceptance remain gates;
-unsigned bundle builds and draft listing materials are not publication approval.
+and [readiness audit](docs/release/google-play-readiness.md). See the
+[execution report](docs/reports/google-play-preparation.md) for measured results.
+
+```sh
+make bundle-release      # unsigned AAB, existing generated runtime required
+make verify-play-tools   # artifact inspector regression fixtures
+make check-play-artifact # default ARM64 beta AAB; fails on remaining Termux 16 KB gate
+```
+
+Use `PLAY_ARTIFACT=/path/to/app.apk` and `PLAY_ABI=x86_64` for explicit alternatives.
+Licensing, signing, policy eligibility, privacy and actual release-device acceptance
+remain gates; unsigned bundles and draft listing materials are not publication approval.
 
 ## Android identity and existing data
 

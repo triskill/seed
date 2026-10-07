@@ -46,8 +46,11 @@ boundaries. Do not label talloc LGPL based on general upstream knowledge.
 
 ## Android release declarations
 
-Source: `android/app/build.gradle.kts`. Build-tool upgrades are separately recorded
-in the preparation report; build tools are not all distributed app dependencies.
+Source: `android/app/build.gradle.kts`. The resolved release graph is retained in
+`android-release-dependencies.txt`; artifact hashes and measured inspection results
+are in `artifact-measurements.json`. A graph is not exact per-file NOTICE clearance.
+Build-tool upgrades are separately recorded in the preparation report; build tools
+are not all distributed app dependencies.
 
 | Family | Declared version |
 | --- | --- |

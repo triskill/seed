@@ -1,0 +1,174 @@
+{
+  "review_date": "2026-10-07",
+  "scope": "Unsigned local artifacts and synthetic ARM64/API36/420dpi/en device specification; not Google approval, signed release, installation or 16KB runtime acceptance.",
+  "package": "cz.trety.seed",
+  "target_sdk": 36,
+  "min_sdk": 26,
+  "aab": {
+    "bytes": 147577471,
+    "sha256": "abe74d0b477c884a4316bccc0d804c080565239ba848ff6d462ef66ba7292f6f"
+  },
+  "unsigned_apk": {
+    "bytes": 403939107,
+    "sha256": "d49503d4610807e7163c0cf9483ea4ca81bf3bb58cb9f1ff2997631f0afe6c88"
+  },
+  "bundletool": {
+    "version": "1.18.3",
+    "jar_sha256": "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29",
+    "source": "https://github.com/google/bundletool/releases/tag/1.18.3",
+    "validation": "passed",
+    "apk_set_signed": false,
+    "synthetic_device": {
+      "supportedAbis": [
+        "arm64-v8a"
+      ],
+      "supportedLocales": [
+        "en"
+      ],
+      "screenDensity": 420,
+      "sdkVersion": 36
+    },
+    "estimated_download_bytes_min": 147384690,
+    "estimated_download_bytes_max": 147384690,
+    "delivered_assets": [
+      {
+        "split": "splits/base-master.apk",
+        "asset": "assets/linux/rootfs.tar",
+        "compression": 0,
+        "bytes": 389949952
+      },
+      {
+        "split": "splits/base-master.apk",
+        "asset": "assets/linux/seed_version.json",
+        "compression": 0,
+        "bytes": 160
+      }
+    ]
+  },
+  "artifact_inventory": {
+    "ok": false,
+    "artifact_bytes": 147577471,
+    "format": "AAB",
+    "expected_abi": "arm64-v8a",
+    "abis": [
+      "arm64-v8a"
+    ],
+    "rootfs": {
+      "bytes": 389949952,
+      "compressed_bytes": 133875410,
+      "compression_method": 8,
+      "compression_ratio": 2.9127825042702016
+    },
+    "runtime_metadata": {
+      "bytes": 160,
+      "compressed_bytes": 116,
+      "compression_method": 8,
+      "compression_ratio": 1.3793103448275863
+    },
+    "native_libraries": [
+      {
+        "entry": "base/lib/arm64-v8a/libandroid-shmem.so",
+        "bytes": 14432,
+        "load_segments": [
+          {
+            "offset": 0,
+            "virtual_address": 0,
+            "alignment": 16384
+          },
+          {
+            "offset": 11712,
+            "virtual_address": 28096,
+            "alignment": 16384
+          },
+          {
+            "offset": 12472,
+            "virtual_address": 45240,
+            "alignment": 16384
+          }
+        ]
+      },
+      {
+        "entry": "base/lib/arm64-v8a/libproot-loader.so",
+        "bytes": 18136,
+        "load_segments": [
+          {
+            "offset": 0,
+            "virtual_address": 2097152,
+            "alignment": 16384
+          },
+          {
+            "offset": 16384,
+            "virtual_address": 137438953472,
+            "alignment": 16384
+          }
+        ]
+      },
+      {
+        "entry": "base/lib/arm64-v8a/libproot.so",
+        "bytes": 244088,
+        "load_segments": [
+          {
+            "offset": 0,
+            "virtual_address": 0,
+            "alignment": 16384
+          },
+          {
+            "offset": 229056,
+            "virtual_address": 245440,
+            "alignment": 16384
+          },
+          {
+            "offset": 234832,
+            "virtual_address": 267600,
+            "alignment": 16384
+          }
+        ]
+      },
+      {
+        "entry": "base/lib/arm64-v8a/libtalloc.so",
+        "bytes": 31440,
+        "load_segments": [
+          {
+            "offset": 0,
+            "virtual_address": 0,
+            "alignment": 16384
+          },
+          {
+            "offset": 14056,
+            "virtual_address": 30440,
+            "alignment": 16384
+          },
+          {
+            "offset": 28400,
+            "virtual_address": 61168,
+            "alignment": 16384
+          },
+          {
+            "offset": 29392,
+            "virtual_address": 78544,
+            "alignment": 16384
+          }
+        ]
+      },
+      {
+        "entry": "base/lib/arm64-v8a/libtermux.so",
+        "bytes": 9928
+      }
+    ],
+    "errors": [
+      {
+        "code": "invalid_native_elf_or_alignment",
+        "entry": "base/lib/arm64-v8a/libtermux.so",
+        "reason": "PT_LOAD not compatible with 16 KiB alignment"
+      }
+    ],
+    "limitations": [
+      "Local resource guardrails (2 GiB artifact, 32 MiB directory, 20000 entries, 128 native files, 256 MiB native reads) are not Play limits; ZIP64/multidisk archives are unsupported.",
+      "Path-only credential/debris scan: not a complete credential scan or provenance audit; rootfs contents are not read.",
+      "No manifest identity/protobuf validation, signing validation, or Play approval determination.",
+      "Raw ZIP sizes are not Play download/delivery sizes; AAB delivery requires bundletool/Play Console validation.",
+      "AAB container asset compression is independent of delivered APK compression: BundleConfig.pb compression globs and delivered APK openFd assets must be verified using bundletool; this checker does not parse BundleConfig.pb.",
+      "ELF segment checks do not establish delivered APK ZIP alignment or physical 16 KiB device runtime compatibility."
+    ]
+  }
+}
