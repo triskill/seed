@@ -26,10 +26,11 @@ ANDROID_HOME ?= $(HOME)/android-sdk
 export ANDROID_HOME
 
 # Versions pinned to match the app's build.gradle.kts.
-ANDROID_PLATFORM    := android-34
-ANDROID_BUILD_TOOLS := 34.0.0
+ANDROID_PLATFORM    := android-36
+ANDROID_BUILD_TOOLS := 35.0.0
 # Local development uses the accelerated native x86_64 Android image. ARM64
 # remains available through `make run-phone-test` for physical-device testing.
+# Keep API 34 deliberately for older-device compatibility testing.
 SYSTEM_IMAGE       := system-images;android-34;default;x86_64
 SYSTEM_IMAGE_ABI   := $(word 4,$(subst ;, ,$(SYSTEM_IMAGE)))
 SYSTEM_IMAGE_SYS_DIR := $(subst ;,/,$(SYSTEM_IMAGE))/
@@ -72,6 +73,11 @@ ADB        := $(ANDROID_HOME)/platform-tools/adb
 
 # App identity (mirrors build.gradle.kts).
 APK          := android/app/build/outputs/apk/debug/app-debug.apk
+# Unsigned release output: signing configuration and private keys are not set here.
+PLAY_BUNDLE ?= android/app/build/outputs/bundle/release/app-release.aab
+PLAY_ARTIFACT ?= $(PLAY_BUNDLE)
+# Play beta ABI is independent of the local AVD/runtime generation defaults.
+PLAY_ABI ?= arm64-v8a
 APP_ID       := cz.trety.seed
 APP_ACTIVITY := cz.trety.seed.MainActivity
 
@@ -111,6 +117,17 @@ build:  ## build the debug APK
 	@echo ">> Building debug APK..."
 	@cd android && ./gradlew :app:assembleDebug
 	@echo ">> APK ready: $(APK)"
+
+.PHONY: bundle-release check-play-artifact verify-play-tools
+bundle-release:  ## build unsigned release AAB without generating runtime assets
+	@cd android && ./gradlew :app:bundleRelease
+	@echo ">> Unsigned bundle ready: $(PLAY_BUNDLE)"
+
+check-play-artifact:  ## inspect Play APK/AAB for the beta ABI and release contract
+	@python3 scripts/check-play-artifact.py "$(PLAY_ARTIFACT)" --expected-abi "$(PLAY_ABI)"
+
+verify-play-tools:  ## run Play artifact checker fixture tests (no device)
+	@python3 -m unittest discover -s scripts/tests -p 'test_play_artifact.py'
 
 .PHONY: runtime
 runtime: override export RUNTIME_ARCH := $(value RUNTIME_ARCH)

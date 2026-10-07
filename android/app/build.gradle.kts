@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 // App module: the only module in Phase 5. We keep it
 // monolithic on purpose — multi-module Android projects
 // pay a meaningful build-time tax for module boundaries
@@ -12,9 +14,26 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Public generated metadata pairs the guest rootfs with exactly one host ABI.
+// Filter dependencies too: Termux's AAR otherwise contributes unrelated ABIs.
+val runtimeMetadata = try {
+    JsonSlurper().parse(file("src/main/assets/linux/seed_version.json")) as? Map<*, *>
+        ?: throw GradleException("Runtime metadata must be a JSON object")
+} catch (error: Exception) {
+    throw GradleException("Cannot read native runtime metadata: src/main/assets/linux/seed_version.json", error)
+}
+if (runtimeMetadata["runtime_format"] != "native") {
+    throw GradleException("Runtime metadata runtime_format must be native")
+}
+val packagedRuntimeAbi = when (val arch = runtimeMetadata["native_arch"]) {
+    "arm64" -> "arm64-v8a"
+    "x86_64" -> "x86_64"
+    else -> throw GradleException("Unsupported runtime native_arch '$arch'; expected arm64 or x86_64")
+}
+
 android {
     namespace = "cz.trety.seed"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "cz.trety.seed"
@@ -23,15 +42,18 @@ android {
         // notification channels, and the modern JobScheduler
         // API without compat shims).
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // Runtime generation publishes exactly one direct-native ABI at a time:
-        // x86_64 for the local AVD or arm64-v8a for a physical phone. Do not
-        // filter either one here; AGP packages whichever generated jniLibs
-        // directory is present alongside its matching rootfs asset.
+        // x86_64 for the local AVD or arm64-v8a for a physical phone. Filter
+        // all native libraries (including transitive AARs) to the ABI paired
+        // with the generated rootfs, without hardcoding the Play/phone ABI.
+        ndk {
+            abiFilters += packagedRuntimeAbi
+        }
         // FastAPI and the generated Flask app are separate local services.
         // Flask owns port 7778 so its development reloader can make worker
         // edits live; FastAPI and the agent API remain on port 7777.

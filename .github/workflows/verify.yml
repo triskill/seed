@@ -37,8 +37,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
-      - name: Install API 34 SDK
-        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+      - name: Install API 36 SDK
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - name: JVM unit tests and debug lint
         working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug
