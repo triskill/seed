@@ -74,7 +74,9 @@ ADB        := $(ANDROID_HOME)/platform-tools/adb
 # App identity (mirrors build.gradle.kts).
 APK          := android/app/build/outputs/apk/debug/app-debug.apk
 # Unsigned release output: signing configuration and private keys are not set here.
-PLAY_BUNDLE ?= android/app/build/outputs/bundle/release/app-release.aab
+# Gradle writes this fixed path; the fresh-build gate rejects custom PLAY_BUNDLE.
+override RELEASE_BUNDLE_OUTPUT := android/app/build/outputs/bundle/release/app-release.aab
+PLAY_BUNDLE ?= $(RELEASE_BUNDLE_OUTPUT)
 PLAY_ARTIFACT ?= $(PLAY_BUNDLE)
 # Play beta ABI is independent of the local AVD/runtime generation defaults.
 PLAY_ABI ?= arm64-v8a
@@ -118,16 +120,26 @@ build:  ## build the debug APK
 	@cd android && ./gradlew :app:assembleDebug
 	@echo ">> APK ready: $(APK)"
 
-.PHONY: bundle-release check-play-artifact verify-play-tools
+.PHONY: bundle-release release-check check-play-artifact verify-play-tools
 bundle-release:  ## build unsigned release AAB without generating runtime assets
 	@cd android && ./gradlew :app:bundleRelease
-	@echo ">> Unsigned bundle ready: $(PLAY_BUNDLE)"
+	@echo ">> Unsigned bundle ready: $(RELEASE_BUNDLE_OUTPUT)"
+
+release-check:  ## build then inspect the freshly built unsigned release AAB
+	@if [ "$(PLAY_BUNDLE)" != "$(RELEASE_BUNDLE_OUTPUT)" ]; then \
+		echo "!! release-check requires PLAY_BUNDLE=$(RELEASE_BUNDLE_OUTPUT); use PLAY_ARTIFACT for manual audits" >&2; exit 2; \
+	fi
+	@$(MAKE) --no-print-directory bundle-release
+	@python3 scripts/check-play-artifact.py "$(PLAY_BUNDLE)" --expected-abi "$(PLAY_ABI)"
 
 check-play-artifact:  ## inspect Play APK/AAB for the beta ABI and release contract
 	@python3 scripts/check-play-artifact.py "$(PLAY_ARTIFACT)" --expected-abi "$(PLAY_ABI)"
 
-verify-play-tools:  ## run Play artifact checker fixture tests (no device)
+verify-play-tools:  ## run all Play release tool fixture tests (no device)
 	@python3 -m unittest discover -s scripts/tests -p 'test_play_artifact.py'
+	@python3 -m unittest discover -s scripts/tests -p 'test_runtime_inventory.py'
+	@python3 -m unittest discover -s scripts/tests -p 'test_release_check.py'
+	@python3 -m unittest discover -s scripts/tests -p 'test_termux_rebuild.py'
 
 .PHONY: runtime
 runtime: override export RUNTIME_ARCH := $(value RUNTIME_ARCH)

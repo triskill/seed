@@ -26,6 +26,52 @@ A versioned Docker tag is not a retained digest. A downloaded minirootfs hash do
 not prove the Docker base used for the exported image. Preserve image digest,
 resolved input archives/integrity data and toolchain before claiming reproduction.
 
+## Reproducing the metadata inventory
+
+From the repository root, with the retained generated archive present:
+
+```sh
+python3 scripts/inventory-runtime.py android/app/src/main/assets/linux/rootfs.tar.gz \
+  --output docs/release/runtime-package-metadata.json
+make verify-play-tools
+```
+
+Omit `--output` to emit JSON on stdout. File output uses a sibling temporary file
+and atomic replacement, preserving an existing report on failure. The command
+hashes and parses one open source descriptor, using its size and checking its
+identity, size and timestamps before/after; detected in-place changes fail.
+Atomic pathname replacement leaves a coherent inventory of the original open
+snapshot (unlink-only link-count/ctime changes are permitted).
+The command hashes the actual compressed source bytes and streams the TAR without
+extraction. The retained source produces
+65 Alpine, 49 Python and 311 npm records with the size and SHA-256 above; its JSON
+is reproducible byte-for-byte. Records sort by name, metadata path, then version.
+All versioned nested/vendor/example npm manifests are included; Python license
+headers prefer `License-Expression`, otherwise the first 512 characters of
+`License`. No external license determinations are added.
+
+Only regular installed APK database, dist-info metadata and node_modules package
+manifests are read as metadata. Absolute/traversal paths and selected symlinks are
+ignored. Selected entries exceeding 2 MiB fail rather than silently disappearing;
+the scan permits at most 64 MiB selected payload bytes, 200,000 yielded archive
+entries and 20,000 records. These are selected-metadata limits for trusted
+synthetic/build inputs, **not global decompression or memory bounds for hostile
+TARs**: GNU/PAX extension processing occurs inside Python's TAR reader before an
+entry is yielded. Hashing and decompression traverse archive bytes, including
+unselected payloads, but only selected metadata is read for interpretation; no
+authentication/user files are extracted or interpreted. Invalid UTF-8, corrupt
+DEFLATE, excessive JSON nesting or archive/resource errors fail with redacted
+diagnostics; malformed/unversioned npm manifests otherwise yield no record.
+No credential/user settings, application databases, photos or coordinates are
+interpreted. This metadata inventory
+is **not a complete SBOM or license clearance**, and does not regenerate runtime
+assets or prove the distribution obligations are fulfilled.
+
+`make release-check` builds `bundle-release` before inspecting the fresh fixed
+Gradle output, even under parallel make. Custom `PLAY_BUNDLE` paths are rejected
+because Gradle does not write them; `PLAY_ARTIFACT` is only for manual
+`make check-play-artifact` audits. `PLAY_ABI` is passed to both inspections.
+
 ## Native Android runtime
 
 Evidence: `scripts/runtime-target.sh`, `scripts/build-runtime.sh`.
