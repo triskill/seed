@@ -5,12 +5,12 @@
   "target_sdk": 36,
   "min_sdk": 26,
   "aab": {
-    "bytes": 147577471,
-    "sha256": "abe74d0b477c884a4316bccc0d804c080565239ba848ff6d462ef66ba7292f6f"
+    "bytes": 147577537,
+    "sha256": "ba8b8dacc7265ec56a1d9e929da974fde9b73958b8acb36a4c09f092efdddb82"
   },
   "unsigned_apk": {
-    "bytes": 403939107,
-    "sha256": "d49503d4610807e7163c0cf9483ea4ca81bf3bb58cb9f1ff2997631f0afe6c88"
+    "bytes": 403939179,
+    "sha256": "e139ffe3a313748f9377ad3c55b63e6fe5c88f876c046a680b30a0b006c5f9d9"
   },
   "bundletool": {
     "version": "1.18.3",
@@ -28,8 +28,8 @@
       "screenDensity": 420,
       "sdkVersion": 36
     },
-    "estimated_download_bytes_min": 147384690,
-    "estimated_download_bytes_max": 147384690,
+    "estimated_download_bytes_min": 147384954,
+    "estimated_download_bytes_max": 147384954,
     "delivered_assets": [
       {
         "split": "splits/base-master.apk",
@@ -46,8 +46,8 @@
     ]
   },
   "artifact_inventory": {
-    "ok": false,
-    "artifact_bytes": 147577471,
+    "ok": true,
+    "artifact_bytes": 147577537,
     "format": "AAB",
     "expected_abi": "arm64-v8a",
     "abis": [
@@ -152,16 +152,22 @@
       },
       {
         "entry": "base/lib/arm64-v8a/libtermux.so",
-        "bytes": 9928
+        "bytes": 9232,
+        "load_segments": [
+          {
+            "offset": 0,
+            "virtual_address": 0,
+            "alignment": 16384
+          },
+          {
+            "offset": 6608,
+            "virtual_address": 22992,
+            "alignment": 16384
+          }
+        ]
       }
     ],
-    "errors": [
-      {
-        "code": "invalid_native_elf_or_alignment",
-        "entry": "base/lib/arm64-v8a/libtermux.so",
-        "reason": "PT_LOAD not compatible with 16 KiB alignment"
-      }
-    ],
+    "errors": [],
     "limitations": [
       "Local resource guardrails (2 GiB artifact, 32 MiB directory, 20000 entries, 128 native files, 256 MiB native reads) are not Play limits; ZIP64/multidisk archives are unsupported.",
       "Path-only credential/debris scan: not a complete credential scan or provenance audit; rootfs contents are not read.",
@@ -170,5 +176,54 @@
       "AAB container asset compression is independent of delivered APK compression: BundleConfig.pb compression globs and delivered APK openFd assets must be verified using bundletool; this checker does not parse BundleConfig.pb.",
       "ELF segment checks do not establish delivered APK ZIP alignment or physical 16 KiB device runtime compatibility."
     ]
-  }
+  },
+  "termux_native_rebuild": {
+    "ndk": "28.2.13676358",
+    "ndk_properties_sha256": "c00aa236fdb205e9be9edd9e2169763e48aca52735efff4e16f34205d49783b5",
+    "original_aar": "cbb915c4d7c51883f85397b46b74bf4b82fd32a8bbf0baeba1e0bc6d990d3e8a",
+    "sources": {
+      "termux.c": "af9485e2f170eb91b5c5594063190727fd5d4b7932a30e32349c6fdea0b7eee5",
+      "Android.mk": "118312b11e9d9a3458e7139af9f56d487b4f792ad7ba3b0c423867923db55fa1",
+      "LICENSE.md": "a8992ad867b1b4ea442693acb2e1ee829a814758e79a099bd8243a04ae383304",
+      "Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "outputs": {
+      "arm64-v8a": {
+        "sha256": "7d1b31c50d044b0f25438540ed12744c554bba79ef50ff0c1c557e5f90e9b7d8",
+        "loads": [
+          {
+            "offset": 0,
+            "vaddr": 0,
+            "align": 16384
+          },
+          {
+            "offset": 6608,
+            "vaddr": 22992,
+            "align": 16384
+          }
+        ],
+        "dynamic": "Dynamic section at offset 0x19e8 contains 25 entries:\n  Tag                Type           Name/Value\n  0x0000000000000001 (NEEDED)       Shared library: [libc.so]\n  0x0000000000000001 (NEEDED)       Shared library: [libm.so]\n  0x0000000000000001 (NEEDED)       Shared library: [libdl.so]\n  0x000000000000000e (SONAME)       Library soname: [libtermux.so]\n  0x000000000000001e (FLAGS)        BIND_NOW \n  0x000000006ffffffb (FLAGS_1)      NOW \n  0x0000000000000007 (RELA)         0x910\n  0x0000000000000008 (RELASZ)       96 (bytes)\n  0x0000000000000009 (RELAENT)      24 (bytes)\n  0x000000006ffffff9 (RELACOUNT)    3\n  0x0000000000000017 (JMPREL)       0x970\n  0x0000000000000002 (PLTRELSZ)     768 (bytes)\n  0x0000000000000003 (PLTGOT)       0x5b80\n  0x0000000000000014 (PLTREL)       RELA\n  0x0000000000000006 (SYMTAB)       0x2c0\n  0x000000000000000b (SYMENT)       24 (bytes)\n  0x0000000000000005 (STRTAB)       0x708\n  0x000000000000000a (STRSZ)        519 (bytes)\n  0x000000006ffffef5 (GNU_HASH)     0x6d8\n  0x000000000000001a (FINI_ARRAY)   0x59d8\n  0x000000000000001c (FINI_ARRAYSZ) 16 (bytes)\n  0x000000006ffffff0 (VERSYM)       0x668\n  0x000000006ffffffe (VERNEED)      0x6b8\n  0x000000006fffffff (VERNEEDNUM)   1\n  0x0000000000000000 (NULL)         0x0\n",
+        "symbols": "000000000000179c T Java_com_termux_terminal_JNI_close\n0000000000001020 T Java_com_termux_terminal_JNI_createSubprocess\n0000000000001700 T Java_com_termux_terminal_JNI_setPtyUTF8Mode\n00000000000016c0 T Java_com_termux_terminal_JNI_setPtyWindowSize\n0000000000001754 T Java_com_termux_terminal_JNI_waitFor\n"
+      },
+      "x86_64": {
+        "sha256": "7e9d2fa079bc77b929dd43b6981ab615e146bc43fb75609dc0f27faa9e60955d",
+        "loads": [
+          {
+            "offset": 0,
+            "vaddr": 0,
+            "align": 16384
+          },
+          {
+            "offset": 6416,
+            "vaddr": 22800,
+            "align": 16384
+          }
+        ],
+        "dynamic": "Dynamic section at offset 0x1928 contains 25 entries:\n  Tag                Type           Name/Value\n  0x0000000000000001 (NEEDED)       Shared library: [libc.so]\n  0x0000000000000001 (NEEDED)       Shared library: [libm.so]\n  0x0000000000000001 (NEEDED)       Shared library: [libdl.so]\n  0x000000000000000e (SONAME)       Library soname: [libtermux.so]\n  0x000000000000001e (FLAGS)        BIND_NOW \n  0x000000006ffffffb (FLAGS_1)      NOW \n  0x0000000000000007 (RELA)         0x910\n  0x0000000000000008 (RELASZ)       96 (bytes)\n  0x0000000000000009 (RELAENT)      24 (bytes)\n  0x000000006ffffff9 (RELACOUNT)    3\n  0x0000000000000017 (JMPREL)       0x970\n  0x0000000000000002 (PLTRELSZ)     768 (bytes)\n  0x0000000000000003 (PLTGOT)       0x5ac0\n  0x0000000000000014 (PLTREL)       RELA\n  0x0000000000000006 (SYMTAB)       0x2c0\n  0x000000000000000b (SYMENT)       24 (bytes)\n  0x0000000000000005 (STRTAB)       0x708\n  0x000000000000000a (STRSZ)        519 (bytes)\n  0x000000006ffffef5 (GNU_HASH)     0x6d8\n  0x000000000000001a (FINI_ARRAY)   0x5918\n  0x000000000000001c (FINI_ARRAYSZ) 16 (bytes)\n  0x000000006ffffff0 (VERSYM)       0x668\n  0x000000006ffffffe (VERNEED)      0x6b8\n  0x000000006fffffff (VERNEEDNUM)   1\n  0x0000000000000000 (NULL)         0x0\n",
+        "symbols": "00000000000016f7 T Java_com_termux_terminal_JNI_close\n0000000000000ffc T Java_com_termux_terminal_JNI_createSubprocess\n0000000000001673 T Java_com_termux_terminal_JNI_setPtyUTF8Mode\n000000000000163a T Java_com_termux_terminal_JNI_setPtyWindowSize\n00000000000016c0 T Java_com_termux_terminal_JNI_waitFor\n"
+      }
+    },
+    "aar_sha256": "f6e6b348c61a383bde4679a422610bc763bfbffe300c5b3792e36e46c5e88bd3"
+  },
+  "supersedes": "Original preparation measurements before pinned Termux native rebuild; see reports/play-release-engineering-batch.md"
 }

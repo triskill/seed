@@ -36,8 +36,9 @@ and [readiness audit](docs/release/google-play-readiness.md). See the
 
 ```sh
 make bundle-release      # unsigned AAB, existing generated runtime required
-make verify-play-tools   # artifact inspector regression fixtures
-make check-play-artifact # default ARM64 beta AAB; fails on remaining Termux 16 KB gate
+make verify-play-tools   # release tool regression fixtures
+make release-check       # build then audit the fresh unsigned AAB
+make check-play-artifact # inspect an existing ARM64 beta AAB
 ```
 
 Use `PLAY_ARTIFACT=/path/to/app.apk` and `PLAY_ABI=x86_64` for explicit alternatives.
@@ -152,4 +153,7 @@ docs/
 
 ## License
 
-TBD. Note: the Android runtime uses proot, which is GPL — see design doc §12.
+Owner selected GPL in principle; exact version and only/or-later choice are pending
+before adding the project LICENSE/SPDX declaration. Third-party licenses remain
+separate. PRoot/guest copyleft source and notice obligations still need release
+review; see [dependency inventory](docs/release/dependency-inventory.md).

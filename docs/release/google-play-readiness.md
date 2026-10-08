@@ -8,13 +8,13 @@ Google approval, legal advice, or a declaration that the app meets every policy.
 
 | Gate | Finding / next action | Ownership |
 | --- | --- | --- |
-| Target SDK | Baseline target/compile SDK 34 is insufficient; prepare API 36 with compatible tooling. Building does not establish Android 15/16 functional acceptance. | Local preparation; device acceptance outstanding |
+| Target SDK | API 36 with compatible pinned tooling builds and passes local checks. Android 15/16 functional acceptance remains outstanding. | Device acceptance outstanding |
 | Downloaded/executed code | Generated Python/JS may fall within the interpreter exception; unrestricted shell can also fetch/execute native packages or binaries. Prompt instructions are not an enforcement boundary. Resolve eligibility without silently reversing the accepted agent-freedom decision. | Owner / policy review |
 | AI-generated content | Central conversational generation likely falls within the AI policy. In-app reporting/flagging and harmful-content prevention need design/implementation; no coding-assistant exemption was established. | Product/policy decision and implementation |
 | Foreground service | `RuntimeService` declares `dataSync`; justify the actual use case and Console declaration. It has no `onTimeout` implementation. Targeting newer Android introduces duration/stop requirements; a persistent local runtime is not automatically data synchronization. | Engineering / owner declaration |
-| Native 16 KB support | Audit every packaged native ELF, including transitive libraries. Alignment is necessary, not proof that PRoot and the guest runtime function on 16 KB devices. | Local audit plus device/emulator acceptance |
+| Native 16 KB support | Pinned Termux JNI rebuild and every packaged native ELF pass scoped alignment checks; true PRoot/guest/PTY behavior on 16 KB remains unverified. | Device/emulator acceptance |
 | Bundle delivery | Build unsigned AAB, inspect inventory, and measure device-specific compressed delivery using bundletool/Play. Raw AAB/APK size is not download size. | Local tools; Console validation outstanding |
-| Licensing | Project license, notices and exact corresponding-source/provenance obligations remain unresolved. | Owner/legal review |
+| Licensing | Owner chose GPL in principle; exact version/only-or-later is pending. Notices and exact corresponding-source obligations remain unresolved; third-party terms stay separate. | Owner/legal review |
 | Privacy / Data Safety | Drafts require confirmation of developer identity, contacts, third-party data use, collection categories and actual generated-code behavior. Publish an accessible policy and expose it inside the app. | Owner plus implementation |
 | Signing / account / testing | Upload-key custody, Play App Signing, account verification and track access require owner participation. | Owner |
 | Release acceptance | Test the signed `cz.trety.seed` artifact, first install, provider flow, permissions, background service, generated app, update preservation and Restore. The old package's 52 debug tests are historical evidence, not new-package release acceptance. | Device acceptance |

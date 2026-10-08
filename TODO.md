@@ -30,10 +30,15 @@ Preparation branch: `app-store-preparation`; see
 - [x] bundletool validation/delivered asset storage and representative ARM64
   compressed download estimate (147,384,690 bytes); no Google approval implied.
 - [x] License/provenance inventory and owner-review privacy/Data Safety/listing drafts.
-- [ ] Termux JNI 16 KB alignment (actual inspector fails), then full 16 KB runtime acceptance.
+- [x] Pinned Termux JNI rebuilt with real 16 KB ELF alignment; APK/AAB and strict release-check pass.
+- [x] Reproducible package metadata, fresh build gate, targeted permission hardening and shutdown audit.
+  Batch verification: 48 script tests, 380 JVM tests per variant, lint/builds pass;
+  see [engineering report](docs/reports/play-release-engineering-batch.md).
+- [ ] Full 16 KB PRoot/guest/PTY runtime and signed release-device acceptance.
 - [ ] Resolve unrestricted execution versus Play executable-code policy; no silent isolation.
 - [ ] AI safeguards/in-app reporting and foreground-service suitability/timeout handling.
-- [ ] Owner licensing/source obligations, public/in-app privacy, provider/telemetry/deletion review.
+- [ ] GPL selected in principle; exact version/only-or-later confirmation and source obligations pending.
+- [ ] Public/in-app privacy, provider/telemetry/deletion review.
 - [ ] Signing/account/testing/publication decisions and signed new-package API 35/36 device acceptance.
 
 No upload or phone/data change performed. These are release gates, not optional
