@@ -31,6 +31,32 @@ val packagedRuntimeAbi = when (val arch = runtimeMetadata["native_arch"]) {
     else -> throw GradleException("Unsupported runtime native_arch '$arch'; expected arm64 or x86_64")
 }
 
+val originalEmulatorAar = configurations.create("originalEmulatorAar") {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+    isTransitive = false
+}
+val termuxNdkVersion = "28.2.13676358"
+// AGP resolves local.properties and standard environment SDK locations.
+// Use its lazy provider; do not require SDK environment variables or download an NDK.
+val termuxNdk = androidComponents.sdkComponents.sdkDirectory
+    .map { it.asFile.resolve("ndk/$termuxNdkVersion") }
+val termuxOutput = layout.buildDirectory.dir("generated/termux-native")
+val rebuildTermuxAar by tasks.registering(Exec::class) {
+    inputs.files(originalEmulatorAar)
+    inputs.dir(rootProject.file("../third_party/termux-native"))
+    inputs.file(rootProject.file("../scripts/rebuild-termux-aar.py"))
+    inputs.file(termuxNdk.map { it.resolve("source.properties") })
+    outputs.file(termuxOutput.map { it.file("terminal-emulator-0.118.3.aar") })
+    outputs.file(termuxOutput.map { it.file("provenance.json") })
+    doFirst {
+        commandLine("python3", rootProject.file("../scripts/rebuild-termux-aar.py"),
+            "--input-aar", originalEmulatorAar.singleFile,
+            "--output-dir", termuxOutput.get().asFile,
+            "--ndk-dir", termuxNdk.get())
+    }
+}
+
 android {
     namespace = "cz.trety.seed"
     compileSdk = 36
@@ -222,7 +248,11 @@ dependencies {
     // terminal-view transitively depends on terminal-emulator via `api` dep.
     // Do not replace androidx.concurrent's ListenableFuture API with Guava's
     // deliberately empty conflict artifact: ProfileInstaller needs the real API.
-    implementation("com.github.termux.termux-app:terminal-view:0.118.3")
+    add(originalEmulatorAar.name, "com.github.termux.termux-app:terminal-emulator:0.118.3@aar")
+    implementation("com.github.termux.termux-app:terminal-view:0.118.3") {
+        exclude(group = "com.github.termux.termux-app", module = "terminal-emulator")
+    }
+    implementation(files(termuxOutput.map { it.file("terminal-emulator-0.118.3.aar") }).builtBy(rebuildTermuxAar))
 
     // Debug / tooling (not packaged in release builds).
     debugImplementation("androidx.compose.ui:ui-tooling")
