@@ -63,6 +63,17 @@ class RuntimeExtractorTest {
     }
 
     @Test
+    fun agentBindDirectoryHasExactlyOwnerAccessEvenAfterPermissiveArchiveMode() = runTest {
+        val target = tempFolder.newFolder("private-agent")
+        val archive = tarOf(TarDirectory("home/seed/.pi/agent/", mode = 0b111111111))
+
+        RuntimeExtractor(MapAssetSource("rootfs.tar" to archive)).extract(target).toList()
+
+        assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(
+            Files.getPosixFilePermissions(target.resolve("rootfs/home/seed/.pi/agent").toPath())))
+    }
+
+    @Test
     fun ordinaryAssetsAreCopiedWithoutExecutableMetadata() = runTest {
         val target = tempFolder.newFolder("linux")
         val source = MapAssetSource("seed_version.json" to "{}".toByteArray())
@@ -290,10 +301,10 @@ private sealed class TestTarEntry(
     val linkName: String? = null,
 )
 
-private class TarDirectory(name: String) : TestTarEntry(
+private class TarDirectory(name: String, mode: Int = 0b111101101) : TestTarEntry(
     name = name,
     typeFlag = TarArchiveEntry.LF_DIR,
-    mode = 0b111101101,
+    mode = mode,
 )
 
 private class TarFile(name: String, content: ByteArray, mode: Int = 0b110100100) : TestTarEntry(

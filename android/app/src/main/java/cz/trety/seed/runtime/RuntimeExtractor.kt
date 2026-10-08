@@ -94,11 +94,7 @@ class RuntimeExtractor(
         // The bind target must exist even when an older archive lacks it.
         val guestAgent = root.resolve("home/seed/.pi/agent")
         ensureSafeDirectories(root, guestAgent)
-        guestAgent.toFile().apply {
-            if (!setReadable(true, false) || !setWritable(true, false) || !setExecutable(true, false)) {
-                throw IOException("Could not set Pi agent directory permissions: $guestAgent")
-            }
-        }
+        RuntimeFilePermissions.ownerDirectory(guestAgent)
     }
 
     private fun migratePiAgent(targetDir: File) {
@@ -253,15 +249,9 @@ class RuntimeExtractor(
             // PRoot can leave its synthetic host-rootfs mount point with mode
             // 000. It is still owned by this Android app, but newDirectoryStream
             // cannot inspect it until we restore directory access. Do this only
-            // after the no-follow directory check so a hostile symlink is never
-            // chmodded outside the extracted rootfs.
-            val directory = root.toFile()
-            if (!directory.setReadable(true, false) ||
-                !directory.setWritable(true, false) ||
-                !directory.setExecutable(true, false)
-            ) {
-                throw IOException("Could not make directory deletable: $root")
-            }
+            // after the no-follow directory check to reject existing symlinks.
+            // The helper documents the non-atomic same-UID substitution limit.
+            RuntimeFilePermissions.ownerDirectory(root)
             Files.newDirectoryStream(root).use { children ->
                 children.forEach(::deleteTree)
             }

@@ -20,7 +20,10 @@ internal object GuestDns {
     fun write(rootfs: File, servers: List<InetAddress>) {
         if (servers.isEmpty()) return // Network transitions must not erase a working resolver.
         val resolver = File(rootfs, "etc/resolv.conf")
-        if (!resolver.isFile) return // Extraction is not finished yet.
+        if (Files.isSymbolicLink(resolver.toPath())) {
+            throw java.io.IOException("Guest resolver is a symlink: $resolver")
+        }
+        if (!Files.isRegularFile(resolver.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return // Extraction is not finished yet.
         val contents = servers.distinct().joinToString(separator = "", postfix = "") {
             "nameserver ${it.hostAddress?.substringBefore('%')}\n"
         }
@@ -28,7 +31,7 @@ internal object GuestDns {
         val temp = Files.createTempFile(parent.toPath(), ".resolv-", ".tmp")
         try {
             Files.write(temp, contents.toByteArray(Charsets.UTF_8))
-            check(temp.toFile().setReadable(true, false)) { "Could not make guest DNS readable" }
+            RuntimeFilePermissions.ownerFile(temp)
             Files.move(temp, resolver.toPath(), StandardCopyOption.REPLACE_EXISTING)
         } finally {
             Files.deleteIfExists(temp)
