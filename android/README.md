@@ -13,11 +13,11 @@ Embedded endpoints are the defaults:
 `10.0.2.2` remains in the narrow network allowlists for future emulator-host
 development, but changing active clients at runtime is deferred to Phase 10.
 
-> **Prototype security warning:** Android loopback is shared across apps. The
-> embedded HTTP and WebSocket endpoints are not authenticated yet, including
-> `/shell/exec`. Do not install this prototype alongside untrusted apps or treat
-> it as production-ready. Authenticated transport and server identity checks are
-> required before release.
+> **Prototype security warning:** Android loopback is shared across apps. Backend
+> control endpoints (including `/shell/exec`) and chat require the current runtime
+> bearer capability. This does not authenticate the generated Flask app or isolate
+> agents and generated code running under the same app UID. Do not treat the
+> prototype as production-ready; release security and device acceptance remain gates.
 
 ## Package identity and data safety
 
@@ -73,7 +73,7 @@ APK built without generated runtime artifacts cannot start the embedded runtime.
 ```bash
 export ANDROID_HOME=$HOME/android-sdk
 $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-    "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+    "platform-tools" "platforms;android-36" "build-tools;35.0.0" "ndk;28.2.13676358"
 
 cd android
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
@@ -139,9 +139,9 @@ service and runtime.
 
 ## Versioning
 
-- AGP 8.5.0
+- AGP 8.10.1 / Gradle 8.11.1
 - Kotlin 1.9.24
 - Compose BOM 2024.06.00
-- compileSdk / targetSdk 34
+- compileSdk / targetSdk 36
 - minSdk 26
 - JVM 17

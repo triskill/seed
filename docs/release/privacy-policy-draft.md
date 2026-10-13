@@ -31,6 +31,11 @@ service-provider roles. Do not promise zero retention, no training, or universal
 provider deletion without evidence.]** Do not enter sensitive information you are
 not authorized to send. Disconnecting Seed does not erase provider-held data.
 
+Model catalog refresh also contacts Pi's `https://pi.dev/api/models/providers/`
+endpoint. Bundled Pi can attempt GitHub native-helper downloads when tools are
+missing. This is a source finding, not a measured network trace or a completed
+third-party data assessment; the final release design must resolve these flows.
+
 No developer-operated cloud backend is part of the currently documented runtime
 architecture. This is not a guarantee that all data stays on the device: providers,
 agent commands and generated applications can make network requests. The owner
@@ -48,8 +53,14 @@ and cryptographic encryption are different protections, and the Linux/agent
 runtime shares execution authority. Role sessions can persist prompts, responses
 and tool context even when the chat UI's durable replay is incomplete.
 
-**[OWNER REQUIRED: final retention/deletion behavior, backup configuration,
-Android device-transfer behavior, support access and any legal retention rules.]**
+Seed disables Android automatic backup and explicitly excludes app storage from
+cloud backup and device-to-device transfer. Do not rely on reinstalling Seed or
+moving phones to restore generated apps or credentials. These platform settings
+are not protection against privileged/OEM tools or same-UID agent access; verify
+the intended devices before promising that no transfer can occur.
+
+**[OWNER REQUIRED: final retention/deletion behavior, device verification,
+support access and any legal retention rules.]**
 Current durable chat/history behavior is limited; local persistence is not a backup.
 The new `cz.trety.seed` installation does not automatically migrate the old
 `com.seed.app` installation's private data.

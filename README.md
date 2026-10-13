@@ -31,8 +31,10 @@ storage is not a guarantee of encryption or isolation from agent execution.
 ### Google Play beta preparation
 
 Work is tracked in the [execution plan](docs/plans/2026-10-07-app-store-preparation.md)
-and [readiness audit](docs/release/google-play-readiness.md). See the
-[execution report](docs/reports/google-play-preparation.md) for measured results.
+and [readiness audit](docs/release/google-play-readiness.md). Start with the short
+[owner checklist](docs/release/google-play-human-tasks.md) for account, policy and
+publication tasks. See the [latest audit](docs/reports/2026-10-12-public-beta-audit.md)
+and historical [execution report](docs/reports/google-play-preparation.md) for evidence.
 
 ```sh
 make bundle-release      # unsigned AAB, existing generated runtime required

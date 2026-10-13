@@ -1,21 +1,26 @@
 # Google Play beta readiness — not cleared for publication
 
-Review date: **2026-10-07**. Package: **cz.trety.seed**. Intended first artifact:
+Review date: **2026-10-12**. Package: **cz.trety.seed**. Intended first artifact:
 one direct-native **arm64-v8a** runtime. This is a preparation assessment, not
 Google approval, legal advice, or a declaration that the app meets every policy.
+
+Start with the [short owner checklist](google-play-human-tasks.md),
+[current policy evidence](2026-10-12-policy-review.md) and
+[latest local audit](../reports/2026-10-12-public-beta-audit.md).
+A successful `make release-check` checks packaging, not these publication gates.
 
 ## Current release gates
 
 | Gate | Finding / next action | Ownership |
 | --- | --- | --- |
 | Target SDK | API 36 with compatible pinned tooling builds and passes local checks. Android 15/16 functional acceptance remains outstanding. | Device acceptance outstanding |
-| Downloaded/executed code | Generated Python/JS may fall within the interpreter exception; unrestricted shell can also fetch/execute native packages or binaries. Prompt instructions are not an enforcement boundary. Resolve eligibility without silently reversing the accepted agent-freedom decision. | Owner / policy review |
+| Downloaded/executed code | Generated Python/JS may fall within the interpreter exception; unrestricted shell can fetch/execute native code. Bundled Pi also attempts native rg/fd downloads when tools are absent (both are absent in this rootfs). Model-only refresh is JSON, not that native-download path. Resolve eligibility without silently reversing the accepted agent-freedom decision. | Owner / policy review, then engineering |
 | AI-generated content | Central conversational generation likely falls within the AI policy. In-app reporting/flagging and harmful-content prevention need design/implementation; no coding-assistant exemption was established. | Product/policy decision and implementation |
 | Foreground service | `RuntimeService` declares `dataSync`; justify the actual use case and Console declaration. It has no `onTimeout` implementation. Targeting newer Android introduces duration/stop requirements; a persistent local runtime is not automatically data synchronization. | Engineering / owner declaration |
-| Native 16 KB support | Pinned Termux JNI rebuild and every packaged native ELF pass scoped alignment checks; true PRoot/guest/PTY behavior on 16 KB remains unverified. | Device/emulator acceptance |
+| Native 16 KB support | Pinned Termux JNI and packaged native ELF pass scoped checks; a read-only scan found 156 ARM64 guest ELFs with 16 KiB-compatible PT_LOAD alignment and two non-ARM64 vendored modules ([guest audit](../reports/2026-10-12-guest-elf-audit.md)). True PRoot/guest/PTY behavior on 16 KB remains unverified. | Device/emulator acceptance |
 | Bundle delivery | Build unsigned AAB, inspect inventory, and measure device-specific compressed delivery using bundletool/Play. Raw AAB/APK size is not download size. | Local tools; Console validation outstanding |
 | Licensing | Owner chose GPL in principle; exact version/only-or-later is pending. Notices and exact corresponding-source obligations remain unresolved; third-party terms stay separate. | Owner/legal review |
-| Privacy / Data Safety | Drafts require confirmation of developer identity, contacts, third-party data use, collection categories and actual generated-code behavior. Publish an accessible policy and expose it inside the app. | Owner plus implementation |
+| Privacy / Data Safety | Automatic Android backup/transfer now disabled with explicit exclusions; OEM/device verification remains. Drafts still need developer identity, contacts, provider/catalog endpoints, data flows and retention. Publish the final policy and expose it inside the app; do not use placeholder URLs. | Owner plus implementation |
 | Signing / account / testing | Upload-key custody, Play App Signing, account verification and track access require owner participation. | Owner |
 | Release acceptance | Test the signed `cz.trety.seed` artifact, first install, provider flow, permissions, background service, generated app, update preservation and Restore. The old package's 52 debug tests are historical evidence, not new-package release acceptance. | Device acceptance |
 
@@ -127,5 +132,6 @@ availability cannot be inferred from owning trety.cz or building an AAB.
 Local preparation can generate artifacts, checks, evidence and drafts. It cannot
 select legal terms, promise provider retention/deletion, approve privacy answers,
 satisfy real-tester continuity, obtain Google approval, or choose signing-key
-custody. No uploads, device changes, production Restore or account actions are part
-of this branch. See the final preparation report for actual verified results.
+custody. No uploads, device changes, production Restore or account actions were performed
+in this audit. See the latest local audit and owner checklist linked above for
+actual verified results and outstanding work.

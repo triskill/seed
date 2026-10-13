@@ -67,8 +67,8 @@ import cz.trety.seed.data.ProviderCatalog
  *   - a Save button that calls
  *     [SettingsViewModel.save].
  *
- * Settings persist through DataStore and encrypted
- * preferences. Saving replaces only the Pi chat agents, so the runtime and
+ * Non-secret settings persist through DataStore; Pi owns credentials in private
+ * auth.json. Saving replaces only the Pi chat agents, so the runtime and
  * current navigation stay in place.
  * The public ViewModel API
  * ([SettingsViewModel.form],

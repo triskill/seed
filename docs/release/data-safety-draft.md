@@ -42,6 +42,12 @@ by itself prove that Seed transmits every location fix off-device.
 - Credentials reside in plain Pi auth.json with private permissions; role sessions
   can persist conversations and context. Guest metadata includes Pi telemetry and
   OpenTelemetry packages; enabled collection is not established by this inventory.
+- The current beta explicitly disables Android automatic backup and excludes app
+  storage from cloud/device transfer. OEM behavior and prior backups still need
+  verification; do not promise automatic data recovery.
+- Model catalog refresh contacts `pi.dev`; missing Pi native helpers can trigger
+  GitHub downloads. Review endpoint metadata and final shipped behavior separately
+  from AI inference requests.
 - No advertising or developer-cloud-backup feature is described in the current
   implementation. This is not a guarantee about all transitive/provider behavior
   or arbitrary generated code. Verify any SDKs and future integrations.

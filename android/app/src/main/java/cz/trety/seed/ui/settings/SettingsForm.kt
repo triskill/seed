@@ -19,8 +19,8 @@ import cz.trety.seed.data.ProviderCatalog
  *     [ProviderCatalog].
  *   - [model] — exact model ID returned by Pi's
  *     authenticated catalog.
- *   - [apiKey] — provider credential stored in
- *     Android Keystore-backed encrypted preferences.
+ *   - [apiKey] — unsaved provider credential input. Login sends it to Pi,
+ *     which stores credentials as private, unencrypted auth.json.
  *   - [host] — Android-side host for backend connections. It defaults
  *     to device loopback for the embedded runtime. Phase 10 will expose
  *     host switching in the UI and rebuild active clients when it changes.

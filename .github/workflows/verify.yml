@@ -39,8 +39,8 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Install API 36 SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;28.2.13676358'
-      - name: Native AAR helper contracts
-        run: python3 -m unittest discover -s scripts/tests -p test_termux_rebuild.py
+      - name: Release tooling contracts
+        run: make verify-play-tools
       - name: JVM unit tests and debug lint
         working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug
